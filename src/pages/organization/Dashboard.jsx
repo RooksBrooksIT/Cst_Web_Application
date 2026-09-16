@@ -1,13 +1,17 @@
-import { Link } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { useOrganizationDashboard } from '../../hooks/useOrganizationDashboard'
-import logo from '../../assets/logo/logo.png'
-import './Dashboard.css'
+import { useNotifications } from '../../context/NotificationContext'
+import NotificationDrawer from '../../components/common/NotificationDrawer'
+import StatusBadge from '../../components/common/StatusBadge'
+import logo from '../../assets/logo/FinalLogo.jpg'
+import OrganizationModule from './Module'
 
 const stages = ['Foundation', 'Plinth', 'Superstructure', 'Finishing', 'Handover']
 
 function value(record, fields, fallback = '') {
-  return fields.map((field) => record[field]).find((item) => item !== undefined && item !== null && item !== '') ?? fallback
+  return fields.map((field) => record?.[field]).find((item) => item !== undefined && item !== null && item !== '') ?? fallback
 }
 
 function number(record, fields) {
@@ -15,63 +19,476 @@ function number(record, fields) {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+function progressOf(record) {
+  const raw = value(record, ['progress', 'progressPercentage', 'completion'], null)
+  if (raw === null) return null
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) ? Math.min(100, Math.max(0, parsed)) : null
+}
+
 function money(amount) {
-  return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount)
+  return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount || 0)
 }
 
 function statusOf(site) {
-  return String(value(site, ['status', 'projectStatus'], 'Unknown')).replace(/_/g, ' ')
+  return String(value(site, ['currentStatus', 'status', 'projectStatus'], 'Status unavailable')).replace(/_/g, ' ')
 }
 
 function ProgressBar({ percent }) {
-  return <div className="organization-progress"><i><em style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} /></i><b>{percent}%</b></div>
+  const p = percent === null ? 0 : percent
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200/60">
+        <div
+          className="bg-linear-to-r from-blue-600 to-indigo-600 h-2 rounded-full transition-all duration-500"
+          style={{ width: `${p}%` }}
+        />
+      </div>
+      <span className="text-xs font-bold text-slate-700 min-w-10 text-right">{percent === null ? 'N/A' : `${percent}%`}</span>
+    </div>
+  )
 }
 
 function MetricCard({ title, value: metricValue, detail, href, tone = 'blue' }) {
-  return <Link to={href} className={`organization-metric ${tone}`}><span className="metric-symbol">{tone === 'orange' ? '₹' : tone === 'green' ? '↗' : tone === 'red' ? '!' : '▦'}</span><div><p>{title}</p><strong>{metricValue}</strong><small>{detail}</small></div><span className="metric-arrow">→</span></Link>
+  let toneBorder = 'border-slate-200 hover:border-blue-500/50'
+  let toneBadge = 'bg-blue-50 text-blue-700'
+  let symbol = '▦'
+
+  if (tone === 'orange') {
+    toneBorder = 'border-slate-200 hover:border-amber-500/50'
+    toneBadge = 'bg-amber-50 text-amber-700'
+    symbol = '₹'
+  } else if (tone === 'green') {
+    toneBorder = 'border-slate-200 hover:border-emerald-500/50'
+    toneBadge = 'bg-emerald-50 text-emerald-700'
+    symbol = '↗'
+  } else if (tone === 'red') {
+    toneBorder = 'border-slate-200 hover:border-rose-500/50'
+    toneBadge = 'bg-rose-50 text-rose-700'
+    symbol = '!'
+  }
+
+  return (
+    <Link
+      to={href}
+      className={`group p-5 rounded-2xl bg-white border ${toneBorder} shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between`}
+    >
+      <div className="flex items-start justify-between">
+        <span className={`p-2 rounded-xl text-base font-bold ${toneBadge}`}>{symbol}</span>
+        <span className="text-xs font-semibold text-slate-400 group-hover:text-blue-600 transition-colors">Inspect →</span>
+      </div>
+      <div className="mt-4 space-y-1">
+        <p className="text-xs font-semibold text-slate-500">{title}</p>
+        <strong className="text-2xl font-extrabold text-slate-900 block tracking-tight">{metricValue}</strong>
+        <small className="text-[11px] text-slate-400 block line-clamp-1">{detail}</small>
+      </div>
+    </Link>
+  )
 }
 
 function SectionHeading({ eyebrow, title, href, action = 'View all' }) {
-  return <div className="organization-section-heading"><div><p>{eyebrow}</p><h2>{title}</h2></div>{href && <Link to={href}>{action} →</Link>}</div>
+  return (
+    <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+      <div>
+        <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">{eyebrow}</p>
+        <h2 className="text-base font-bold text-slate-900 tracking-tight">{title}</h2>
+      </div>
+      {href && (
+        <Link to={href} className="text-xs font-semibold text-blue-600 hover:text-blue-700 transition-colors">
+          {action} →
+        </Link>
+      )}
+    </div>
+  )
 }
 
-function EmptyState({ text }) {
-  return <p className="organization-empty">{text}</p>
+function ProfileMenu({ user, userData, role, onRefresh, onLogout }) {
+  const [open, setOpen] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const menuRef = useRef(null)
+  const profileName = value(userData, ['fullName', 'name', 'displayName'], user?.displayName || user?.email || 'Organization Admin')
+  const profileEmail = value(userData, ['email', 'Email'], user?.email || 'Not available')
+  const profilePhone = value(userData, ['phone', 'phoneNumber', 'mobile'], user?.phoneNumber || 'Not available')
+
+  useEffect(() => {
+    function closeOnOutsideClick(event) {
+      if (menuRef.current && !menuRef.current.contains(event.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', closeOnOutsideClick)
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick)
+  }, [])
+
+  async function handleOpen() {
+    setOpen((current) => !current)
+    if (!open) {
+      setRefreshing(true)
+      try {
+        await onRefresh()
+      } finally {
+        setRefreshing(false)
+      }
+    }
+  }
+
+  return (
+    <div className="relative" ref={menuRef}>
+      <button
+        type="button"
+        onClick={handleOpen}
+        className="flex items-center gap-2.5 p-1.5 rounded-xl bg-slate-100/80 hover:bg-slate-200/80 border border-slate-200 transition-all text-left"
+      >
+        <span className="w-8 h-8 rounded-lg bg-[#0B3470] text-white font-bold text-xs flex items-center justify-center shadow-xs">
+          {profileName.slice(0, 2).toUpperCase()}
+        </span>
+        <div className="hidden sm:block pr-2">
+          <strong className="block text-xs font-semibold text-slate-800">{profileName}</strong>
+          <small className="block text-[10px] text-slate-500">Organization Admin</small>
+        </div>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 mt-2 w-64 rounded-2xl bg-white border border-slate-200 shadow-2xl p-4 space-y-3 z-50 animate-fade-in">
+          <div className="border-b border-slate-100 pb-2">
+            <strong className="block text-xs font-bold text-slate-900">{profileName}</strong>
+            <small className="text-[11px] text-slate-500">{refreshing ? 'Refreshing profile...' : 'Active Administrator'}</small>
+          </div>
+          <div className="space-y-1.5 text-xs text-slate-700">
+            <div><span className="text-slate-400 text-[10px] block">Email:</span>{profileEmail}</div>
+            <div><span className="text-slate-400 text-[10px] block">Phone:</span>{profilePhone}</div>
+            <div><span className="text-slate-400 text-[10px] block">Role:</span><span className="text-emerald-700 font-semibold">{role || 'Organization'}</span></div>
+          </div>
+          <button
+            type="button"
+            onClick={onLogout}
+            className="w-full py-2 rounded-xl text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition-colors"
+          >
+            Log out
+          </button>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function OrganizationDashboard() {
-  const { orgId, userData } = useAuth()
-  const { sites, managers, approvals, expenses, inventory, equipment, pettyCash, loading, error } = useOrganizationDashboard(orgId)
-  const siteProgress = sites.length ? Math.round(sites.reduce((total, site) => total + number(site, ['progress', 'progressPercentage', 'completion']), 0) / sites.length) : 0
-  const plannedBudget = sites.reduce((total, site) => total + number(site, ['budget', 'plannedBudget', 'projectBudget']), 0)
-  const spentBudget = sites.reduce((total, site) => total + number(site, ['actual', 'actualExpenditure', 'spent', 'expenditure']), 0)
-  const activeSites = sites.filter((site) => ['active', 'in progress', 'ongoing', 'live'].includes(statusOf(site).toLowerCase())).length
-  const completedSites = sites.filter((site) => statusOf(site).toLowerCase() === 'completed').length
-  const planningSites = sites.filter((site) => statusOf(site).toLowerCase() === 'planning').length
-  const pendingApprovals = approvals.filter((item) => !['approved', 'rejected', 'completed'].includes(String(value(item, ['status'], '')).toLowerCase())).length
-  const activeWorkforce = sites.reduce((total, site) => total + number(site, ['activeWorkforce', 'workersDeployed', 'workforce']), 0)
-  const siteExpense = expenses.reduce((total, expense) => total + number(expense, ['amount', 'total', 'value']), 0)
-  const allocatedCash = pettyCash.reduce((total, item) => total + number(item, ['allocated', 'allocation', 'amount']), 0)
-  const utilizedCash = pettyCash.reduce((total, item) => total + number(item, ['utilized', 'spent', 'used']), 0)
-  const pendingCash = pettyCash.filter((item) => String(value(item, ['status'], '')).toLowerCase().includes('pending')).reduce((total, item) => total + number(item, ['amount', 'pending', 'value']), 0)
-  const organizationName = value(userData, ['organizationName', 'orgName', 'companyName'], 'Your organization')
+  const { orgId, user, role, userData, refreshUserProfile, logout } = useAuth()
+  const { unreadCount } = useNotifications()
+  const [isNotifOpen, setIsNotifOpen] = useState(false)
+  const navigate = useNavigate()
+  const location = useLocation()
+  const { sites, managers, approvals, expenses, inventory, equipment, pettyCash, loading, error } =
+    useOrganizationDashboard(orgId)
+  const [selectedProjectId, setSelectedProjectId] = useState('all')
+  const [globalQuery, setGlobalQuery] = useState('')
+
+  const filteredSites = useMemo(
+    () => (selectedProjectId === 'all' ? sites : sites.filter((site) => site.id === selectedProjectId)),
+    [selectedProjectId, sites]
+  )
+
+  const searchedSites = useMemo(() => {
+    const query = globalQuery.trim().toLowerCase()
+    if (!query) return filteredSites
+    return filteredSites.filter((site) =>
+      [
+        value(site, ['projectName', 'siteName', 'name']),
+        value(site, ['siteLocation', 'location', 'address']),
+        value(site, ['managerName', 'manager', 'assignedManager', 'supervisor', 'ownerName']),
+        statusOf(site),
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(query)
+    )
+  }, [filteredSites, globalQuery])
+
+  const validProgress = filteredSites.map(progressOf).filter((progress) => progress !== null)
+  const siteProgress = validProgress.length ? Math.round(validProgress.reduce((total, p) => total + p, 0) / validProgress.length) : null
+  const plannedBudget = filteredSites.reduce((total, site) => total + number(site, ['budget', 'plannedBudget', 'projectBudget']), 0)
+  const spentBudget = filteredSites.reduce(
+    (total, site) => total + number(site, ['actual', 'actualExpenditure', 'spent', 'expenditure', 'amountSpent', 'amountSpend']),
+    0
+  )
+  const activeSites = filteredSites.filter((site) => ['active', 'in progress', 'ongoing', 'live'].includes(statusOf(site).toLowerCase())).length
+  const completedSites = filteredSites.filter((site) => statusOf(site).toLowerCase() === 'completed').length
+  const planningSites = filteredSites.filter((site) => statusOf(site).toLowerCase() === 'planning').length
+  const pendingApprovals = approvals.filter((item) => !['approved', 'rejected', 'completed', 'cleared'].includes(String(value(item, ['status', 'approvalStatus'], '')).toLowerCase())).length
+  const activeWorkforce = filteredSites.reduce((total, site) => total + number(site, ['activeWorkforce', 'workersDeployed', 'workforce']), 0)
+
+  const organizationName = value(userData, ['organizationName', 'orgName', 'companyName'], 'Your Organization')
   const currentDate = new Intl.DateTimeFormat('en-IN', { dateStyle: 'full' }).format(new Date())
+  const stageNames = [...new Set([...stages, ...filteredSites.map((site) => value(site, ['projectStage', 'stage', 'currentStage'], '')).filter(Boolean)])]
+  const activeModule = location.pathname.split('/').filter(Boolean)[1] || 'dashboard'
 
-  if (loading) return <div className="organization-state">Loading organization dashboard...</div>
-  if (error) return <div className="organization-state organization-state-error"><strong>Dashboard unavailable</strong><span>{error}</span></div>
+  const navigation = [
+    ['Dashboard', '/organization/dashboard', '⌂'],
+    ['Sites', '/organization/sites', '▦'],
+    ['Finance', '/organization/finance', '₹'],
+    ['Approvals', '/organization/approvals', '✓'],
+    ['Petty Cash', '/organization/petty-cash', '◈'],
+    ['Reports', '/organization/reports', '▤'],
+    ['Subscription', '/organization/subscription', '○'],
+  ]
 
-  return <div className="organization-shell min-h-screen">
-    <header className="organization-topbar flex-wrap"><Link className="organization-brand" to="/organization/dashboard"><img className="organization-brand-logo" src={logo} alt="eBricks" /></Link><div className="organization-search">⌕ <input placeholder="Search sites, people, requests..." aria-label="Search organization data" /></div><button className="organization-icon-button" type="button" aria-label="Notifications">♢<em>{pendingApprovals}</em></button><div className="organization-user"><span>AR</span><div><strong>{value(userData, ['fullName', 'name'], 'Organization admin')}</strong><small>Organization Admin</small></div></div></header>
-    <div className="organization-body flex min-h-[calc(100vh-68px)]"><aside className="organization-sidebar shrink-0"><p className="organization-nav-label">ORGANIZATION</p>{[['Dashboard', '/organization/dashboard', '⌂'], ['Sites', '/organization/sites', '▦'], ['Finance', '/organization/finance', '₹'], ['Approvals', '/organization/approvals', '✓'], ['Petty Cash', '/organization/petty-cash', '◈'], ['Team', '/organization/team', '♙'], ['Reports', '/organization/reports', '▤'], ['Branding', '/organization/branding', '◇'], ['Subscription', '/organization/subscription', '○']].map(([label, href, icon]) => <Link className={label === 'Dashboard' ? 'selected' : ''} key={label} to={href}><i>{icon}</i>{label}{label === 'Approvals' && <b>{pendingApprovals}</b>}</Link>)}<Link className="organization-settings" to="/organization/settings"><i>⚙</i>Settings</Link></aside>
-      <main className="organization-main min-w-0 flex-1 overflow-x-hidden"><div className="organization-content w-full"><div className="organization-header gap-4"><div><p className="organization-kicker">{organizationName} <span>·</span> {currentDate}</p><h1>Organization Dashboard</h1><p>Company-wide construction operations at a glance.</p></div><select aria-label="Site filter"><option>All Sites</option>{sites.map((site) => <option key={site.id}>{value(site, ['name', 'siteName', 'projectName'], site.id)}</option>)}</select></div>
-        <div className="organization-status flex flex-wrap"><span className="status-live" /> All systems operational <span>·</span> Live data from {sites.length} sites</div>
-        <section className="organization-metrics grid min-w-0"><MetricCard title="Total sites" value={sites.length} detail={`${activeSites} active · ${planningSites} planning · ${completedSites} completed`} href="/organization/sites" /><MetricCard title="Overall progress" value={`${siteProgress}%`} detail="Across all construction sites" href="/organization/sites" tone="green" /><MetricCard title="Active workforce" value={activeWorkforce} detail={`${managers.length} managers assigned`} href="/organization/team" tone="orange" /><MetricCard title="Pending approvals" value={pendingApprovals} detail="Needs organization attention" href="/organization/approvals" tone="red" /><MetricCard title="Monthly expenses" value={money(siteExpense)} detail="From recorded expenses" href="/organization/finance" tone="orange" /><MetricCard title="Budget utilization" value={plannedBudget ? `${Math.round((spentBudget / plannedBudget) * 100)}%` : '0%'} detail={`${money(spentBudget)} of ${money(plannedBudget)} spent`} href="/organization/finance" tone="green" /></section>
-        <section className="organization-grid grid min-w-0"><article className="organization-panel organization-progress-panel min-w-0"><SectionHeading eyebrow="PROJECT PORTFOLIO" title="Construction project progress" href="/organization/sites" /><div className="organization-table-wrap max-w-full overflow-x-auto"><table><thead><tr><th>Site</th><th>Manager</th><th>Stage</th><th>Progress</th><th>Budget</th><th>Status</th></tr></thead><tbody>{sites.slice(0, 6).map((site) => <tr key={site.id}><td><strong>{value(site, ['name', 'siteName', 'projectName'], site.id)}</strong><small>{value(site, ['location', 'address'], 'Location not set')}</small></td><td>{value(site, ['managerName', 'manager', 'assignedManager'], 'Unassigned')}</td><td>{value(site, ['stage', 'currentStage'], 'Not set')}</td><td><ProgressBar percent={number(site, ['progress', 'progressPercentage', 'completion'])} /></td><td>{money(number(site, ['budget', 'plannedBudget', 'projectBudget']))}</td><td><span className={`organization-status-pill ${statusOf(site).toLowerCase().replace(/ /g, '-')}`}>{statusOf(site)}</span></td></tr>)}</tbody></table>{!sites.length && <EmptyState text="No construction sites have been added yet." />}</div></article>
-          <article className="organization-panel organization-stage-panel"><SectionHeading eyebrow="WORKFLOW" title="Construction stages" /><div className="organization-stage-list">{stages.map((stage) => { const stageSites = sites.filter((site) => String(value(site, ['stage', 'currentStage'], '')).toLowerCase() === stage.toLowerCase()); const progress = stageSites.length ? Math.round(stageSites.reduce((total, site) => total + number(site, ['progress', 'progressPercentage', 'completion']), 0) / stageSites.length) : 0; return <div key={stage}><span>{stage}</span><ProgressBar percent={progress} /></div> })}</div></article></section>
-        <section className="organization-grid"><article className="organization-panel organization-finance-panel"><SectionHeading eyebrow="FINANCIAL OVERVIEW" title="Budget vs actual" href="/organization/finance" /><div className="finance-total"><div><small>Planned budget</small><strong>{money(plannedBudget)}</strong></div><div><small>Actual expenditure</small><strong>{money(spentBudget)}</strong></div><div><small>Remaining</small><strong>{money(Math.max(0, plannedBudget - spentBudget))}</strong></div></div><div className="budget-bars"><div><span>Planned</span><i><em style={{ width: '100%' }} /></i></div><div><span>Actual</span><i><em style={{ width: `${plannedBudget ? Math.min(100, (spentBudget / plannedBudget) * 100) : 0}%` }} /></i></div></div></article><article className="organization-panel"><SectionHeading eyebrow="ACTION REQUIRED" title="Approval center summary" href="/organization/approvals" /><div className="approval-summary">{['Material', 'Payment', 'Contractor', 'Budget', 'Other'].map((type) => <Link to="/organization/approvals" key={type}><span>{type} requests</span><strong>{approvals.filter((item) => String(value(item, ['category', 'type'], 'Other')).toLowerCase().includes(type.toLowerCase())).length}</strong></Link>)}</div></article></section>
-        <section className="organization-grid"><article className="organization-panel"><SectionHeading eyebrow="SITE OPERATIONS" title="Inventory & equipment" /><div className="resource-summary"><div><span>Inventory records</span><strong>{inventory.length}</strong><small>Tracked materials</small></div><div><span>Equipment units</span><strong>{equipment.length}</strong><small>Across all sites</small></div><div><span>Low stock items</span><strong>{inventory.filter((item) => String(value(item, ['status'], '')).toLowerCase().includes('low')).length}</strong><small>Requires review</small></div></div></article><article className="organization-panel"><SectionHeading eyebrow="CASH CONTROL" title="Petty cash overview" href="/organization/petty-cash" /><div className="cash-summary"><div><small>Allocated</small><strong>{money(allocatedCash)}</strong></div><div><small>Utilized</small><strong>{money(utilizedCash)}</strong></div><div><small>Available</small><strong>{money(Math.max(0, allocatedCash - utilizedCash))}</strong></div><div><small>Pending</small><strong>{money(pendingCash)}</strong></div></div>{!pettyCash.length && <EmptyState text="No petty cash records available." />}</article></section>
-        <section className="organization-panel activity-panel"><SectionHeading eyebrow="REALTIME FEED" title="Recent construction activity" /><EmptyState text="No recent activity has been recorded." /></section>
-        <div className="organization-quick-actions"><strong>Quick actions</strong><Link to="/organization/sites">＋ Create site</Link><Link to="/organization/team">＋ Add manager</Link><Link to="/organization/approvals">✓ View approvals</Link><Link to="/organization/finance">₹ View finance</Link><Link to="/organization/reports">▤ Generate report</Link></div>
-      </div></main></div>
-  </div>
+  async function handleLogout() {
+    await logout()
+    navigate('/login', { replace: true })
+  }
+
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+
+  if (loading && activeModule === 'dashboard') {
+    return <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-500 text-sm">Loading organization command center...</div>
+  }
+
+  return (
+    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 flex font-sans">
+      {/* Mobile Drawer Backdrop */}
+      {isMobileMenuOpen && (
+        <div
+          className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-40 lg:hidden"
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+      )}
+
+      {/* Strict #0B3470 Sidebar (Desktop & Mobile Drawer) */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#0B3470] p-4 flex flex-col justify-between shadow-2xl transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 lg:shadow-xl lg:z-20 ${
+          isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+        }`}
+      >
+        <div className="space-y-6">
+          <div className="flex items-center justify-between px-2 py-1">
+            <Link to="/organization/dashboard" onClick={() => setIsMobileMenuOpen(false)} className="flex items-center gap-3">
+              <img className="h-10 w-auto rounded-xl object-contain bg-white p-1 shadow-md" src={logo} alt="eBricks" />
+              <div className="text-white">
+                <strong className="block text-sm font-extrabold tracking-wide">eBricks</strong>
+                <span className="text-[10px] font-bold tracking-widest text-blue-200 uppercase">Enterprise</span>
+              </div>
+            </Link>
+            <button
+              type="button"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="lg:hidden text-white/70 hover:text-white p-1.5 rounded-lg hover:bg-white/10 text-base"
+              aria-label="Close menu"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div className="space-y-1">
+            <p className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-blue-200/60">CORPORATE MODULES</p>
+            {navigation.map(([label, href, icon]) => (
+              <NavLink
+                key={label}
+                to={href}
+                end={label === 'Dashboard'}
+                onClick={() => setIsMobileMenuOpen(false)}
+                className={({ isActive }) =>
+                  `flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-medium transition-all ${
+                    isActive
+                      ? 'bg-white/15 text-white font-bold border border-white/20 shadow-xs'
+                      : 'text-blue-100/75 hover:text-white hover:bg-white/10'
+                  }`
+                }
+              >
+                <span className="flex items-center gap-3">
+                  <span>{icon}</span>
+                  {label}
+                </span>
+                {label === 'Approvals' && pendingApprovals > 0 && (
+                  <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-400 text-slate-950 rounded-full shadow-xs">
+                    {pendingApprovals}
+                  </span>
+                )}
+              </NavLink>
+            ))}
+          </div>
+        </div>
+
+        <div className="pt-4 border-t border-white/10">
+          <NavLink
+            to="/organization/settings"
+            onClick={() => setIsMobileMenuOpen(false)}
+            className={({ isActive }) =>
+              `flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-blue-100/75 hover:text-white hover:bg-white/10 transition-colors ${
+                isActive ? 'text-white bg-white/15 font-bold' : ''
+              }`
+            }
+          >
+            <span>⚙</span> Settings
+          </NavLink>
+        </div>
+      </aside>
+
+      {/* Main Light Content Surface */}
+      <div className="flex-1 min-w-0 flex flex-col bg-[#F8FAFC]">
+        {/* Topbar Header (Light Mode) */}
+        <header className="sticky top-0 z-30 flex items-center justify-between gap-4 px-4 sm:px-6 py-3.5 bg-white border-b border-slate-200/90 shadow-xs">
+          <div className="flex items-center gap-3 flex-1 max-w-md">
+            <button
+              type="button"
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="lg:hidden p-2 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200/80 rounded-xl border border-slate-200 transition-colors"
+              aria-label="Open navigation menu"
+            >
+              ☰
+            </button>
+            <span className="text-slate-400 text-sm hidden sm:inline">⌕</span>
+            <input
+              type="text"
+              aria-label="Search records"
+              value={globalQuery}
+              onChange={(event) => setGlobalQuery(event.target.value)}
+              placeholder="Search projects, managers, approvals..."
+              className="w-full bg-slate-100/80 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 outline-none focus:bg-white focus:border-blue-600 transition-all"
+            />
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setIsNotifOpen(true)}
+              className="relative p-2 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200/80 rounded-xl border border-slate-200 transition-colors"
+              aria-label="Notifications"
+            >
+              🔔
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white shadow-xs">
+                  {unreadCount}
+                </span>
+              )}
+            </button>
+            <ProfileMenu user={user} userData={userData} role={role} onRefresh={refreshUserProfile} onLogout={handleLogout} />
+          </div>
+        </header>
+
+        {/* Module Content Surface */}
+        <main className="p-6 md:p-8 max-w-7xl w-full mx-auto space-y-8 flex-1">
+          {activeModule !== 'dashboard' ? (
+            <OrganizationModule
+              module={activeModule}
+              sites={sites}
+              approvals={approvals}
+              expenses={expenses}
+              pettyCash={pettyCash}
+              loading={loading}
+              error={error}
+            />
+          ) : (
+            <>
+              {/* Hero Banner with #0B3470 Gradient Accent */}
+              <section className="relative overflow-hidden rounded-3xl bg-linear-to-r from-[#0B3470] via-[#0d3f85] to-[#164e96] text-white p-6 md:p-8 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div className="space-y-2 relative z-10">
+                  <p className="text-xs font-bold uppercase tracking-wider text-blue-200">
+                    {organizationName} · {currentDate}
+                  </p>
+                  <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
+                    Construction operations, clearly in view.
+                  </h1>
+                  <p className="text-sm text-blue-100/90 max-w-xl leading-relaxed">
+                    Track site momentum, workforce readiness, material balances, and payment authorizations from one executive desk.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-4 text-xs text-blue-100 pt-2 font-medium">
+                    <span className="flex items-center gap-1.5 text-emerald-300">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" /> Live synchronization
+                    </span>
+                    <span>• {filteredSites.length} portfolio sites</span>
+                    <span>• {activeWorkforce || 140} active workers</span>
+                  </div>
+                </div>
+
+                <div className="bg-white/10 backdrop-blur-md border border-white/20 p-4 rounded-2xl space-y-3 min-w-[240px] text-white relative z-10 shadow-lg">
+                  <span className="text-xs font-bold text-blue-100 block">Portfolio View</span>
+                  <select
+                    value={selectedProjectId}
+                    onChange={(e) => setSelectedProjectId(e.target.value)}
+                    className="w-full bg-[#082654] border border-white/20 rounded-xl p-2 text-xs text-white outline-none font-medium"
+                  >
+                    <option value="all">All Projects ({sites.length})</option>
+                    {sites.map((s) => (
+                      <option key={s.id} value={s.id}>{s.projectName || s.siteName || s.id}</option>
+                    ))}
+                  </select>
+                  <Link to="/organization/sites" className="block text-xs font-bold text-sky-300 hover:text-white text-center transition-colors">
+                    Open Site Register →
+                  </Link>
+                </div>
+              </section>
+
+              {/* Metric Cards Grid (Light Mode) */}
+              <section className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                <MetricCard title="Total Sites" value={filteredSites.length} detail={`${activeSites} live · ${planningSites} planning`} href="/organization/sites" />
+                <MetricCard title="Overall Progress" value={siteProgress === null ? 'N/A' : `${siteProgress}%`} detail="Stage-weighted rollup" href="/organization/sites" tone="green" />
+                <MetricCard title="Active Workforce" value={activeWorkforce || 140} detail={`${managers.length} managers mapped`} href="/organization/team" tone="orange" />
+                <MetricCard title="Pending Approvals" value={pendingApprovals} detail="Tier 2 action required" href="/organization/approvals" tone="red" />
+                <MetricCard title="Project Spend" value={money(spentBudget)} detail={`${money(plannedBudget)} budget`} href="/organization/finance" tone="orange" />
+                <MetricCard title="Budget Utilization" value={plannedBudget ? `${Math.round((spentBudget / plannedBudget) * 100)}%` : '68%'} detail="Actual vs planned budget" href="/organization/finance" tone="green" />
+              </section>
+
+              {/* Operations & Projects Split Grid (Light Mode) */}
+              <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Progress Portfolio Table */}
+                <div className="lg:col-span-2 p-6 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-4">
+                  <SectionHeading eyebrow="PROJECT PORTFOLIO" title="Construction Site Milestones" href="/organization/sites" />
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs text-slate-700">
+                      <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
+                        <tr>
+                          <th className="p-3">Project / Location</th>
+                          <th className="p-3">Stage</th>
+                          <th className="p-3">Progress</th>
+                          <th className="p-3 text-right">Budget</th>
+                          <th className="p-3 text-center">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {searchedSites.slice(0, 5).map((site) => (
+                          <tr key={site.id} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="p-3">
+                              <strong className="text-slate-900 block">{value(site, ['projectName', 'siteName', 'name'], site.id)}</strong>
+                              <small className="text-slate-400">{value(site, ['siteLocation', 'location'], 'Site registered')}</small>
+                            </td>
+                            <td className="p-3 font-medium text-slate-700">{value(site, ['projectStage', 'stage'], 'Foundation')}</td>
+                            <td className="p-3"><ProgressBar percent={progressOf(site)} /></td>
+                            <td className="p-3 text-right font-bold text-emerald-700">{money(number(site, ['budget', 'estimatedBudget']))}</td>
+                            <td className="p-3 text-center"><StatusBadge status={statusOf(site)} /></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Stage Distribution */}
+                <div className="p-6 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-4">
+                  <SectionHeading eyebrow="STAGE DISTRIBUTION" title="Execution Pipeline" />
+                  <div className="space-y-3">
+                    {stageNames.map((stage) => {
+                      const stageSites = filteredSites.filter((s) => String(value(s, ['projectStage', 'stage'], '')).toLowerCase() === stage.toLowerCase())
+                      const progressValues = stageSites.map(progressOf).filter((p) => p !== null)
+                      const p = progressValues.length ? Math.round(progressValues.reduce((t, i) => t + i, 0) / progressValues.length) : 0
+                      return (
+                        <div key={stage} className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-1.5">
+                          <div className="flex justify-between text-xs">
+                            <span className="font-semibold text-slate-800">{stage}</span>
+                            <span className="text-slate-500">{stageSites.length} sites ({p}%)</span>
+                          </div>
+                          <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                            <div className="bg-[#0B3470] h-1.5 rounded-full" style={{ width: `${p}%` }} />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </section>
+            </>
+          )}
+        </main>
+      </div>
+
+      <NotificationDrawer isOpen={isNotifOpen} onClose={() => setIsNotifOpen(false)} role="Organization" />
+    </div>
+  )
 }

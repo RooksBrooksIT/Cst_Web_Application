@@ -1,0 +1,1061 @@
+====================================================================================================
+                        EBRICKS / CST - WHITE LABEL WEB APPLICATION
+                 COMPLETE MIGRATION BLUEPRINT & TECHNICAL SPECIFICATION
+                 ORGANIZATION & MANAGER WORKFLOWS, BACKEND & ARCHITECTURE
+====================================================================================================
+Document Version: 1.1.0
+Stack: React (JavaScript / JSX) + Node.js (JavaScript / Express / Cloud Functions) + Firebase Suite
+Database: Cloud Firestore (Multi-Tenant Org Partitioning)
+Storage: Firebase Storage (GCS)
+Authentication: Firebase Authentication with Custom Claims RBAC
+
+====================================================================================================
+TABLE OF CONTENTS
+====================================================================================================
+1. EXECUTIVE SUMMARY & MIGRATION GOALS
+2. COMPLETE ORGANIZATION MODULE WORKFLOWS & FUNCTIONAL SPECIFICATION
+   2.1 Organization Landing, Authentication & Subscription Lifecycle
+   2.2 Organization Dashboard & High-Level KPI Matrix
+   2.3 Project & Site Management (Creation, Stages, Allocation, Budgets)
+   2.4 Manager & Supervisor Administration & Role Mapping
+   2.5 Material & Inventory Master Management
+   2.6 Tools & Equipment Central Tracking
+   2.7 Petty Cash Corporate Governance (Allocations, Dispatches, Top-ups)
+   2.8 Site Payment Approvals Workflow (3-Tier Approval Pipeline)
+   2.9 Organization Expenses & Financial Accounting
+   2.10 Corporate Notifications, Real-time Tray Alerts & Routing
+   2.11 Analytics, Insights & PDF/Excel Reporting Engine
+3. COMPLETE MANAGER MODULE WORKFLOWS & FUNCTIONAL SPECIFICATION
+   3.1 Manager Dashboard & Quick Operation Hub
+   3.2 Project Configuration & Multi-Step Site Setup Wizard
+   3.3 Daily Site Operations & Supervisor Coordination
+   3.4 Workforce Planning, Contractor Entries & Daily Wage Logs
+   3.5 Material Management (Stock Requisitions, Inward Deliveries, Inter-Site Transfers)
+   3.6 Tools Movement, Tracking & Site Allocations
+   3.7 Daily Site Progress Logs & Stage Milestones
+   3.8 Site Expenses & Manager Cash Advances
+   3.9 Petty Cash Operations (Site Requests, Vouchers, Settlements)
+   3.10 Site Payment Approval Execution (Stage 1 Review & Stage 3 Clearance)
+   3.11 Vehicle & Driver Fleet Management
+   3.12 Manager Notification Feed & Dynamic Deep-Linking Routing
+   3.13 Manager Reports, PDF Exports & Financial Status
+4. TECHNICAL ARCHITECTURE & BACKEND STRUCTURE (JAVASCRIPT ECOSYSTEM)
+   4.1 Recommended React Frontend Directory Structure (JavaScript / JSX)
+   4.2 Recommended Node.js Backend / Cloud Functions Directory Structure (JavaScript)
+   4.3 Firebase Authentication, Custom Claims & RBAC Security Matrix
+   4.4 Firestore Multi-Tenant Schema & Document Structure (Exhaustive Field Models)
+   4.5 Firebase Cloud Functions & Background Workers (JavaScript)
+   4.6 Firebase Storage File Hierarchy & Asset Governance
+   4.7 Real-time Notification Engine (FCM, Web Push, In-App Tray Bridge)
+   4.8 API Endpoints & Service-Layer Architecture (JavaScript)
+   4.9 Security Rules (Firestore & Storage)
+   4.10 Offline Support, Local Caching & Real-time State Synchronization
+   4.11 Audit Logging, Ledger Immutability & Compliance Tracking
+5. WEB APPLICATION UX/UI REQUIREMENTS & RESPONSIVE DESIGN SPECIFICATION
+   5.1 Desktop & Tablet Layout Architecture (Data Grids, Split Views, Modals)
+   5.2 Existing Mobile Features vs. Web Optimized Enhancements
+   5.3 Transition, Migration & Rollout Strategy
+
+====================================================================================================
+1. EXECUTIVE SUMMARY & MIGRATION GOALS
+====================================================================================================
+The goal of this migration is to transition the existing eBricks / CST Construction Suite from a 
+Flutter-based mobile application to a high-performance, responsive React Web Application built 
+entirely in **JavaScript (ES6+ / JSX)** backed by **Node.js (JavaScript / Express)** and Firebase Services.
+
+The web platform will serve as the primary operational command center for Organizations (Enterprise 
+Owners, Managing Directors, Finance Heads) and Managers (Project Heads, General Managers, Site 
+Engineers), while maintaining full real-time interoperability with field mobile clients (Supervisors, 
+Contractors, Drivers).
+
+Core Principles:
+1. Complete Parity: Every existing business rule, approval threshold, financial calculation, and 
+   state machine transition must be preserved exactly as currently executed in the mobile app.
+2. Responsive Desktop/Tablet Ergonomics: Replace mobile scroll views with rich desktop data grids, 
+   multi-column financial comparison matrices, split-pane approval inspectors, and quick-filter toolbars.
+3. Multi-Tenant Data Isolation: Strict logical and cryptographic data partitioning across organization 
+   tenants (`orgId`).
+4. Instantaneous Synchronization: Bidirectional reactive state syncing via Firestore WebSocket listeners 
+   and real-time notifications for cross-role collaboration.
+5. Pure JavaScript Implementation: Modern, clean JavaScript with ES Modules, PropTypes for runtime 
+   validation, and standardized async/await architecture.
+
+====================================================================================================
+2. COMPLETE ORGANIZATION MODULE WORKFLOWS & FUNCTIONAL SPECIFICATION
+====================================================================================================
+
+2.1 Organization Landing, Authentication & Subscription Lifecycle
+----------------------------------------------------------------------------------------------------
+- User Entry: Dedicated corporate login page with email/password and multi-factor capabilities.
+- Registration & Org Provisioning:
+  * Capture Organization Legal Name, Registration Number, Admin Name, Email, Phone, Office Address, 
+    GSTIN, and Corporate Currency.
+  * Generates a unique, immutable `orgId`.
+- Subscription & PayU Payment Gateway Integration:
+  * Plans: Base, Professional, Enterprise (configured by active sites, active managers, storage quota).
+  * PayU Checkout Screen with hash verification, payment verification webhook, and automated invoice 
+    generation.
+  * Enforces subscription limits across Site creation, Manager provisioning, and Document uploads via 
+    `subscriptionLimitService.js`.
+- Password Reset & Security Center: Secure token-based password reset and active session governance.
+
+2.2 Organization Dashboard & High-Level KPI Matrix
+----------------------------------------------------------------------------------------------------
+The Organization Dashboard represents the high-level executive control tower.
+- Header Metric Banner:
+  * Total Active Projects & Active Sites count.
+  * Aggregate Material Value in stock across all sites.
+  * Active Workforce Count (Daily On-site Workers + Sub-contractor headcount).
+  * Cumulative Petty Cash Balance (Total Dispatched vs Total Spent vs Available Balance).
+  * Pending Multi-tier Approvals Badge (combining Payments, Materials, Tools, and Workforce).
+- Interactive Financial KPI Cards:
+  * Total Project Budget vs Cumulative Site Expenses vs Invoiced Value.
+  * Burn Rate Analysis (Weekly & Monthly Expense Velocity).
+  * Over-budget & Critical Stage Warning Indicators.
+- Navigation Quick Hub:
+  * Direct jump cards to Projects, Sites, Managers, Workforce, Materials, Tools, Finance, and Reports.
+
+2.3 Project & Site Management
+----------------------------------------------------------------------------------------------------
+- Project Lifecycle:
+  * Create/Edit Project: Project Name, Client Name, Project Code, Budget, Planned Start/End Dates, 
+    Project Category (Commercial, Residential, Industrial, Infrastructure).
+  * Project Stages: Foundation, Structure, Masonry, MEP, Finishing, Handover (Customizable stage names 
+    and estimated percentage weights).
+- Site Lifecycle & Spatial Allocation:
+  * Add Site under Project: Site Name, Site Code, Address, Geolocation Coordinates, Geofence Radius, 
+    Site Budget, Estimated Completion Date.
+  * Site Manager Allocation: Map one or more verified Managers to the site.
+  * Site Supervisor Allocation: Assign active supervisors to designated site sections or stages.
+  * Site Financial Overview: Site-level expenditure breakdown (Materials, Labour, Machinery, Petty Cash, 
+    Contractors, Overheads).
+  * Layout & Blueprint Drawings Viewer: Support for multi-sheet CAD/PDF/Image blueprint viewing with 
+    versioning.
+
+2.4 Manager & Supervisor Administration & Role Mapping
+----------------------------------------------------------------------------------------------------
+- Manager Provisioning:
+  * Create Manager Profile: Full Name, Official Email, Phone, Assigned Department, Employee ID, 
+    Account Credentials.
+  * Site Mapping: Multi-select sites assigned to the Manager.
+  * Permissions & Limits: Custom approval limits for site payments, material requisitions, and cash top-ups.
+- Supervisor Roster:
+  * View active supervisors across all sites.
+  * Re-assign supervisors between sites or revoke active credentials.
+  * Track supervisor daily check-ins and GPS clock-in logs.
+
+2.5 Material & Inventory Master Management
+----------------------------------------------------------------------------------------------------
+- Material Master Catalogue:
+  * Hierarchical categorization: Category (e.g., Cement, Steel, Aggregates, Electrical, Plumbing) -> 
+    Sub-Category -> Material Item -> Standard Unit of Measurement (Bags, Metric Tonnes, CFT, Meters, Nos).
+  * Minimum Threshold Alerts: Configurable low-stock triggers per site.
+- Multi-Site Inventory Monitoring:
+  * Live cross-site stock matrix: Real-time quantities available at each site warehouse.
+  * Inward Delivery Audits: Verification of Goods Received Notes (GRN), delivery challans, supplier invoices, 
+    and quality check reports.
+  * Inter-Site Material Transfer Approvals: Review transfer requests between site inventories with driver 
+    and vehicle dispatch validation.
+
+2.6 Tools & Equipment Central Tracking
+----------------------------------------------------------------------------------------------------
+- Machinery & Tools Asset Register:
+  * Categorization: Heavy Machinery (Excavators, Cranes, Batching Plants), Power Tools (Drills, Cutters, 
+    Generators), Hand Tools, Safety Gear.
+  * Tracking Fields: Asset Tag / Barcode, Make/Model, Purchase Date, Purchase Price, Maintenance Schedule, 
+    Ownership (Owned vs Leased/Rented).
+- Movement & Transfer Governance:
+  * Review tool dispatch and receipt acknowledgments across sites.
+  * Track maintenance downtime, breakdown tickets, and rental billing cycles.
+
+2.7 Petty Cash Corporate Governance
+----------------------------------------------------------------------------------------------------
+- Cash Account Top-up & Dispatch:
+  * Corporate approval for Site Manager & Supervisor Petty Cash Top-up Requests.
+  * Fund Dispatch Recording: Transaction Mode (Bank NEFT/RTGS, UPI, Cash), Reference Number, Cheque Number, 
+    Payment Date, Transfer Receipt Attachment.
+- Central Petty Cash Ledger:
+  * Real-time ledger of all vouchers submitted by Supervisors and approved by Managers.
+  * Categorized breakdown: Local Site Purchases, Emergency Travel, Daily Food/Tea, Loading/Unloading, 
+    Minor Repair.
+  * Settlement and balance reconciliation auditing.
+
+2.8 Site Payment Approvals Workflow (3-Tier Approval Pipeline)
+----------------------------------------------------------------------------------------------------
+The application utilizes an enterprise 3-tier approval lifecycle for all vendor, contractor, and milestone 
+payments:
+  * Tier 1 (Manager Review): Manager validates site progress, measurement sheet, invoice authenticity, 
+    and attaches verification notes.
+  * Tier 2 (Organization Approval): Executive/Finance team reviews budget allocation, approves/rejects/holds 
+    the payment amount, and selects funding source.
+  * Tier 3 (Manager Clearance): Manager issues payment release note, verifies banking transaction reference, 
+    and attaches final payment voucher.
+- Organization Review Actions:
+  * Interactive batch approval / rejection with mandatory reason recording.
+  * Dynamic filtering: Pending Org Approval, Approved, Rejected, Cleared.
+  * Verification of attached contractor bills, measurement sheets, and supervisor sign-offs.
+
+2.9 Organization Expenses & Financial Accounting
+----------------------------------------------------------------------------------------------------
+- Expense Ledger:
+  * Central ledger tracking all site-level and headquarters overhead expenses.
+  * Categories: Site Operational, Contractor Advances, Material Vendor Payments, Equipment Rentals, 
+    Staff Payroll, Licensing & Compliance, Utility & Fuel.
+- Budget Variance & Cash Flow Analysis:
+  * Visual comparison: Planned Budget vs Actual Expense per Project Stage.
+  * Cost-to-Complete projections and historical expense burn analytics.
+
+2.10 Corporate Notifications, Real-time Tray Alerts & Routing
+----------------------------------------------------------------------------------------------------
+- Multi-channel notification dispatch: FCM Web Push, Desktop In-App Banner, and Notification Center Tray.
+- Filter Categories: All, Unread, Payments, Materials, Tools, Workforce, Sites, Scheduled.
+- Dynamic Action Routing: Clicking any notification immediately deep-links to the corresponding 
+  approval screen or record inspector.
+
+2.11 Analytics, Insights & PDF/Excel Reporting Engine
+----------------------------------------------------------------------------------------------------
+- Comprehensive Report Generation:
+  * Daily Site Progress Report (DSR).
+  * Comprehensive Financial Status & Stage-wise Expense Variance Report.
+  * Material Stock & Inward/Outward Consumption Report.
+  * Labour Attendance, Daily Wage & Contractor Incentive Calculation Sheet.
+  * Petty Cash Statement & Voucher Reconciliation Sheet.
+  * Vehicle Fleet Fuel & Mileage Utilization Report.
+- Export Formats: High-resolution PDF with corporate branding/letterhead, and Excel (XLSX/CSV) data sheets.
+
+====================================================================================================
+3. COMPLETE MANAGER MODULE WORKFLOWS & FUNCTIONAL SPECIFICATION
+====================================================================================================
+
+3.1 Manager Dashboard & Quick Operation Hub
+----------------------------------------------------------------------------------------------------
+The Manager Dashboard is the operational workspace for day-to-day site administration.
+- Dashboard Highlights:
+  * Assigned Sites Overview & Status (Active, On-Hold, Completed).
+  * Real-time Daily Attendance summary across assigned sites.
+  * Pending Action Counters (Material Requests, Tool Requests, Payment Reviews, Cash Requests).
+  * Today's Planned vs Actual Stage Progress.
+- Quick Actions Toolbar:
+  * Create New Site / Setup Wizard.
+  * Dispatch Material / Initiate Transfer.
+  * Create Labour Daily Entry / Contractor Measurement.
+  * Submit Manager Expense / Cash Advance.
+  * Initiate Petty Cash Request.
+
+3.2 Project Configuration & Multi-Step Site Setup Wizard
+----------------------------------------------------------------------------------------------------
+- Interactive Project & Site Setup Wizard:
+  * Step 1: Basic Site Info (Name, Client, Location, Budget, Duration).
+  * Step 2: Stage & Sub-Stage Milestones Setup (Weightage %, Deadlines).
+  * Step 3: Material Requirement Estimation (BOM - Bill of Materials).
+  * Step 4: Supervisor & Sub-Contractor Site Mapping.
+  * Step 5: Initial Petty Cash & Tool Allocation.
+- Drawing & Document Management:
+  * Upload architectural drawings, structural layouts, MEP diagrams, and soil reports.
+  * Revision tagging (Rev 1, Rev 2, As-Built) with supervisor access control.
+
+3.3 Daily Site Operations & Supervisor Coordination
+----------------------------------------------------------------------------------------------------
+- Real-time Supervisor Feed:
+  * Monitor supervisor morning clock-ins and evening site progress entries.
+  * Live weather, work delays, and hindrance logging (e.g., rain, power outage, material shortage).
+  * Photo gallery: Before/after stage execution photos with GPS and timestamp watermarks.
+
+3.4 Workforce Planning, Contractor Entries & Daily Wage Logs
+----------------------------------------------------------------------------------------------------
+- Direct Workforce Management:
+  * Labour Roster: Skill categorization (Mason, Carpenter, Bar Bender, Electrician, Plumber, Helper).
+  * Daily Attendance & Wage Recording: Regular Hours, Overtime (OT) Hours, Shift Wage calculation.
+- Sub-Contractor Management:
+  * Contractor Profiles & Work Orders (Quantity-based vs Rate-based contracts).
+  * Daily Contractor Entry: Work measurement (e.g., Sq.ft plastering, Metric Ton steel tying), 
+    headcount verification, and daily progress sign-off.
+  * Contractor Incentive & Deductions Calculation Engine.
+
+3.5 Material Management (Stock Requisitions, Inward Deliveries, Inter-Site Transfers)
+----------------------------------------------------------------------------------------------------
+- Site Material Requisitions:
+  * Raise material purchase requests to Organization / Central Procurement.
+  * Specify item, quantity, urgency (Low, Medium, Critical), and required delivery date.
+- Goods Received Note (GRN) Inward Processing:
+  * Inspect delivered goods against Purchase Orders.
+  * Record delivered quantity, damaged quantity, invoice/challan number, vehicle number, and vendor slip.
+  * Instant stock balance auto-increment upon GRN submission.
+- Inter-Site Material Transfer:
+  * Dispatch stock from Site A to Site B.
+  * Assign Driver and Vehicle.
+  * Supervisor at receiving Site B performs inward verification before stock leaves in-transit state.
+
+3.6 Tools Movement, Tracking & Site Allocations
+----------------------------------------------------------------------------------------------------
+- Tool Requisitions: Request tools from central store or adjacent sites.
+- Tool Inward / Outward Movement:
+  * Issue tools to specific supervisors or sub-contractors with signature / digital acknowledgment.
+  * Record tool condition (Good, Minor Wear, Needs Repair, Broken).
+  * Schedule routine maintenance and safety certification checks.
+
+3.7 Daily Site Progress Logs & Stage Milestones
+----------------------------------------------------------------------------------------------------
+- Daily Progress Logging:
+  * Percentage completion updates per stage.
+  * Concrete pouring logs (Cube test IDs, batching time, slump test results).
+  * Milestone verification and sign-off for client billing.
+
+3.8 Site Expenses & Manager Cash Advances
+----------------------------------------------------------------------------------------------------
+- Expense Incurrence & Logging:
+  * Record site operating expenses (local equipment hire, municipal fees, site security, water tankers).
+  * Attach GST tax invoices, payment mode, and payee details.
+- Manager Cash Advance Account:
+  * Track advance funds received from Organization.
+  * Balance ledger reconciling total advances against submitted expense bills.
+
+3.9 Petty Cash Operations (Site Requests, Vouchers, Settlements)
+----------------------------------------------------------------------------------------------------
+- Supervisor Petty Cash Supervision:
+  * Review and approve/reject voucher submissions raised by Site Supervisors.
+  * View itemized expense receipts and photos.
+- Top-Up Requests to Organization:
+  * Request petty cash fund replenishment when site balance falls below buffer threshold.
+  * Provide justification and audit statement of previous disbursement.
+
+3.10 Site Payment Approval Execution (Stage 1 Review & Stage 3 Clearance)
+----------------------------------------------------------------------------------------------------
+- Tier 1 Manager Review:
+  * Review pending contractor payment claims.
+  * Verify physical progress against bill quantities.
+  * Approve claim and forward to Organization with technical remarks.
+- Tier 3 Manager Clearance:
+  * Following Organization approval, Manager verifies actual fund disbursement from corporate account.
+  * Enter bank transaction UTR / Reference, date of payment, and issue payment clearance voucher.
+
+3.11 Vehicle & Driver Fleet Management
+----------------------------------------------------------------------------------------------------
+- Fleet Registry:
+  * Track trucks, tippers, tractors, and utility vehicles.
+  * Registration Number, Vehicle Type, Capacity, Insurance Expiry, Fitness Certificate (FC) Expiry, 
+    Pollution Certificate (PUC).
+- Driver Allocation & Trip Logs:
+  * Assign verified drivers to specific vehicles.
+  * Record trip logs: Origin Site, Destination Site, Material Loaded, Odometer Start/End, Fuel Incurred.
+
+3.12 Manager Notification Feed & Dynamic Deep-Linking Routing
+----------------------------------------------------------------------------------------------------
+- Centralized Manager Notification Feed:
+  * Filter categories: All, Unread, Materials, Tools, Payments, Workforce, Sites.
+  * Search by site name, supervisor name, request ID, or keywords.
+  * Real-time read/unread sync and "Mark All Read" capability.
+- Back Button & Navigation Rule:
+  * Exiting the notification center always returns directly to the Manager Dashboard without looping 
+    through intermediate screens.
+  * Tapping any notification card dynamically deep-links directly into the respective module 
+    (Sites, Petty Cash, Materials, Tools Movement, Workforce, Expenses, Site Payments).
+
+3.13 Manager Reports, PDF Exports & Financial Status
+----------------------------------------------------------------------------------------------------
+- Generate localized Site Reports: Daily Progress, Material Consumption, Tool Inventory, Labour Sheets.
+- Instant PDF preview and high-resolution printing.
+
+====================================================================================================
+4. TECHNICAL ARCHITECTURE & BACKEND STRUCTURE (JAVASCRIPT ECOSYSTEM)
+====================================================================================================
+
+4.1 Recommended React Frontend Directory Structure (JavaScript / JSX)
+----------------------------------------------------------------------------------------------------
+web-app/
+├── public/
+│   ├── favicon.ico
+│   ├── logo192.png
+│   ├── manifest.json
+│   ├── firebase-messaging-sw.js    # Background FCM push service worker (JavaScript)
+│   └── assets/
+│       ├── brand/
+│       └── illustrations/
+├── src/
+│   ├── api/                        # HTTP & Axios client configurations
+│   │   ├── apiClient.js
+│   │   ├── endpoints.js
+│   │   └── interceptors.js
+│   ├── assets/                     # SVGs, Icons, Styles
+│   │   ├── icons/
+│   │   └── styles/
+│   │       ├── main.css
+│   │       └── variables.css
+│   ├── components/                 # Reusable Component Library (JSX)
+│   │   ├── common/
+│   │   │   ├── Button.jsx
+│   │   │   ├── DataGrid.jsx        # Data table with multi-sort, filter & export
+│   │   │   ├── Modal.jsx
+│   │   │   ├── InputField.jsx
+│   │   │   ├── SelectDropdown.jsx
+│   │   │   ├── StatusBadge.jsx
+│   │   │   └── FileUploader.jsx
+│   │   ├── feedback/
+│   │   │   ├── Toast.jsx
+│   │   │   ├── ConfirmationDialog.jsx
+│   │   │   └── LoadingSkeleton.jsx
+│   │   ├── layout/
+│   │   │   ├── AppLayout.jsx
+│   │   │   ├── Header.jsx
+│   │   │   ├── Sidebar.jsx
+│   │   │   ├── NotificationDrawer.jsx
+│   │   │   └── Breadcrumbs.jsx
+│   │   ├── cards/
+│   │   │   ├── MetricCard.jsx
+│   │   │   ├── FinancialCard.jsx
+│   │   │   └── ApprovalCard.jsx
+│   │   └── widgets/
+│   │       ├── ApprovalLifecycleStepper.jsx
+│   │       ├── BudgetProgressBar.jsx
+│   │       └── StageMilestoneTimeline.jsx
+│   ├── config/                     # Firebase, constants & routing config
+│   │   ├── firebase.js             # Firebase client initialization
+│   │   ├── routes.js               # Route paths constants
+│   │   └── theme.js                # Design tokens & color palettes
+│   ├── context/                    # React Contexts
+│   │   ├── AuthContext.jsx         # User credentials, role, orgId state
+│   │   ├── TenantContext.jsx       # Multi-tenant active organization state
+│   │   └── NotificationContext.jsx # Real-time notification socket & count
+│   ├── hooks/                      # Custom React hooks (JavaScript)
+│   │   ├── useAuth.js
+│   │   ├── useFirestoreQuery.js
+│   │   ├── useRealtimeNotifications.js
+│   │   ├── usePermissions.js
+│   │   ├── useDebounce.js
+│   │   └── useExportExcel.js
+│   ├── layouts/                    # Role-based shell layouts
+│   │   ├── AuthLayout.jsx
+│   │   ├── OrganizationLayout.jsx
+│   │   └── ManagerLayout.jsx
+│   ├── modules/                    # Feature domains (Domain-Driven Design)
+│   │   ├── auth/
+│   │   │   ├── LoginPage.jsx
+│   │   │   ├── RegisterPage.jsx
+│   │   │   ├── ResetPasswordPage.jsx
+│   │   │   └── PricingPage.jsx
+│   │   ├── organization/
+│   │   │   ├── dashboard/
+│   │   │   │   ├── OrgDashboardPage.jsx
+│   │   │   │   └── components/
+│   │   │   ├── projects/
+│   │   │   │   ├── ProjectsListPage.jsx
+│   │   │   │   └── ProjectDetailsPage.jsx
+│   │   │   ├── sites/
+│   │   │   │   ├── OrgSitesListPage.jsx
+│   │   │   │   ├── SiteFinancialsPage.jsx
+│   │   │   │   └── BlueprintViewerPage.jsx
+│   │   │   ├── managers/
+│   │   │   │   ├── ManagersRosterPage.jsx
+│   │   │   │   └── ManagerProvisionModal.jsx
+│   │   │   ├── materials/
+│   │   │   │   ├── MaterialMasterPage.jsx
+│   │   │   │   └── StockMatrixPage.jsx
+│   │   │   ├── tools/
+│   │   │   │   ├── ToolsMasterPage.jsx
+│   │   │   │   └── ToolMovementAuditPage.jsx
+│   │   │   ├── pettyCash/
+│   │   │   │   ├── OrgPettyCashPage.jsx
+│   │   │   │   └── CashDispatchModal.jsx
+│   │   │   ├── approvals/
+│   │   │   │   ├── OrgApprovalsCenterPage.jsx
+│   │   │   │   └── PaymentApprovalSplitView.jsx
+│   │   │   ├── expenses/
+│   │   │   │   ├── OrgExpensesPage.jsx
+│   │   │   │   └── ExpenseAnalyticsPage.jsx
+│   │   │   ├── reports/
+│   │   │   │   ├── ReportGeneratorPage.jsx
+│   │   │   │   └── ReportPdfPreview.jsx
+│   │   │   └── settings/
+│   │   │       ├── OrgProfilePage.jsx
+│   │   │       └── SubscriptionBillingPage.jsx
+│   │   └── manager/
+│   │       ├── dashboard/
+│   │       │   ├── ManagerDashboardPage.jsx
+│   │       │   └── components/
+│   │       ├── siteWizard/
+│   │       │   ├── SiteSetupWizardPage.jsx
+│   │       │   └── steps/
+│   │       ├── sites/
+│   │       │   ├── ManagerSitesListPage.jsx
+│   │       │   └── ManagerSiteDetailPage.jsx
+│   │       ├── workforce/
+│   │       │   ├── WorkersConfigPage.jsx
+│   │       │   ├── DailyAttendancePage.jsx
+│   │       │   └── ContractorEntryPage.jsx
+│   │       ├── materials/
+│   │       │   ├── MaterialRequisitionPage.jsx
+│   │       │   ├── MaterialInwardGRNPage.jsx
+│   │       │   └── InterSiteTransferPage.jsx
+│   │       ├── toolsMovement/
+│   │       │   ├── ToolsMovementPage.jsx
+│   │       │   └── ToolIssueModal.jsx
+│   │       ├── dailyLogs/
+│   │       │   ├── DailyProgressLogPage.jsx
+│   │       │   └── HindranceLogModal.jsx
+│   │       ├── pettyCash/
+│   │       │   ├── ManagerPettyCashPage.jsx
+│   │       │   └── VoucherApprovalModal.jsx
+│   │       ├── approvals/
+│   │       │   ├── ManagerPaymentApprovalPage.jsx
+│   │       │   └── PaymentClearanceModal.jsx
+│   │       ├── fleet/
+│   │       │   ├── VehicleInventoryPage.jsx
+│   │       │   └── DriverMappingPage.jsx
+│   │       ├── notifications/
+│   │       │   └── ManagerNotificationPage.jsx
+│   │       └── reports/
+│   │           ├── ManagerReportsPage.jsx
+│   │           └── SiteDsrPdfView.jsx
+│   ├── routes/                     # Router configurations
+│   │   ├── AppRoutes.jsx
+│   │   ├── ProtectedRoute.jsx
+│   │   └── RoleGuard.jsx
+│   ├── services/                   # Frontend Firebase & API Services (JavaScript)
+│   │   ├── authService.js
+│   │   ├── firestoreService.js
+│   │   ├── storageService.js
+│   │   ├── notificationService.js
+│   │   ├── exportService.js
+│   │   └── pdfGeneratorService.js
+│   ├── utils/                      # Formatting, Validators, Date Helpers (JavaScript)
+│   │   ├── currency.js
+│   │   ├── dateFormat.js
+│   │   ├── validators.js
+│   │   └── math.js
+│   ├── App.jsx
+│   ├── index.css
+│   └── main.jsx
+├── index.html
+├── package.json
+├── jsconfig.json                   # Path aliases for JavaScript (e.g. "@/*")
+├── tailwind.config.js
+└── vite.config.js
+
+4.2 Recommended Node.js Backend / Cloud Functions Directory Structure (JavaScript)
+----------------------------------------------------------------------------------------------------
+backend/
+├── src/
+│   ├── config/                     # Environment & Firebase Admin initialization
+│   │   ├── firebaseAdmin.js
+│   │   └── environment.js
+│   ├── constants/                  # System constants, HTTP Statuses, Role Enums
+│   │   ├── roles.js
+│   │   └── approvalStates.js
+│   ├── controllers/                # Request & Response Handlers
+│   │   ├── authController.js
+│   │   ├── paymentGatewayController.js
+│   │   ├── approvalController.js
+│   │   ├── reportController.js
+│   │   └── notificationController.js
+│   ├── functions/                  # Firebase Cloud Functions (JavaScript)
+│   │   ├── authTriggers/
+│   │   │   └── onUserCreate.js
+│   │   ├── firestoreTriggers/
+│   │   │   ├── onNotificationCreated.js
+│   │   │   ├── onApprovalUpdated.js
+│   │   │   └── onStockAdjusted.js
+│   │   ├── scheduledJobs/
+│   │   │   ├── dailyFinancialRollup.js
+│   │   │   └── subscriptionChecker.js
+│   │   └── callable/
+│   │       ├── generatePdfReport.js
+│   │       └── verifyPayuHash.js
+│   ├── middleware/                 # Express & Firebase Security Middleware
+│   │   ├── authenticate.js         # Verify Firebase ID Token
+│   │   ├── authorizeRoles.js       # Role-based Access Guard
+│   │   ├── tenantValidator.js      # Validate orgId scoping
+│   │   ├── rateLimiter.js
+│   │   └── errorHandler.js
+│   ├── routes/                     # Express API Route Declarations
+│   │   ├── apiRouter.js
+│   │   ├── authRoutes.js
+│   │   ├── paymentsRoutes.js
+│   │   ├── approvalsRoutes.js
+│   │   └── reportsRoutes.js
+│   ├── services/                   # Business Logic & Third-Party Integrations
+│   │   ├── fcmService.js
+│   │   ├── payuService.js
+│   │   ├── pdfWorkerService.js
+│   │   ├── auditLoggerService.js
+│   │   └── stockEngineService.js
+│   ├── utils/                      # Helper utilities, cryptographic signers
+│   │   ├── cryptoHelper.js
+│   │   └── responseHandler.js
+│   └── server.js                   # Express server entry point
+├── tests/                          # Integration & Unit Tests (Jest / Mocha)
+├── package.json
+└── firestore.rules
+
+4.3 Firebase Authentication, Custom Claims & RBAC Security Matrix
+----------------------------------------------------------------------------------------------------
+Authentication uses Firebase Auth with Custom Claims set on the user's ID token using Firebase Admin Node.js SDK:
+
+```javascript
+// Node.js Cloud Function / Express Handler to set Custom Claims
+const setCustomUserRole = async (uid, orgId, role, assignedSites = []) => {
+  await admin.auth().setCustomUserClaims(uid, {
+    orgId: orgId.trim(),
+    role: role.trim().toLowerCase(),
+    assignedSites: assignedSites,
+  });
+};
+```
+
+Role Hierarchy:
+1. `organisation` (Enterprise Root Admin)
+2. `manager` (Project / General Manager)
+3. `supervisor` (Field Engineer / Supervisor)
+
+RBAC Access Matrix:
+| Feature / Action                         | Organization | Manager | Supervisor |
+|------------------------------------------|--------------|---------|------------|
+| Provision New Organization               | YES          | NO      | NO         |
+| Manage Corporate Subscription & PayU     | YES          | NO      | NO         |
+| Create Projects & Sites                  | YES          | YES     | NO         |
+| Assign Managers to Sites                 | YES          | NO      | NO         |
+| Assign Supervisors to Sites              | YES          | YES     | NO         |
+| Tier 1 Payment Review                    | YES          | YES     | NO         |
+| Tier 2 Organization Payment Approval     | YES          | NO      | NO         |
+| Tier 3 Manager Payment Clearance         | NO           | YES     | NO         |
+| Approve Petty Cash Dispatch to Sites     | YES          | NO      | NO         |
+| Approve Supervisor Petty Cash Vouchers   | YES          | YES     | NO         |
+| Submit Material Requisitions             | YES          | YES     | YES        |
+| Approve Inter-Site Material Transfers    | YES          | YES     | NO         |
+| Manage Vehicle & Driver Fleet            | YES          | YES     | NO         |
+| View Master Financial Ledger             | YES          | NO      | NO         |
+| View Site-specific Expenses              | YES          | YES     | NO         |
+
+4.4 Firestore Multi-Tenant Schema & Document Structure (Exhaustive Field Models)
+----------------------------------------------------------------------------------------------------
+To ensure strict multi-tenant isolation, all organizational data resides either in dedicated subcollections 
+under `organizations/{orgId}/` or in top-level collections with mandatory `orgId` filtering indexes.
+
+Schema Hierarchy:
+
+1. `organizations/{orgId}`
+   - `orgId`: String (Unique, e.g. "org_88192")
+   - `companyName`: String
+   - `registrationNumber`: String
+   - `gstin`: String
+   - `adminName`: String
+   - `email`: String
+   - `phone`: String
+   - `currency`: String (e.g. "INR", "USD")
+   - `subscription`: Map
+     * `planId`: String ("free", "pro", "enterprise")
+     * `status`: String ("active", "past_due", "canceled")
+     * `maxSites`: Number
+     * `maxManagers`: Number
+     * `expiresAt`: Timestamp
+   - `createdAt`: Timestamp
+   - `updatedAt`: Timestamp
+
+2. `organizations/{orgId}/projects/{projectId}`
+   - `projectId`: String
+   - `orgId`: String
+   - `projectName`: String
+   - `projectCode`: String
+   - `clientName`: String
+   - `totalBudget`: Number
+   - `startDate`: Timestamp
+   - `estimatedEndDate`: Timestamp
+   - `status`: String ("Planning", "In_Progress", "On_Hold", "Completed")
+   - `stages`: Array of Objects
+     * `stageId`: String
+     * `stageName`: String ("Foundation", "Structure", "Masonry", "Finishing")
+     * `weightage`: Number (Percentage 0-100)
+     * `progress`: Number (Percentage 0-100)
+     * `stageBudget`: Number
+   - `createdAt`: Timestamp
+   - `updatedAt`: Timestamp
+
+3. `organizations/{orgId}/sites/{siteId}`
+   - `siteId`: String
+   - `projectId`: String
+   - `orgId`: String
+   - `siteName`: String
+   - `siteCode`: String
+   - `address`: String
+   - `location`: GeoPoint (Latitude, Longitude)
+   - `geofenceRadius`: Number (in meters)
+   - `assignedManagerIds`: Array of Strings
+   - `assignedSupervisorIds`: Array of Strings
+   - `siteBudget`: Number
+   - `currentExpense`: Number
+   - `status`: String ("Active", "Completed", "Suspended")
+   - `drawings`: Array of Objects
+     * `drawingId`: String
+     * `title`: String
+     * `fileUrl`: String
+     * `revision`: String
+     * `uploadedAt`: Timestamp
+   - `createdAt`: Timestamp
+   - `updatedAt`: Timestamp
+
+4. `organizations/{orgId}/users/{userId}`
+   - `userId`: String (Matches Firebase Auth UID)
+   - `orgId`: String
+   - `fullName`: String
+   - `email`: String
+   - `phone`: String
+   - `role`: String ("organisation", "manager", "supervisor")
+   - `assignedSites`: Array of Strings
+   - `isActive`: Boolean
+   - `createdAt`: Timestamp
+
+5. `organizations/{orgId}/materials/{materialId}`
+   - `materialId`: String
+   - `orgId`: String
+   - `category`: String
+   - `subCategory`: String
+   - `materialName`: String
+   - `unit`: String ("Bags", "Tonnes", "CFT", "Nos", "Meters")
+   - `unitPrice`: Number
+   - `hsnCode`: String
+   - `createdAt`: Timestamp
+
+6. `organizations/{orgId}/site_inventory/{inventoryId}`
+   - `inventoryId`: String (`${siteId}_${materialId}`)
+   - `orgId`: String
+   - `siteId`: String
+   - `materialId`: String
+   - `currentStock`: Number
+   - `minimumStockThreshold`: Number
+   - `lastUpdated`: Timestamp
+
+7. `organizations/{orgId}/material_transfers/{transferId}`
+   - `transferId`: String
+   - `orgId`: String
+   - `fromSiteId`: String
+   - `toSiteId`: String
+   - `materialId`: String
+   - `quantity`: Number
+   - `vehicleId`: String
+   - `driverName`: String
+   - `status`: String ("Requested", "In_Transit", "Received", "Rejected")
+   - `dispatchedAt`: Timestamp
+   - `receivedAt`: Timestamp
+   - `requestedBy`: String (UserId)
+   - `receivedBy`: String (UserId)
+
+8. `organizations/{orgId}/tools/{toolId}`
+   - `toolId`: String
+   - `orgId`: String
+   - `toolName`: String
+   - `assetTag`: String
+   - `category`: String ("Heavy", "Power", "Hand")
+   - `currentSiteId`: String
+   - `assignedTo`: String (SupervisorId / ContractorId)
+   - `condition`: String ("Good", "Maintenance_Required", "Damaged")
+   - `purchasePrice`: Number
+   - `isRented`: Boolean
+   - `rentalDailyRate`: Number
+
+9. `organizations/{orgId}/site_payments/{paymentId}`
+   - `paymentId`: String
+   - `orgId`: String
+   - `siteId`: String
+   - `projectId`: String
+   - `voucherNumber`: String
+   - `payeeName`: String
+   - `payeeCategory`: String ("Contractor", "Material_Supplier", "Equipment_Rental", "Labour_Agency")
+   - `claimedAmount`: Number
+   - `approvedAmount`: Number
+   - `stage`: String ("Foundation", "Structure", "Masonry", "Finishing")
+   - `approvalStatus`: String ("pending_manager_review", "pending_org_approval", "pending_manager_clearance", "cleared", "rejected")
+   - `tier1_managerReview`: Object
+     * `reviewedBy`: String
+     * `reviewedAt`: Timestamp
+     * `notes`: String
+     * `measurementSheetUrl`: String
+     * `isApproved`: Boolean
+   - `tier2_orgApproval`: Object
+     * `approvedBy`: String
+     * `approvedAt`: Timestamp
+     * `paymentMode`: String
+     * `remarks`: String
+     * `isApproved`: Boolean
+   - `tier3_managerClearance`: Object
+     * `clearedBy`: String
+     * `clearedAt`: Timestamp
+     * `utrReference`: String
+     * `voucherUrl`: String
+     * `isCleared`: Boolean
+   - `createdAt`: Timestamp
+   - `updatedAt`: Timestamp
+
+10. `organizations/{orgId}/petty_cash_accounts/{siteId}`
+    - `siteId`: String
+    - `orgId`: String
+    - `allocatedAmount`: Number
+    - `currentBalance`: Number
+    - `totalSpent`: Number
+    - `lastDispatchedAt`: Timestamp
+
+11. `organizations/{orgId}/petty_cash_vouchers/{voucherId}`
+    - `voucherId`: String
+    - `orgId`: String
+    - `siteId`: String
+    - `supervisorId`: String
+    - `supervisorName`: String
+    - `amount`: Number
+    - `category`: String
+    - `description`: String
+    - `receiptUrl`: String
+    - `status`: String ("submitted", "approved_by_manager", "reimbursed", "rejected")
+    - `approvedBy`: String
+    - `createdAt`: Timestamp
+
+12. `organizations/{orgId}/expenses/{expenseId}`
+    - `expenseId`: String
+    - `orgId`: String
+    - `siteId`: String
+    - `projectId`: String
+    - `category`: String
+    - `amount`: Number
+    - `expenseDate`: Timestamp
+    - `paymentMode`: String
+    - `vendorName`: String
+    - `invoiceNumber`: String
+    - `invoiceUrl`: String
+    - `createdBy`: String
+    - `createdAt`: Timestamp
+
+13. `organizations/{orgId}/notifications/{notificationId}`
+    - `notificationId`: String
+    - `orgId`: String
+    - `title`: String
+    - `body`: String
+    - `targetRole`: String ("organisation", "manager", "supervisor", "all")
+    - `targetRoles`: Array of Strings
+    - `recipientId`: String ("all" or specific UserId)
+    - `forManagerName`: String
+    - `forSupervisorName`: String
+    - `requestType`: String ("material", "tools", "payment", "workforce", "site_assignment", "petty_cash", "expense")
+    - `requestId`: String
+    - `siteId`: String
+    - `siteName`: String
+    - `senderName`: String
+    - `senderRole`: String
+    - `isRead`: Boolean
+    - `createdAt`: Timestamp
+
+14. `organizations/{orgId}/audit_logs/{logId}`
+    - `logId`: String
+    - `orgId`: String
+    - `actorId`: String
+    - `actorName`: String
+    - `actorRole`: String
+    - `action`: String ("CREATE", "UPDATE", "APPROVE", "REJECT", "DELETE")
+    - `entity`: String ("SITE_PAYMENT", "MATERIAL_TRANSFER", "PETTY_CASH", "SITE_BUDGET")
+    - `entityId`: String
+    - `beforeState`: Object
+    - `afterState`: Object
+    - `ipAddress`: String
+    - `timestamp`: Timestamp
+
+4.5 Firebase Cloud Functions & Background Workers (JavaScript)
+----------------------------------------------------------------------------------------------------
+```javascript
+// Example: onNotificationCreated Cloud Function in JavaScript
+const functions = require('firebase-functions');
+const admin = require('firebase-admin');
+
+exports.onNotificationCreated = functions.firestore
+  .document('organizations/{orgId}/notifications/{notificationId}')
+  .onCreate(async (snap, context) => {
+    const data = snap.data();
+    const { orgId } = context.params;
+    const sanitizedOrgId = orgId.replace(/\W/g, '_');
+    
+    const targetRole = data.targetRole || 'all';
+    const topic = targetRole === 'all' 
+      ? `org_${sanitizedOrgId}` 
+      : `org_${sanitizedOrgId}_${targetRole}`;
+
+    const payload = {
+      notification: {
+        title: data.title || 'New Notification',
+        body: data.body || '',
+      },
+      data: {
+        notificationId: snap.id,
+        orgId: orgId,
+        requestType: data.requestType || 'general',
+        requestId: data.requestId || '',
+        siteId: data.siteId || '',
+      },
+      topic: topic,
+    };
+
+    try {
+      await admin.messaging().send(payload);
+      console.log(`Successfully dispatched FCM message to topic: ${topic}`);
+    } catch (error) {
+      console.error('Error sending FCM push:', error);
+    }
+  });
+```
+
+4.6 Firebase Storage File Hierarchy & Asset Governance
+----------------------------------------------------------------------------------------------------
+```
+gs://ebricks-production.appspot.com/
+└── organizations/
+    └── {orgId}/
+        ├── branding/
+        │   ├── logo.png
+        │   └── letterhead.pdf
+        ├── projects/
+        │   └── {projectId}/
+        │       └── contracts/
+        ├── sites/
+        │   └── {siteId}/
+        │       ├── drawings/
+        │       │   ├── rev_01_{timestamp}.pdf
+        │       │   └── rev_02_{timestamp}.pdf
+        │       └── daily_photos/
+        │           └── {YYYY-MM-DD}/
+        │               └── photo_{timestamp}.jpg
+        ├── vouchers/
+        │   └── {paymentId}/
+        │       ├── invoice_{timestamp}.pdf
+        │       └── receipt_{timestamp}.jpg
+        └── petty_cash/
+            └── {voucherId}/
+                └── bill_{timestamp}.jpg
+```
+
+4.7 Real-time Notification Engine (FCM, Web Push, In-App Tray Bridge)
+----------------------------------------------------------------------------------------------------
+- Browser FCM Service Worker (`public/firebase-messaging-sw.js` in JavaScript):
+  * Handles background push notifications when the web tab is closed or unfocused.
+- In-App WebSocket Listener (`notificationService.js`):
+  * Listens to Firestore `notifications` collection with active role filters.
+  * Triggers rich desktop HTML5 notifications and floating SnackBar toast alerts.
+  * Real-time unread badge counter in the top navigation header.
+- Dynamic Action Deep-Linking:
+  * Notification payload includes `requestType`, `siteId`, `requestId`. Clicking immediately pushes 
+    the target route without full page reloads.
+
+4.8 API Endpoints & Service-Layer Architecture (JavaScript)
+----------------------------------------------------------------------------------------------------
+Node.js Express API endpoints:
+- `POST /api/v1/auth/verify-token` : Validates Firebase Auth token and returns custom claims.
+- `POST /api/v1/payments/payu-init` : Generates PayU checkout hash.
+- `POST /api/v1/payments/payu-webhook` : Asynchronous payment callback handler.
+- `POST /api/v1/approvals/payment/tier1` : Submits Manager Stage 1 Review.
+- `POST /api/v1/approvals/payment/tier2` : Submits Organization Stage 2 Approval.
+- `POST /api/v1/approvals/payment/tier3` : Submits Manager Stage 3 Final Clearance.
+- `POST /api/v1/materials/transfer/dispatch` : Atomic multi-site stock debit and transfer log creation.
+- `POST /api/v1/materials/transfer/receive` : Atomic destination stock credit and transfer reconciliation.
+- `POST /api/v1/reports/generate-pdf` : Generates server-side signed PDF report URL.
+
+4.9 Security Rules (Firestore & Storage)
+----------------------------------------------------------------------------------------------------
+Firestore Rules enforce strict organization isolation:
+```javascript
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function getUserOrgId() {
+      return request.auth.token.orgId;
+    }
+    
+    function getUserRole() {
+      return request.auth.token.role;
+    }
+    
+    function isOrgAdmin() {
+      return isAuthenticated() && (getUserRole() == 'organisation' || getUserRole() == 'config');
+    }
+    
+    function isManager() {
+      return isAuthenticated() && (getUserRole() == 'manager' || isOrgAdmin());
+    }
+
+    match /organizations/{orgId}/{document=**} {
+      allow read, write: if isAuthenticated() && getUserOrgId() == orgId;
+    }
+    
+    match /organizations/{orgId}/site_payments/{paymentId} {
+      allow read: if isAuthenticated() && getUserOrgId() == orgId;
+      allow create: if isManager();
+      allow update: if isAuthenticated() && getUserOrgId() == orgId;
+    }
+  }
+}
+```
+
+4.10 Offline Support, Local Caching & Real-time State Synchronization
+----------------------------------------------------------------------------------------------------
+- Firestore Persistence: `enableIndexedDbPersistence()` enables seamless offline data browsing on 
+  laptops and tablets when site connectivity drops.
+- Optimistic UI Updates: UI components reflect status changes immediately while queuing Firestore writes 
+  in IndexedDB.
+- Network Reconnection Resync: Automatic drain of queued mutations upon network recovery.
+
+4.11 Audit Logging, Ledger Immutability & Compliance Tracking
+----------------------------------------------------------------------------------------------------
+- Every state change in Payments, Material Transfers, Petty Cash Dispatches, and Site Budgets writes an 
+  immutable audit record into `organizations/{orgId}/audit_logs/`.
+- Prevents tampering or retroactive editing of cleared payments and financial vouchers.
+
+====================================================================================================
+5. WEB APPLICATION UX/UI REQUIREMENTS & RESPONSIVE DESIGN SPECIFICATION
+====================================================================================================
+
+5.1 Desktop & Tablet Layout Architecture
+----------------------------------------------------------------------------------------------------
+- Responsive Grid Layout:
+  * Desktop (>= 1280px): Collapsible left navigation drawer, wide financial data grids with frozen headers, 
+    split-pane approval inspectors, floating action toolbars.
+  * Tablet (768px - 1279px): Adaptive 2-column card layouts, touch-friendly tab selectors, horizontal 
+    scrollable tables.
+  * Mobile Web (< 768px): Single-column cards with expandable accordions and bottom navigation.
+- Data Grid Standards:
+  * Multi-column sorting, live column filtering, global search, column visibility toggle, and instant 
+    export to CSV / Excel.
+- Split-Pane Approval View:
+  * Left pane: Filterable queue of pending payments/requisitions.
+  * Right pane: Detailed bill inspector displaying PDF invoices, stage milestones, contractor history, 
+    and one-click Approve / Reject action buttons.
+
+5.2 Existing Mobile Features vs. Web Optimized Enhancements
+----------------------------------------------------------------------------------------------------
+| Feature Area               | Existing Mobile Implementation      | Web Application Enhanced Implementation |
+|----------------------------|-------------------------------------|-----------------------------------------|
+| Navigation                 | Mobile BottomBar / AppBars          | Persistent Left Sidebar + Top Search Hub|
+| Payment Approvals          | Single-card mobile swipe / modal    | Split-pane Master-Detail Inspector      |
+| Financial Reports          | Mobile paginated preview            | Interactive Chart.js / Recharts Graphs  |
+| Material Tracking          | Vertical list of items              | High-density DataGrid with Batch Select |
+| Site Setup                 | Multi-screen mobile form            | Full-width 5-Step Setup Wizard Stepper  |
+| Notifications              | Mobile notification list            | Drawer + Desktop HTML5 Browser Banners  |
+| Blueprint Drawings         | Pinch-to-zoom image viewer          | Multi-layer CAD/PDF Viewer with Pan/Zoom|
+| Data Export                | Single PDF download                 | Batch Excel, CSV & Branded PDF Engine   |
+
+5.3 Transition, Migration & Rollout Strategy
+----------------------------------------------------------------------------------------------------
+1. Phase 1 - Foundation & Backend:
+   * Setup React (Vite + JavaScript ES6+ + Tailwind CSS) codebase.
+   * Configure Firebase SDK in JavaScript and verify Cloud Functions & Firestore security rules.
+2. Phase 2 - Authentication & Organization Control Center:
+   * Deliver Organization Dashboard, Project/Site Management, and Manager Administration.
+   * Implement Subscription & PayU billing engine.
+3. Phase 3 - Manager Operations & Daily Workflows:
+   * Implement Manager Dashboard, Setup Wizard, Workforce Logs, Material Transfers, and Tools Registry.
+4. Phase 4 - Approvals & Financial Accounting:
+   * Deliver 3-Tier Site Payment Approval Engine, Petty Cash Ledger, and Expense Management.
+5. Phase 5 - Real-time Notifications & Reporting:
+   * Integrate FCM Web Push, Desktop Tray alerts, and PDF/Excel Reporting Worker.
+6. Phase 6 - End-to-End Testing & Enterprise Deployment:
+   * Multi-role regression testing, load testing, cross-browser validation, and production rollout.
+
+====================================================================================================
+                              END OF TECHNICAL SPECIFICATION BLUEPRINT
+====================================================================================================

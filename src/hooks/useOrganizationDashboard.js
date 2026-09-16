@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 import { collection, onSnapshot } from 'firebase/firestore'
 import { db } from '../services/firebase'
 
-const initialData = { sites: [], managers: [], approvals: [], expenses: [], inventory: [], equipment: [], pettyCash: [] }
-const sources = ['sites', 'config_users', 'approvals', 'expenses', 'inventory', 'equipment', 'petty_cash']
+const initialData = { sites: [], projects: [], managers: [], approvals: [], expenses: [], inventory: [], equipment: [], pettyCash: [] }
+const sources = ['sites', 'projects', 'config_users', 'approvals', 'expenses', 'inventory', 'equipment', 'petty_cash']
 
 export function useOrganizationDashboard(orgId) {
   const [data, setData] = useState(initialData)
@@ -44,5 +44,5 @@ export function useOrganizationDashboard(orgId) {
     }
   }, [orgId])
 
-  return orgId ? { ...data, ...state } : { ...data, loading: false, error: 'Your account is not linked to an organization.' }
+  return orgId ? { ...data, sites: data.projects.length ? data.projects : data.sites, ...state } : { ...data, loading: false, error: 'Your account is not linked to an organization.' }
 }

@@ -1,13 +1,60 @@
 @import "tailwindcss";
 
-:root {
-	font-family: ui-sans-serif, system-ui, sans-serif;
-	color: #17221e;
-	background: #f7f8f5;
-	font-synthesis: none;
+@theme {
+  --color-brand: #0B3470;
+  --color-brand-dark: #082654;
+  --color-brand-light: #164e96;
+  --color-brand-soft: rgba(11, 52, 112, 0.08);
+  --color-accent: #0284c7;
 }
 
-* { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; }
-button, input { font: inherit; }
-.app-loading { min-height: 100vh; display: grid; place-items: center; color: #53615a; background: #f7f8f5; }
+:root {
+  --brand-primary: #0B3470;
+  --brand-primary-dark: #082654;
+  --brand-primary-soft: rgba(11, 52, 112, 0.08);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: #0f172a;
+  background-color: #f8fafc;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+button, input, select, textarea {
+  font: inherit;
+}
+
+/* Custom scrollbar for data tables */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out forwards;
+}
