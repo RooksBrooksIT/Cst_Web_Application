@@ -1,0 +1,351 @@
+====================================================================================================
+               SUBSCRIPTION MODULE, PLANS, PRICING & PAYMENT INTEGRATION FLOW
+                             COMPREHENSIVE TECHNICAL SPECIFICATION
+====================================================================================================
+Document Version : 1.0.0
+Application      : CST White Label Application (EBricks)
+Target Modules   : 
+  - Organization Subscription Management (OrganizationSubscriptionPage)
+  - Pricing & Plan Selection Screen (PricingScreen)
+  - PayU Checkout & Payment Gateway (PayUCheckoutScreen, PayUService)
+  - Transaction Confirmation & Receipt Screen (TransactionCompletedScreen)
+  - Access Control & Quota Service (SubscriptionLimitService)
+Source Code References:
+  - lib/screens/organization/org_subscription_page.dart
+  - lib/screens/organization/pricing_screen.dart
+  - lib/screens/organization/payu_checkout_screen.dart
+  - lib/screens/organization/transaction_completed_screen.dart
+  - lib/services/subscription_limit_service.dart
+  - lib/services/payu_service.dart
+  - lib/services/firestore_service.dart
+  - lib/utils/terms_helper.dart
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+1. ARCHITECTURE OVERVIEW & MULTI-TENANT FIRESTORE PATHS
+----------------------------------------------------------------------------------------------------
+All subscription data, plan limits, payment receipts, and branding configs are stored inside 
+the multi-tenant organization document namespace:
+
+Root Document:
+  /organisation/{orgId}
+
+Nested Documents:
+  1. Subscription Configuration: /organisation/{orgId}/data/subscription
+  2. Branding Configuration    : /organisation/{orgId}/data/branding
+  3. Admin & Credentials       : /organisation/{orgId}/data/admin  (and mirrored to data/data, admin/data)
+  4. Referral Code             : /organisation/{orgId}/data/referralCode
+  5. Organization Users        : /organisation/{orgId}/organizationUser/{userId}
+
+Where:
+- {orgId} is the dynamic tenant identifier (e.g., "cst_ABCConstructions_18-09-2026").
+- Access control is validated on app boot and before any restricted action via SubscriptionLimitService.
+
+====================================================================================================
+2. SUBSCRIPTION TIERS, QUOTAS & PRICING MATRIX
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+A. PLAN COMPARISON MATRIX
+----------------------------------------------------------------------------------------------------
++---------------+-------------+--------------+---------------+--------------+-----------------------+
+| Plan Name     | Max Sites   | Max Managers | Max Superv.   | Total Users  | Layout & Drawings     |
++---------------+-------------+--------------+---------------+--------------+-----------------------+
+| Free Trial    | 1 Site      | Unrestricted | Unrestricted  | 2 Users      | 1 active doc/site     |
+|               |             | (within team)| (within team) |              | (No delete/re-upload) |
+|               |             |              |               |              |                       |
+| Silver        | 3 Sites     | Unrestricted | Unrestricted  | 5 Users      | 1 active doc/site     |
+|               |             | (within team)| (within team) |              | (View only)           |
+|               |             |              |               |              |                       |
+| Gold          | 10 Sites    | 5 Managers   | 10 Superv.    | 15 Users     | 1 active doc/site     |
+|               |             |              |               |              | (1 delete & 1 reupload|
+|               |             |              |               |              |                       |
+| Platinum      | Dynamic     | Dynamic      | Dynamic       | Dynamic      | 2 active docs/site    |
+|               | (5 to 50+)  | (Sites / 2)  | (= Sites)     | (Sites * 1.5)| (Multi-delete &       |
+|               |             | clamp(2, 25) |               |              |  multi-reupload)      |
+|               |             |              |               |              |                       |
+| Enterprise    | Unlimited   | Unlimited    | Unlimited     | Unlimited    | 2 active docs/site    |
+|               | (999,999)   | (999,999)    | (999,999)     | (999,999)    | (Full custom access)  |
++---------------+-------------+--------------+---------------+--------------+-----------------------+
+
+----------------------------------------------------------------------------------------------------
+B. PRICING & BILLING CYCLES
+----------------------------------------------------------------------------------------------------
+1. FREE TRIAL:
+   - Duration: 14 Days
+   - Amount: ₹0 (No payment required)
+
+2. SILVER PLAN:
+   - Monthly  (30 Days)  : ₹1 / month (or standard base price)
+   - 6 Months (180 Days) : ₹594 (₹99/mo equivalent)
+   - Yearly   (365 Days) : ₹1,188 (₹99/mo equivalent)
+
+3. GOLD PLAN:
+   - Monthly  (30 Days)  : ₹199 / month
+   - 6 Months (180 Days) : ₹1,194 (₹199/mo equivalent)
+   - Yearly   (365 Days) : ₹2,388 (₹199/mo equivalent)
+
+4. PLATINUM PLAN (Dynamic Project Slider):
+   - Formula based on selected project capacity (N = 5 to 50+ sites):
+   - Monthly  (30 Days)  : ₹ (N * 39.90) / month
+   - 6 Months (180 Days) : ₹ (N * 239.40)
+   - Yearly   (365 Days) : ₹ (N * 478.80)
+   - Presets Available in UI: 5, 10, 15, 20, 25, 30, 40, 50 Sites.
+
+5. ENTERPRISE PLAN:
+   - Custom Dedicated Deployment & SLA: Direct contact via sales / support modal.
+
+----------------------------------------------------------------------------------------------------
+C. LAYOUT & DRAWINGS ACCESS CONTROL POLICY
+----------------------------------------------------------------------------------------------------
+- Free Trial & Silver:
+  * Maximum 1 active drawing file per site.
+  * Delete is BLOCKED (allowDelete = false).
+  * Re-upload is BLOCKED (allowReupload = false).
+  * Prompt: "Upgrade to Gold or Platinum to delete and replace site drawings."
+
+- Gold Plan:
+  * Maximum 1 active drawing file per site.
+  * Allow 1 Delete per site (maxDeletesPerSite = 1).
+  * Allow 1 Re-upload per site (maxReuploadsPerSite = 1).
+
+- Platinum & Enterprise:
+  * Maximum 2 active drawing files per site concurrently.
+  * Multi-delete allowed (unlimited delete & replace).
+  * Multi-reupload allowed (unlimited).
+
+====================================================================================================
+3. ORGANIZATION SUBSCRIPTION PAGE (OrganizationSubscriptionPage)
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+A. UI COMPONENTS & DISPLAY ELEMENTS
+----------------------------------------------------------------------------------------------------
+1. App Bar:
+   - Title: "Manage Subscription"
+   - Leading Back Button (Enabled if subscription is active; blocked if expired to enforce renewal).
+   - Brand gradient header.
+
+2. Hero Plan & Billing Status Card:
+   - Plan Name Badge: e.g., "Gold Plan", "Platinum Plan (15 Sites)", "Free Trial".
+   - Active / Inactive Status Indicator Pill (Green if Active, Amber/Red if Inactive/Expired).
+   - Expiry Date Display: e.g., "18 Oct 2026" (or "Lifetime Active" for Enterprise).
+   - Days Remaining Counter: e.g., "28 days remaining".
+   - Queued Upgrade Notice Banner (Visible if an upgrade is scheduled):
+     * Shows: "Upgrade Scheduled: {queuedPlanName} activating on {queuedStartDate}".
+
+3. Usage & Quotas Progress Card:
+   - Active Sites Progress Bar: "{currentSites} / {maxSites} Sites used".
+   - Managers Quota Bar       : "{currentManagers} / {maxManagers} Managers assigned".
+   - Supervisors Quota Bar    : "{currentSupervisors} / {maxSupervisors} Supervisors assigned".
+   - Total Team Members Bar   : "{totalUsers} / {maxUsers} Total Seats used".
+
+4. Plan Entitlements & Features Checklist:
+   - Bulleted list of unlocked enterprise features for the current plan.
+   - Drawing upload capability tags.
+
+5. Change / Manage Plan Action Card:
+   - [Upgrade / Change Plan] Button -> Opens PricingScreen in existing management mode.
+   - [Contact Enterprise Support] Button -> Opens ContactSupportScreen.
+   - Terms & Conditions & Refund Policy Link -> Opens TermsHelper dialog.
+
+----------------------------------------------------------------------------------------------------
+B. DATA SOURCES & FIRESTORE READS FOR SUBSCRIPTION PAGE
+----------------------------------------------------------------------------------------------------
+- Primary Doc: /organisation/{orgId}/data/subscription
+  Fields Read:
+  * 'subscriptionPlan'      (String) : Active plan name
+  * 'subscriptionType'      (String) : Billing cycle ('Monthly' | '6 Months' | 'Yearly')
+  * 'subscriptionStartDate' (Timestamp) : Start date
+  * 'subscriptionEndDate'   (Timestamp) : Expiry date
+  * 'isSubscriptionActive'  (Boolean) : Active status flag
+  * 'isUpgradeQueued'       (Boolean) : Whether future plan is queued
+  * 'queuedPlan'            (String) : Name of queued plan
+  * 'queuedStartDate'       (Timestamp) : Activation date for queued plan
+  * 'maxProjects'           (Number) : Site quota
+  * 'maxUsers'              (Number) : User quota
+  * 'maxManagers'           (Number) : Manager quota
+  * 'maxSupervisors'        (Number) : Supervisor quota
+
+- Usage Calculation (SubscriptionLimitService.getCurrentUsage()):
+  * Sites Count       : Query snapshot count from /organisation/{orgId}/projects
+  * Managers Count    : Query snapshot count from /organisation/{orgId}/manager
+  * Supervisors Count : Query snapshot count from /organisation/{orgId}/supervisor
+  * Total Users Count : Sum of (Managers + Supervisors + Organization Admin)
+
+====================================================================================================
+4. PAYMENT GATEWAY INTEGRATION (PayU)
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+A. ENVIRONMENT CONFIGURATION & CREDENTIALS
+----------------------------------------------------------------------------------------------------
+PayU Gateway operates in dual-mode (Sandbox / Production) controlled by environment flags:
+
+Environment Variables (.env):
+  - PAYU_ENVIRONMENT     : 'sandbox' or 'production'
+  - PAYU_TEST_PAY_URL     : https://test.payu.in/_payment
+  - PAYU_PROD_PAY_URL     : https://secure.payu.in/_payment
+  - PAYU_TEST_MERCHANT_ID : 9193759
+  - PAYU_TEST_KEY         : GZrAha
+  - PAYU_TEST_SALT        : xpfwrDGBXY4sR5Y8O4xU8OB0seurgJMi
+  - PAYU_PROD_MERCHANT_ID : 13573851
+  - PAYU_PROD_KEY         : a912BZ
+  - PAYU_PROD_SALT        : jgo9fpvFX8DO2QtQDaWJHvz4JByS8ytC
+  - PAYU_SURL / PAYU_FURL : Cloud Function Webhook URL (us-central1-cst-whitelabel-app/payuWebhook)
+
+----------------------------------------------------------------------------------------------------
+B. CRYPTOGRAPHIC SIGNATURE GENERATION (SHA-512)
+----------------------------------------------------------------------------------------------------
+1. Request Hash Formula:
+   hash = sha512(key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||salt)
+
+   Where:
+   - key         : Active PayU Merchant Key
+   - txnid       : Unique generated transaction ID (e.g. TXN_1726660000000_1234)
+   - amount      : Formatted to 2 decimal places (e.g. "199.00")
+   - productinfo : Sanitized product string (e.g. "ABC Constructions Gold Plan (Monthly)")
+   - firstname   : Customer / Organization name (sanitized alpha-numeric)
+   - email       : Customer email (valid email format)
+   - udf1        : Organization Name / Identifier
+   - udf2        : Plan Name
+   - udf3        : Billing Cycle
+   - udf4        : 'ebricks'
+   - udf5        : 'ebricks_subscription'
+   - salt        : Active PayU Merchant Salt
+
+2. Response Hash Verification Formula:
+   calculatedHash = sha512(salt|status||||||udf5|udf4|udf3|udf2|udf1|email|firstname|productinfo|amount|txnid|key)
+
+   Verification Step:
+   The client and backend compute the reverse SHA-512 hash and verify it matches the returned 
+   'hash' parameter in the PayU response callback before granting access.
+
+----------------------------------------------------------------------------------------------------
+C. SUPPORTED PAYMENT METHODS IN PAYU CHECKOUT
+----------------------------------------------------------------------------------------------------
+Through the responsive PayU webview checkout interface (PayUCheckoutScreen), customers can pay via:
+1. UPI (Google Pay, PhonePe, Paytm, BHIM, Any UPI ID / QR code)
+2. Credit & Debit Cards (Visa, MasterCard, RuPay, Diners, American Express)
+3. Net Banking (All major Indian banks: SBI, HDFC, ICICI, Axis, Kotak, etc.)
+4. Mobile Wallets (Paytm, Mobikwik, Airtel Money, Freecharge)
+5. PayU Postpaid / EMI (if eligible)
+
+====================================================================================================
+5. COMPLETE WORKFLOWS
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+WORKFLOW 1: NEW ORGANIZATION REGISTRATION & ONBOARDING
+----------------------------------------------------------------------------------------------------
+Step 1: Details Screen
+  - Admin inputs: Org Name, Email, Phone, Username, Password.
+  - Organization existence and duplicate usernames/emails are pre-validated.
+
+Step 2: Branding Screen
+  - Admin inputs: App Display Name, selects Theme Primary Color.
+
+Step 3: Pricing & Plan Selection (PricingScreen)
+  - Admin views plan comparisons and selects desired tier (Free Trial, Silver, Gold, Platinum).
+  - Admin chooses billing cycle (Monthly, 6 Months, Yearly) or adjusts Platinum Project Slider.
+
+Step 4: Payment Checkout (for Paid Plans)
+  - If Free Trial: Payment is skipped (Amount = ₹0).
+  - If Paid Plan: PayUCheckoutScreen is launched in a secure in-app WebView.
+  - Post request is auto-submitted to PayU payment gateway with computed SHA-512 hash.
+  - Customer completes payment via UPI / Card / NetBanking.
+  - PayU intercepts callback (surl/furl) with payment status, txnid, payuMoneyId, and response hash.
+
+Step 5: Firestore Provisioning & Account Activation
+  - Multi-tenant path initialized: /organisation/{orgId}
+  - Subscription doc created at: /organisation/{orgId}/data/subscription
+  - Admin credentials stored at: /organisation/{orgId}/data/admin
+  - Branding doc stored at     : /organisation/{orgId}/data/branding
+  - Referral code generated at : /organisation/{orgId}/data/referralCode
+  - Organization user added to : /organisation/{orgId}/organizationUser/{username}
+  - Status flags updated: registrationStatus = 'COMPLETED', onboardingStep = 'COMPLETED'.
+
+Step 6: Invoicing & Receipt Dispatch
+  - Backend Cloud Function (or PayUService fallback) sends Tax Invoice to user's registered email.
+  - Transaction Completed Receipt Screen is displayed (TransactionCompletedScreen) with full summary.
+  - Navigates directly into OrganizationDashboard.
+
+----------------------------------------------------------------------------------------------------
+WORKFLOW 2: EXISTING SUBSCRIPTION UPGRADE / RENEWAL
+----------------------------------------------------------------------------------------------------
+Step 1: Admin navigates to Menu -> Manage Subscription -> [Upgrade / Change Plan].
+Step 2: PricingScreen opens in "isManagingExisting = true" mode (Free Trial is hidden).
+Step 3: Admin selects new Plan (e.g. Upgrading from Silver to Gold or Platinum).
+Step 4: Upgrade Timing Options:
+  - Immediate Upgrade:
+    * Replaces active plan immediately.
+    * Sets new subscriptionStartDate = now, subscriptionEndDate = now + durationDays.
+    * Resets previous quotas and activates higher limits immediately.
+  - Queued Upgrade:
+    * If active plan has remaining days and user opts to queue:
+    * Sets isUpgradeQueued = true, queuedPlan = _selectedPlan, queuedStartDate = currentEndDate.
+    * Queued plan automatically promotes to active when current expiry date arrives.
+
+Step 5: PayU Checkout completes payment.
+Step 6: Merges updated subscription data in /organisation/{orgId}/data/subscription.
+Step 7: Dispatches upgrade confirmation & Tax Invoice to registered email.
+
+----------------------------------------------------------------------------------------------------
+WORKFLOW 3: REAL-TIME ACCESS CONTROL & LIMIT ENFORCEMENT
+----------------------------------------------------------------------------------------------------
+1. Site Creation Check (SubscriptionLimitService.canCreateSite()):
+   - Trigger: User taps "+ New Site" on Site Entry or Dashboard.
+   - Logic:
+     * Reads current project count vs limits.maxProjects.
+     * If projectCount >= maxProjects: Blocks creation, displays Upgrade Modal prompting upgrade.
+     * If projectCount < maxProjects: Allows creation.
+
+2. User & Supervisor Creation Check (SubscriptionLimitService.canAddSupervisor()):
+   - Trigger: User attempts to create a new Supervisor or Manager account.
+   - Logic:
+     * Compares active staff count against maxSupervisors / maxManagers / maxTotalUsers.
+     * If limit reached: Blocks operation with warning: "Team member limit reached for {planName}".
+
+3. Drawing Upload & Delete Check (SubscriptionLimitService.canUploadDrawing()):
+   - Trigger: User uploads a layout or architectural drawing on a Site.
+   - Logic:
+     * Evaluates site's active drawings count vs DrawingPlanLimits.maxActiveDocsPerSite.
+     * Evaluates whether deletion or re-upload is permitted under current tier.
+     * If unauthorized: Blocks upload with detailed reason (e.g., "Silver plan allows 1 drawing per site with no deletion.").
+
+====================================================================================================
+6. FIRESTORE DATA MODEL FOR SUBSCRIPTION & BILLING
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+COLLECTION: /organisation/{orgId}/data/subscription
+Document ID: 'subscription'
+----------------------------------------------------------------------------------------------------
+Field Name              | Data Type  | Description & Example Values
+------------------------+------------+--------------------------------------------------------------
+subscriptionPlan        | String     | 'Free Trial' | 'Silver' | 'Gold' | 'Platinum' | 'Enterprise'
+subscriptionType        | String     | 'Free Trial' | 'Monthly' | '6 Months' | 'Yearly'
+subscriptionStartDate   | Timestamp  | Date when subscription started
+subscriptionEndDate     | Timestamp  | Date when subscription expires
+isSubscriptionActive    | Boolean    | true = Active access, false = Expired/Blocked
+onboardingStep          | String     | 'COMPLETED' | 'PAYMENT_PENDING'
+maxProjects             | Number     | Allowed active sites (1, 3, 10, 15, 20, 999999)
+maxUsers                | Number     | Allowed total team members (2, 5, 15, 23, 999999)
+maxManagers             | Number     | Allowed managers (1, 2, 5, 8, 999999)
+maxSupervisors          | Number     | Allowed supervisors (1, 3, 10, 15, 999999)
+paymentGateway          | String     | 'PayU' | 'Direct' | 'None'
+paymentTxnId            | String     | PayU transaction ID (e.g., 'TXN_1726661234567')
+payuMoneyId             | String     | Official PayU Money Payment ID (e.g., '403993715530')
+paymentStatus           | String     | 'SUCCESS' | 'FAILED' | 'PENDING'
+paymentAmount           | Number     | Total amount paid in INR (e.g., 199.0, 1194.0)
+isUpgradeQueued         | Boolean    | true if future upgrade is scheduled
+queuedPlan              | String     | Future plan name (e.g., 'Gold')
+queuedPlanType          | String     | Future billing cycle ('Yearly')
+queuedStartDate         | Timestamp  | Date when queued plan becomes effective
+queuedEndDate           | Timestamp  | Expiry date of queued plan
+queuedPaymentTxnId      | String     | Payment Txn ID for the queued transaction
+updatedAt               | Timestamp  | Last modified timestamp (server timestamp)
+
+====================================================================================================
+                                      END OF SPECIFICATION FILE
+====================================================================================================

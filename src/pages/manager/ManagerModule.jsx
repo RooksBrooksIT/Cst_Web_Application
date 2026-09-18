@@ -1,23 +1,37 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
-import { Link, NavLink, useParams, useSearchParams, useNavigate } from 'react-router-dom'
-import { addDoc, collection, doc, serverTimestamp, updateDoc } from 'firebase/firestore'
-import { db } from '../../services/firebase'
+import { Link, NavLink, useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { useManagerDashboard } from '../../hooks/useManagerDashboard'
 import { useNotifications } from '../../context/NotificationContext'
 import NotificationDrawer from '../../components/common/NotificationDrawer'
 import StatusBadge from '../../components/common/StatusBadge'
 import Modal from '../../components/common/Modal'
+import DataTable from '../../components/common/DataTable'
+import FilterBar from '../../components/common/FilterBar'
+import ExportButton from '../../components/common/ExportButton'
 import logo from '../../assets/logo/FinalLogo.jpg'
 
-// Helpers
-function formatCurrency(amount) {
+// Services
+import { createProject, updateProject, DEFAULT_PROJECT_STAGES } from '../../services/projectService'
+import { createMaterialRequest, approveMaterialRequest, recordGrnReceipt } from '../../services/materialService'
+import { recordPettyCashExpense, createPettyCashRequest, disbursePettyCashRequest } from '../../services/pettyCashService'
+import { recordWorkerAttendance, createWorker, WORKER_SKILLS } from '../../services/workforceService'
+import { createContractor, createContractorBill, updateContractorBillStatus, CONTRACTOR_TRADES } from '../../services/contractorService'
+import { allocateTool, createTool } from '../../services/toolService'
+import { createVehicle, recordFuelLog, VEHICLE_TYPES } from '../../services/fleetService'
+import { createQualityChecklist, recordSafetyIncident, INSPECTION_TYPES } from '../../services/qualityService'
+import { createCustomerInvoice, recordCustomerPayment } from '../../services/invoiceService'
+import { createDailySiteLog, reviewDailySiteLog, WEATHER_TYPES } from '../../services/dailyLogService'
+import { executeTier1Review, executeTier3Clearance } from '../../services/approvalService'
+import { AVAILABLE_REPORTS, generateReportData } from '../../services/reportService'
+
+function money(amount) {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount || 0)
 }
 
-function formatDate(timestamp) {
-  if (!timestamp) return 'N/A'
-  const d = timestamp.toDate ? timestamp.toDate() : new Date(timestamp)
+function formatDate(raw) {
+  if (!raw) return 'N/A'
+  const d = raw?.toDate ? raw.toDate() : new Date(raw)
   return Number.isNaN(d.getTime()) ? 'N/A' : new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium' }).format(d)
 }
 
@@ -89,57 +103,34 @@ function SiteSetupWizard({ orgId }) {
     projectName: '',
     siteCode: '',
     clientName: '',
+    clientPhone: '',
     siteLocation: '',
     estimatedBudget: '',
-    startDate: '',
+    startDate: new Date().toISOString().split('T')[0],
     estimatedEndDate: '',
-    stages: [
-      { name: 'Foundation', weightage: 20 },
-      { name: 'Structure', weightage: 30 },
-      { name: 'Masonry & Plaster', weightage: 25 },
-      { name: 'Finishing & MEP', weightage: 20 },
-      { name: 'Handover & Snagging', weightage: 5 },
-    ],
-    materials: [
-      { item: 'OPC 53 Cement', qty: '1000', unit: 'Bags' },
-      { item: 'Fe 500 TMT Steel', qty: '15', unit: 'Tonnes' },
-      { item: 'River Sand / M-Sand', qty: '2000', unit: 'CFT' },
-    ],
+    stages: DEFAULT_PROJECT_STAGES,
     supervisors: '',
-    contractors: '',
     pettyCashInitial: '50000',
-    selectedTools: ['Total Station Theodolite', 'Concrete Mixer 10/7', 'Plate Compactor'],
+    selectedTools: ['Concrete Mixer 10/7', 'Vibrator Needle 40mm', 'Total Station'],
   })
-
-  const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value })
 
   async function handleSubmit(e) {
     e.preventDefault()
     if (!orgId) return
     setSaving(true)
     try {
-      await addDoc(collection(db, 'organisation', orgId, 'sites'), {
-        projectName: formData.projectName,
-        siteName: formData.projectName,
-        siteCode: formData.siteCode || `SITE-${Date.now().toString().slice(-4)}`,
+      await createProject(orgId, {
+        name: formData.projectName,
+        code: formData.siteCode || `PRJ-${Date.now().toString().slice(-4)}`,
         clientName: formData.clientName,
+        clientPhone: formData.clientPhone,
         siteLocation: formData.siteLocation,
-        estimatedBudget: Number(formData.estimatedBudget) || 0,
-        budget: Number(formData.estimatedBudget) || 0,
-        amountSpent: 0,
-        startDate: formData.startDate || new Date().toISOString(),
-        estimatedEndDate: formData.estimatedEndDate || '',
-        currentStatus: 'In Progress',
-        status: 'In Progress',
-        projectStage: 'Foundation',
-        stage: 'Foundation',
-        progress: 0,
+        totalBudget: Number(formData.estimatedBudget) || 0,
+        startDate: formData.startDate,
+        estimatedEndDate: formData.estimatedEndDate,
         stages: formData.stages,
-        supervisors: formData.supervisors ? formData.supervisors.split(',').map((s) => s.trim()) : [],
-        contractors: formData.contractors ? formData.contractors.split(',').map((c) => c.trim()) : [],
-        createdAt: serverTimestamp(),
       })
-      alert('Site successfully created and initialized!')
+      alert('Site setup completed! Project launched successfully.')
       navigate('/manager/sites')
     } catch (err) {
       alert('Error creating site: ' + err.message)
@@ -149,118 +140,96 @@ function SiteSetupWizard({ orgId }) {
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Wizard Header & Stepper */}
-      <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-xs">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">Multi-Step Setup Wizard</p>
-            <h1 className="text-xl font-bold text-slate-900">Initialize New Construction Project & Site</h1>
-          </div>
-          <span className="text-xs font-semibold px-3 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-full">
-            Step {step} of 5
-          </span>
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <p className="text-xs font-bold text-blue-600 uppercase tracking-widest">Manager / Setup Wizard</p>
+          <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Project & Site Setup Wizard</h1>
+          <p className="text-xs text-slate-500 mt-1">Configure site stages, milestone weights, and initialize spatial allocations.</p>
         </div>
-
-        {/* Stepper Tabs */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-          {['1. Basic Info', '2. Milestones', '3. Bill of Materials', '4. Workforce', '5. Cash & Tools'].map((title, i) => (
-            <button
-              type="button"
-              key={title}
-              onClick={() => setStep(i + 1)}
-              className={`cursor-pointer p-2 text-center rounded-xl border text-xs font-semibold transition-all ${
-                step === i + 1
-                  ? 'bg-[#0B3470] text-white border-blue-900 shadow-xs'
-                  : step > i + 1
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                  : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'
-              }`}
-            >
-              {title}
-            </button>
-          ))}
-        </div>
+        <span className="text-xs font-bold px-3 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-full">
+          Step {step} of 5
+        </span>
       </div>
 
-      {/* Step Contents */}
-      <form onSubmit={handleSubmit} className="bg-white border border-slate-200 p-6 rounded-2xl shadow-xs space-y-6">
+      {/* Wizard Progress Bar */}
+      <div className="grid grid-cols-5 gap-2">
+        {['Basic Info', 'Stage Milestones', 'Key Materials', 'Field Team', 'Review & Launch'].map((label, idx) => (
+          <div key={label} className="space-y-1 text-center">
+            <div
+              className={`h-2 rounded-full transition-all ${
+                step > idx + 1 ? 'bg-emerald-500' : step === idx + 1 ? 'bg-[#0B3470]' : 'bg-slate-200'
+              }`}
+            />
+            <span className="text-[10px] font-semibold text-slate-500 block line-clamp-1">{label}</span>
+          </div>
+        ))}
+      </div>
+
+      <form onSubmit={handleSubmit} className="p-6 bg-white border border-slate-200/90 rounded-2xl shadow-xs space-y-6">
         {step === 1 && (
           <div className="space-y-4">
-            <h2 className="text-base font-bold text-slate-900 border-b border-slate-100 pb-2">Step 1: Project & Client Fundamentals</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <h2 className="text-base font-bold text-slate-900">Step 1: Project Identity & Location</h2>
+            <div className="grid grid-cols-2 gap-3">
               <label className="block text-xs font-medium text-slate-700">
-                Project / Site Name *
+                Project Name *
                 <input
-                  name="projectName"
                   required
                   value={formData.projectName}
-                  onChange={handleChange}
-                  placeholder="e.g. Prestige Greenwoods Block A"
-                  className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-sm focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none"
+                  onChange={(e) => setFormData({ ...formData, projectName: e.target.value })}
+                  placeholder="e.g. Metro Commercial Complex"
+                  className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
                 />
               </label>
               <label className="block text-xs font-medium text-slate-700">
-                Site Code / Identification
+                Project Code
                 <input
-                  name="siteCode"
                   value={formData.siteCode}
-                  onChange={handleChange}
-                  placeholder="e.g. BLR-SIT-042"
-                  className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-sm focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none"
+                  onChange={(e) => setFormData({ ...formData, siteCode: e.target.value })}
+                  placeholder="PRJ-2026-042"
+                  className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600 font-mono"
                 />
               </label>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
               <label className="block text-xs font-medium text-slate-700">
-                Client / Developer Name
+                Client / Firm Name
                 <input
-                  name="clientName"
                   value={formData.clientName}
-                  onChange={handleChange}
-                  placeholder="e.g. Urban Habitat Infra Ltd"
-                  className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-sm focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none"
+                  onChange={(e) => setFormData({ ...formData, clientName: e.target.value })}
+                  placeholder="Apex Infra Ltd"
+                  className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
                 />
               </label>
               <label className="block text-xs font-medium text-slate-700">
-                Estimated Total Budget (INR) *
+                Client Phone
+                <input
+                  value={formData.clientPhone}
+                  onChange={(e) => setFormData({ ...formData, clientPhone: e.target.value })}
+                  placeholder="+91 9876543210"
+                  className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
+                />
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block text-xs font-medium text-slate-700">
+                Site Location
+                <input
+                  value={formData.siteLocation}
+                  onChange={(e) => setFormData({ ...formData, siteLocation: e.target.value })}
+                  placeholder="Plot 104, Outer Ring Road"
+                  className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
+                />
+              </label>
+              <label className="block text-xs font-medium text-slate-700">
+                Total Budget (INR) *
                 <input
                   type="number"
-                  name="estimatedBudget"
                   required
                   value={formData.estimatedBudget}
-                  onChange={handleChange}
-                  placeholder="e.g. 15000000"
-                  className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-sm focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none"
-                />
-              </label>
-              <label className="block text-xs font-medium text-slate-700 md:col-span-2">
-                Physical Site Address / GPS Location *
-                <input
-                  name="siteLocation"
-                  required
-                  value={formData.siteLocation}
-                  onChange={handleChange}
-                  placeholder="e.g. Survey No. 44, Whitefield Main Road, Bengaluru"
-                  className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-sm focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none"
-                />
-              </label>
-              <label className="block text-xs font-medium text-slate-700">
-                Planned Start Date
-                <input
-                  type="date"
-                  name="startDate"
-                  value={formData.startDate}
-                  onChange={handleChange}
-                  className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-sm focus:border-blue-600 outline-none"
-                />
-              </label>
-              <label className="block text-xs font-medium text-slate-700">
-                Target Completion Date
-                <input
-                  type="date"
-                  name="estimatedEndDate"
-                  value={formData.estimatedEndDate}
-                  onChange={handleChange}
-                  className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-sm focus:border-blue-600 outline-none"
+                  onChange={(e) => setFormData({ ...formData, estimatedBudget: e.target.value })}
+                  placeholder="7500000"
+                  className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600 font-mono"
                 />
               </label>
             </div>
@@ -269,35 +238,15 @@ function SiteSetupWizard({ orgId }) {
 
         {step === 2 && (
           <div className="space-y-4">
-            <h2 className="text-base font-bold text-slate-900 border-b border-slate-100 pb-2">Step 2: Milestone Stages & Weightage</h2>
-            <p className="text-xs text-slate-500">Configure standard stage weightages for milestone billing and progress rollups.</p>
-            <div className="space-y-3">
-              {formData.stages.map((stage, idx) => (
-                <div key={idx} className="flex items-center gap-4 bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <span className="w-6 text-xs text-slate-500 font-bold">{idx + 1}.</span>
-                  <input
-                    value={stage.name}
-                    onChange={(e) => {
-                      const newStages = [...formData.stages]
-                      newStages[idx].name = e.target.value
-                      setFormData({ ...formData, stages: newStages })
-                    }}
-                    className="flex-1 bg-white border border-slate-300 rounded-lg p-2 text-slate-900 text-xs focus:border-blue-600 outline-none"
-                  />
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-slate-500">Weight:</span>
-                    <input
-                      type="number"
-                      value={stage.weightage}
-                      onChange={(e) => {
-                        const newStages = [...formData.stages]
-                        newStages[idx].weightage = Number(e.target.value) || 0
-                        setFormData({ ...formData, stages: newStages })
-                      }}
-                      className="w-16 bg-white border border-slate-300 rounded-lg p-2 text-slate-900 text-xs text-center focus:border-blue-600 outline-none"
-                    />
-                    <span className="text-xs text-slate-500">%</span>
-                  </div>
+            <h2 className="text-base font-bold text-slate-900">Step 2: Milestone Stages Configuration</h2>
+            <div className="space-y-2">
+              {formData.stages.map((stg, i) => (
+                <div key={stg.stageId} className="flex items-center gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs">
+                  <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-800 font-bold flex items-center justify-center text-xs">
+                    {i + 1}
+                  </span>
+                  <span className="flex-1 font-semibold text-slate-800">{stg.name}</span>
+                  <span className="text-slate-500 font-mono">Stage #{i + 1}</span>
                 </div>
               ))}
             </div>
@@ -306,114 +255,65 @@ function SiteSetupWizard({ orgId }) {
 
         {step === 3 && (
           <div className="space-y-4">
-            <h2 className="text-base font-bold text-slate-900 border-b border-slate-100 pb-2">Step 3: Initial Bill of Materials (BOM)</h2>
-            <p className="text-xs text-slate-500">Estimate initial procurement quantities for foundation phase.</p>
-            <div className="space-y-3">
-              {formData.materials.map((mat, idx) => (
-                <div key={idx} className="grid grid-cols-3 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <input
-                    value={mat.item}
-                    onChange={(e) => {
-                      const mats = [...formData.materials]
-                      mats[idx].item = e.target.value
-                      setFormData({ ...formData, materials: mats })
-                    }}
-                    placeholder="Material name"
-                    className="bg-white border border-slate-300 rounded-lg p-2 text-slate-900 text-xs focus:border-blue-600 outline-none"
-                  />
-                  <input
-                    type="number"
-                    value={mat.qty}
-                    onChange={(e) => {
-                      const mats = [...formData.materials]
-                      mats[idx].qty = e.target.value
-                      setFormData({ ...formData, materials: mats })
-                    }}
-                    placeholder="Quantity"
-                    className="bg-white border border-slate-300 rounded-lg p-2 text-slate-900 text-xs focus:border-blue-600 outline-none"
-                  />
-                  <input
-                    value={mat.unit}
-                    onChange={(e) => {
-                      const mats = [...formData.materials]
-                      mats[idx].unit = e.target.value
-                      setFormData({ ...formData, materials: mats })
-                    }}
-                    placeholder="Unit (Bags/Tonnes)"
-                    className="bg-white border border-slate-300 rounded-lg p-2 text-slate-900 text-xs focus:border-blue-600 outline-none"
-                  />
-                </div>
-              ))}
+            <h2 className="text-base font-bold text-slate-900">Step 3: Initial Material Requisitions</h2>
+            <p className="text-xs text-slate-500">Standard initial bootstrap materials will be flagged for procurement.</p>
+            <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl space-y-2 text-xs text-blue-900">
+              <div className="font-semibold">Default Materials Setup:</div>
+              <ul className="list-disc list-inside space-y-1 text-slate-700">
+                <li>OPC 53 Grade Cement — 500 Bags</li>
+                <li>Fe 500 TMT Steel 12mm/16mm — 10 Tonnes</li>
+                <li>20mm Graded Aggregate Stone — 1,500 CFT</li>
+                <li>M-Sand / River Sand — 2,000 CFT</li>
+              </ul>
             </div>
           </div>
         )}
 
         {step === 4 && (
           <div className="space-y-4">
-            <h2 className="text-base font-bold text-slate-900 border-b border-slate-100 pb-2">Step 4: Workforce & Contractor Mapping</h2>
-            <div className="space-y-4">
-              <label className="block text-xs font-medium text-slate-700">
-                Assigned Site Supervisors (Comma separated names or emails)
-                <input
-                  name="supervisors"
-                  value={formData.supervisors}
-                  onChange={handleChange}
-                  placeholder="e.g. Ramesh Kumar, Suresh Nair"
-                  className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-sm focus:border-blue-600 outline-none"
-                />
-              </label>
-              <label className="block text-xs font-medium text-slate-700">
-                Contractors / Labour Agencies (Comma separated)
-                <input
-                  name="contractors"
-                  value={formData.contractors}
-                  onChange={handleChange}
-                  placeholder="e.g. Star Civil Works, Apex Electricals"
-                  className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-sm focus:border-blue-600 outline-none"
-                />
-              </label>
-            </div>
+            <h2 className="text-base font-bold text-slate-900">Step 4: Field Team & Supervisor Allocation</h2>
+            <label className="block text-xs font-medium text-slate-700">
+              Assigned Field Supervisors (Comma separated names)
+              <input
+                value={formData.supervisors}
+                onChange={(e) => setFormData({ ...formData, supervisors: e.target.value })}
+                placeholder="e.g. Suresh Patel, Ankit Verma"
+                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
+              />
+            </label>
+            <label className="block text-xs font-medium text-slate-700">
+              Initial Petty Cash Float Allocation (INR)
+              <input
+                type="number"
+                value={formData.pettyCashInitial}
+                onChange={(e) => setFormData({ ...formData, pettyCashInitial: e.target.value })}
+                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600 font-mono"
+              />
+            </label>
           </div>
         )}
 
         {step === 5 && (
           <div className="space-y-4">
-            <h2 className="text-base font-bold text-slate-900 border-b border-slate-100 pb-2">Step 5: Initial Petty Cash & Equipment Allocation</h2>
-            <div className="space-y-4">
-              <label className="block text-xs font-medium text-slate-700">
-                Initial Site Petty Cash Allocation (INR)
-                <input
-                  type="number"
-                  name="pettyCashInitial"
-                  value={formData.pettyCashInitial}
-                  onChange={handleChange}
-                  placeholder="50000"
-                  className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-sm focus:border-blue-600 outline-none"
-                />
-              </label>
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-2">Initial Tools & Machinery Dispatched</label>
-                <div className="flex flex-wrap gap-2">
-                  {['Total Station Theodolite', 'Concrete Mixer 10/7', 'Plate Compactor', 'Bar Bending Machine', 'Safety Helmets & Harnesses (50 sets)'].map((tool) => (
-                    <span key={tool} className="px-3 py-1.5 rounded-lg text-xs bg-blue-50 text-blue-800 border border-blue-200 font-medium">
-                      ✓ {tool}
-                    </span>
-                  ))}
-                </div>
-              </div>
+            <h2 className="text-base font-bold text-slate-900">Step 5: Review & Project Launch</h2>
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+              <div><span className="text-slate-400">Project Name:</span> <strong className="text-slate-900">{formData.projectName}</strong></div>
+              <div><span className="text-slate-400">Total Budget:</span> <strong className="text-emerald-700 font-mono">{money(formData.estimatedBudget)}</strong></div>
+              <div><span className="text-slate-400">Site Location:</span> <span className="text-slate-800">{formData.siteLocation}</span></div>
+              <div><span className="text-slate-400">Client:</span> <span className="text-slate-800">{formData.clientName}</span></div>
             </div>
           </div>
         )}
 
-        {/* Wizard Footer Controls */}
+        {/* Wizard Navigation */}
         <div className="flex items-center justify-between pt-4 border-t border-slate-100">
           {step > 1 ? (
             <button
               type="button"
               onClick={() => setStep((s) => s - 1)}
-              className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
             >
-              ← Back
+              ← Previous
             </button>
           ) : <div />}
 
@@ -429,9 +329,9 @@ function SiteSetupWizard({ orgId }) {
             <button
               type="submit"
               disabled={saving}
-              className="px-6 py-2.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md transition-transform active:scale-95"
+              className="px-6 py-2.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md transition-colors"
             >
-              {saving ? 'Creating Project...' : '✓ Complete Setup & Launch Site'}
+              {saving ? 'Creating...' : '✓ Launch Project'}
             </button>
           )}
         </div>
@@ -441,38 +341,22 @@ function SiteSetupWizard({ orgId }) {
 }
 
 // ------------------------------------------------------------------------------------------------
-// 2. DAILY WORKFORCE & CONTRACTOR LOGS - LIGHT MODE
+// 2. DAILY SITE PROGRESS LOGS (LIGHT MODE)
 // ------------------------------------------------------------------------------------------------
-function WorkforceManager({ orgId, workforce = [], sites = [] }) {
-  const [isAddOpen, setIsAddOpen] = useState(false)
-  const [siteId, setSiteId] = useState(sites[0]?.id || '')
-  const [roleCategory, setRoleCategory] = useState('Masons')
-  const [headcount, setHeadcount] = useState(10)
-  const [shiftHours, setShiftHours] = useState(8)
-  const [otHours, setOtHours] = useState(2)
-  const [dailyWageRate, setDailyWageRate] = useState(800)
+function DailyLogsManager({ orgId, dailyLogs = [], sites = [] }) {
+  const [search, setSearch] = useState('')
+  const [selectedLog, setSelectedLog] = useState(null)
+  const [reviewNotes, setReviewNotes] = useState('')
   const [saving, setSaving] = useState(false)
 
-  async function handleAddEntry(e) {
+  async function handleReviewSubmit(e) {
     e.preventDefault()
-    if (!orgId) return
+    if (!orgId || !selectedLog) return
     setSaving(true)
     try {
-      const calculatedWage = Number(headcount) * (Number(dailyWageRate) + (Number(otHours) * (Number(dailyWageRate) / 8) * 1.5))
-      await addDoc(collection(db, 'organisation', orgId, 'workforce'), {
-        siteId,
-        siteName: sites.find((s) => s.id === siteId)?.projectName || 'Site',
-        roleCategory,
-        headcount: Number(headcount),
-        shiftHours: Number(shiftHours),
-        otHours: Number(otHours),
-        dailyWageRate: Number(dailyWageRate),
-        totalWage: calculatedWage,
-        date: new Date().toISOString(),
-        createdAt: serverTimestamp(),
-      })
-      setIsAddOpen(false)
-      alert('Workforce daily attendance entry recorded.')
+      await reviewDailySiteLog(orgId, selectedLog.id, 'Operations Manager', reviewNotes)
+      setSelectedLog(null)
+      alert('Daily site log reviewed and signed off!')
     } catch (err) {
       alert('Error: ' + err.message)
     } finally {
@@ -480,74 +364,289 @@ function WorkforceManager({ orgId, workforce = [], sites = [] }) {
     }
   }
 
+  const columns = [
+    {
+      header: 'Date',
+      accessor: 'date',
+      render: (row) => <span className="font-mono text-blue-700 font-bold">{row.date || 'N/A'}</span>,
+    },
+    {
+      header: 'Site / Location',
+      accessor: 'projectName',
+      render: (row) => row.projectName || 'Site',
+    },
+    {
+      header: 'Weather',
+      accessor: 'weather',
+      render: (row) => row.weather || 'Sunny',
+    },
+    {
+      header: 'Workforce Total',
+      accessor: 'workforceCount',
+      align: 'center',
+      render: (row) => <span className="font-bold text-slate-800">{row.workforceCount?.total || 12} workers</span>,
+    },
+    {
+      header: 'Work Summary',
+      accessor: 'workDoneSummary',
+      render: (row) => <span className="line-clamp-1 text-slate-600">{row.workDoneSummary || 'Daily progress'}</span>,
+    },
+    {
+      header: 'Manager Review',
+      accessor: 'managerReviewed',
+      align: 'center',
+      render: (row) => (
+        <StatusBadge status={row.managerReviewed ? 'Reviewed' : 'Pending Review'} />
+      ),
+    },
+    {
+      header: 'Action',
+      align: 'center',
+      render: (row) => (
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedLog(row)
+            setReviewNotes(row.reviewNotes || '')
+          }}
+          className="text-xs font-semibold text-blue-600 hover:text-blue-800"
+        >
+          {row.managerReviewed ? 'View' : 'Review →'}
+        </button>
+      ),
+    },
+  ]
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">Workforce Planning & Wage Logs</p>
-          <h1 className="text-xl font-bold text-slate-900">Daily Labor Attendance & Contractor Measurements</h1>
+          <p className="text-xs font-bold text-blue-600 uppercase tracking-widest">Manager / Site Logs</p>
+          <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Daily Site Progress Diaries</h1>
+          <p className="text-xs text-slate-500 mt-1">Review end-of-day supervisor logs, workforce counts, weather, and photos.</p>
         </div>
-        <button
-          type="button"
-          onClick={() => setIsAddOpen(true)}
-          className="px-4 py-2.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white shadow-xs"
-        >
-          ＋ Record Daily Attendance
-        </button>
+        <ExportButton
+          filename="daily_site_logs"
+          headers={['Date', 'Site', 'Weather', 'Workforce', 'Summary', 'Hindrances', 'Reviewed']}
+          data={dailyLogs.map((l) => [
+            l.date || '',
+            l.projectName || 'Site',
+            l.weather || 'Sunny',
+            l.workforceCount?.total || 12,
+            l.workDoneSummary || '',
+            l.hindrances || '',
+            l.managerReviewed ? 'Yes' : 'No',
+          ])}
+          title="Daily Site Progress Logs"
+        />
       </div>
 
-      {/* Workforce Table */}
-      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-700">
-            <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
-              <tr>
-                <th className="p-3.5">Date</th>
-                <th className="p-3.5">Site Name</th>
-                <th className="p-3.5">Trade Category</th>
-                <th className="p-3.5 text-center">Headcount</th>
-                <th className="p-3.5 text-center">Shift / OT</th>
-                <th className="p-3.5 text-right">Daily Rate</th>
-                <th className="p-3.5 text-right">Total Wage</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {workforce.length === 0 ? (
-                <tr>
-                  <td colSpan="7" className="p-8 text-center text-slate-400">
-                    No attendance entries logged yet today. Click "Record Daily Attendance" to add.
-                  </td>
-                </tr>
-              ) : (
-                workforce.map((entry) => (
-                  <tr key={entry.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="p-3.5 text-slate-500">{formatDate(entry.date || entry.createdAt)}</td>
-                    <td className="p-3.5 font-semibold text-slate-900">{entry.siteName || entry.siteId}</td>
-                    <td className="p-3.5"><StatusBadge status={entry.roleCategory || 'Masonry'} /></td>
-                    <td className="p-3.5 text-center font-bold text-blue-700">{entry.headcount || 0}</td>
-                    <td className="p-3.5 text-center text-slate-600">{entry.shiftHours || 8} hrs {entry.otHours ? `(+${entry.otHours}h OT)` : ''}</td>
-                    <td className="p-3.5 text-right text-slate-600">{formatCurrency(entry.dailyWageRate)}</td>
-                    <td className="p-3.5 text-right font-bold text-emerald-600">{formatCurrency(entry.totalWage)}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+      <FilterBar
+        searchQuery={search}
+        onSearchChange={setSearch}
+        placeholder="Search logs by site, date, summary..."
+      />
+
+      <DataTable
+        columns={columns}
+        data={dailyLogs}
+        searchQuery={search}
+        searchFields={['projectName', 'date', 'workDoneSummary', 'weather']}
+        emptyMessage="No supervisor daily site logs submitted yet today."
+      />
+
+      {/* Review Modal */}
+      <Modal isOpen={Boolean(selectedLog)} onClose={() => setSelectedLog(null)} title="Daily Site Log Review & Sign-off">
+        {selectedLog && (
+          <form onSubmit={handleReviewSubmit} className="space-y-4 text-xs">
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Site: <strong className="text-slate-800">{selectedLog.projectName}</strong></span>
+                <span className="text-slate-500">Date: <strong className="text-slate-800">{selectedLog.date}</strong></span>
+              </div>
+              <div><span className="text-slate-500">Weather:</span> <span className="text-slate-800">{selectedLog.weather}</span></div>
+              <div>
+                <span className="text-slate-500">Workforce Deployed:</span>{' '}
+                <strong className="text-blue-700 font-mono">
+                  {selectedLog.workforceCount?.masons || 4} Masons, {selectedLog.workforceCount?.helpers || 8} Helpers (Total: {selectedLog.workforceCount?.total || 12})
+                </strong>
+              </div>
+              <div><span className="text-slate-500">Progress Narrative:</span> <p className="text-slate-800 mt-1 font-medium">{selectedLog.workDoneSummary}</p></div>
+              <div><span className="text-slate-500">Bottlenecks / Delays:</span> <p className="text-rose-700 mt-1 font-medium">{selectedLog.hindrances || 'None'}</p></div>
+            </div>
+
+            <label className="block font-medium text-slate-700">
+              Manager Review Comments / Technical Sign-off Notes:
+              <textarea
+                rows="3"
+                value={reviewNotes}
+                onChange={(e) => setReviewNotes(e.target.value)}
+                placeholder="e.g. Verified site photograph and RCC casting progress. Approved."
+                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
+              />
+            </label>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setSelectedLog(null)}
+                className="w-1/2 py-2.5 rounded-xl font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+              >
+                Close
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="w-1/2 py-2.5 rounded-xl font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition-colors"
+              >
+                {saving ? 'Signing...' : '✓ Sign-off Log'}
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
+    </div>
+  )
+}
+
+// ------------------------------------------------------------------------------------------------
+// 3. DAILY WORKFORCE MUSTER ROLL (LIGHT MODE)
+// ------------------------------------------------------------------------------------------------
+function WorkforceManager({ orgId, workforce = [], sites = [] }) {
+  const [isAddOpen, setIsAddOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [formData, setFormData] = useState({
+    siteId: sites[0]?.id || '',
+    roleCategory: 'Masons',
+    skillType: 'Skilled',
+    headcount: 8,
+    shiftHours: 8,
+    otHours: 0,
+    dailyWageRate: 850,
+  })
+
+  async function handleAddEntry(e) {
+    e.preventDefault()
+    if (!orgId) return
+    setSaving(true)
+    try {
+      const siteObj = sites.find((s) => s.id === formData.siteId)
+      await recordWorkerAttendance(orgId, {
+        ...formData,
+        projectId: formData.siteId,
+        projectName: siteObj?.name || siteObj?.projectName || 'Site',
+      })
+      setIsAddOpen(false)
+      alert('Daily attendance muster roll entry saved.')
+    } catch (err) {
+      alert('Error: ' + err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const columns = [
+    {
+      header: 'Date',
+      accessor: 'date',
+      render: (row) => formatDate(row.date || row.createdAt),
+    },
+    {
+      header: 'Site Name',
+      accessor: 'projectName',
+      render: (row) => row.projectName || row.siteName || 'Site',
+    },
+    {
+      header: 'Trade Category',
+      accessor: 'roleCategory',
+      render: (row) => <StatusBadge status={row.roleCategory || 'Masons'} />,
+    },
+    {
+      header: 'Headcount',
+      accessor: 'headcount',
+      align: 'center',
+      render: (row) => <span className="font-extrabold text-blue-700">{row.headcount || 1}</span>,
+    },
+    {
+      header: 'Shift / OT',
+      accessor: 'shiftHours',
+      align: 'center',
+      render: (row) => `${row.shiftHours || 8} hrs ${row.otHours ? `(+${row.otHours}h OT)` : ''}`,
+    },
+    {
+      header: 'Daily Rate',
+      accessor: 'dailyWageRate',
+      align: 'right',
+      render: (row) => money(row.dailyWageRate),
+    },
+    {
+      header: 'Total Wage Liability',
+      accessor: 'totalWage',
+      align: 'right',
+      render: (row) => <span className="font-bold text-emerald-700">{money(row.totalWage)}</span>,
+    },
+  ]
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <p className="text-xs font-bold text-blue-600 uppercase tracking-widest">Manager / Workforce</p>
+          <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Daily Muster Roll & Labor Wages</h1>
+          <p className="text-xs text-slate-500 mt-1">Log attendance counts, overtime hours, and calculate daily wage liabilities.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <ExportButton
+            filename="muster_roll"
+            headers={['Date', 'Site', 'Trade', 'Headcount', 'Shift Hours', 'OT Hours', 'Daily Rate', 'Total Wage']}
+            data={workforce.map((w) => [
+              w.date || '',
+              w.projectName || w.siteName || 'Site',
+              w.roleCategory || 'Masons',
+              w.headcount || 1,
+              w.shiftHours || 8,
+              w.otHours || 0,
+              w.dailyWageRate || 0,
+              w.totalWage || 0,
+            ])}
+            title="Workforce Muster Roll Statement"
+          />
+          <button
+            type="button"
+            onClick={() => setIsAddOpen(true)}
+            className="px-4 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white shadow-xs transition-colors"
+          >
+            ＋ Record Muster Roll
+          </button>
         </div>
       </div>
 
-      {/* Modal */}
-      <Modal isOpen={isAddOpen} onClose={() => setIsAddOpen(false)} title="Record Workforce Daily Attendance">
+      <FilterBar
+        searchQuery={search}
+        onSearchChange={setSearch}
+        placeholder="Search attendance by site, trade, date..."
+      />
+
+      <DataTable
+        columns={columns}
+        data={workforce}
+        searchQuery={search}
+        searchFields={['projectName', 'siteName', 'roleCategory', 'date']}
+        emptyMessage="No muster roll attendance logged today."
+      />
+
+      <Modal isOpen={isAddOpen} onClose={() => setIsAddOpen(false)} title="Record Daily Labor Attendance">
         <form onSubmit={handleAddEntry} className="space-y-4">
           <label className="block text-xs font-medium text-slate-700">
-            Site / Project
+            Target Site *
             <select
-              value={siteId}
-              onChange={(e) => setSiteId(e.target.value)}
-              className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-xs focus:border-blue-600 outline-none"
+              value={formData.siteId}
+              onChange={(e) => setFormData({ ...formData, siteId: e.target.value })}
+              className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
             >
               {sites.map((s) => (
-                <option key={s.id} value={s.id}>{s.projectName || s.siteName || s.id}</option>
+                <option key={s.id} value={s.id}>{s.name || s.projectName || s.id}</option>
               ))}
             </select>
           </label>
@@ -555,50 +654,63 @@ function WorkforceManager({ orgId, workforce = [], sites = [] }) {
             <label className="block text-xs font-medium text-slate-700">
               Trade Category
               <select
-                value={roleCategory}
-                onChange={(e) => setRoleCategory(e.target.value)}
-                className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-xs focus:border-blue-600 outline-none"
+                value={formData.roleCategory}
+                onChange={(e) => setFormData({ ...formData, roleCategory: e.target.value })}
+                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
               >
-                {['Masons', 'Carpenters', 'Bar Benders', 'Electricians', 'Plumbers', 'Helpers / Laborers'].map((c) => (
+                {['Masons', 'Carpenters', 'Barbenders', 'Electricians', 'Plumbers', 'General Helpers / Laborers'].map((c) => (
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>
             </label>
             <label className="block text-xs font-medium text-slate-700">
-              Headcount (Workers)
+              Headcount (Workers) *
               <input
                 type="number"
-                value={headcount}
-                onChange={(e) => setHeadcount(e.target.value)}
-                className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-xs focus:border-blue-600 outline-none"
-              />
-            </label>
-            <label className="block text-xs font-medium text-slate-700">
-              Overtime (OT Hours)
-              <input
-                type="number"
-                value={otHours}
-                onChange={(e) => setOtHours(e.target.value)}
-                className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-xs focus:border-blue-600 outline-none"
-              />
-            </label>
-            <label className="block text-xs font-medium text-slate-700">
-              Daily Wage Rate (INR)
-              <input
-                type="number"
-                value={dailyWageRate}
-                onChange={(e) => setDailyWageRate(e.target.value)}
-                className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-xs focus:border-blue-600 outline-none"
+                required
+                value={formData.headcount}
+                onChange={(e) => setFormData({ ...formData, headcount: e.target.value })}
+                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600 font-mono"
               />
             </label>
           </div>
-          <button
-            type="submit"
-            disabled={saving}
-            className="w-full py-2.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white shadow-xs"
-          >
-            {saving ? 'Saving...' : 'Save Daily Attendance Log'}
-          </button>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block text-xs font-medium text-slate-700">
+              Overtime Hours
+              <input
+                type="number"
+                value={formData.otHours}
+                onChange={(e) => setFormData({ ...formData, otHours: e.target.value })}
+                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600 font-mono"
+              />
+            </label>
+            <label className="block text-xs font-medium text-slate-700">
+              Daily Wage Rate (INR) *
+              <input
+                type="number"
+                required
+                value={formData.dailyWageRate}
+                onChange={(e) => setFormData({ ...formData, dailyWageRate: e.target.value })}
+                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600 font-mono"
+              />
+            </label>
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setIsAddOpen(false)}
+              className="w-1/2 py-2.5 rounded-xl font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="w-1/2 py-2.5 rounded-xl font-bold bg-[#0B3470] hover:bg-blue-800 text-white text-xs shadow-sm transition-colors"
+            >
+              {saving ? 'Saving...' : '✓ Record Attendance'}
+            </button>
+          </div>
         </form>
       </Modal>
     </div>
@@ -606,36 +718,36 @@ function WorkforceManager({ orgId, workforce = [], sites = [] }) {
 }
 
 // ------------------------------------------------------------------------------------------------
-// 3. MATERIALS & INWARD GRN - LIGHT MODE
+// 4. MATERIAL INDENTS & INWARD GRN (LIGHT MODE)
 // ------------------------------------------------------------------------------------------------
-function MaterialsManager({ orgId, materials = [], sites = [] }) {
+function MaterialsProcurement({ orgId, materialRequests = [], materials = [], sites = [] }) {
   const [isGrnOpen, setIsGrnOpen] = useState(false)
-  const [siteId, setSiteId] = useState(sites[0]?.id || '')
-  const [materialName, setMaterialName] = useState('OPC 53 Cement')
-  const [quantity, setQuantity] = useState(200)
-  const [unit, setUnit] = useState('Bags')
-  const [challanNo, setChallanNo] = useState('')
-  const [supplierName, setSupplierName] = useState('')
+  const [selectedIndent, setSelectedIndent] = useState(null)
+  const [search, setSearch] = useState('')
   const [saving, setSaving] = useState(false)
+  const [formData, setFormData] = useState({
+    invoiceNumber: '',
+    receivedBy: 'Site Storekeeper',
+  })
 
-  async function handleCreateGRN(e) {
-    e.preventDefault()
+  async function handleApproveIndent(indent) {
     if (!orgId) return
+    try {
+      await approveMaterialRequest(orgId, indent.id, { name: 'Operations Manager' }, `PO-${Date.now().toString().slice(-4)}`, 'Ultratech Dist.')
+      alert('Material indent approved and Purchase Order (PO) issued!')
+    } catch (err) {
+      alert('Error: ' + err.message)
+    }
+  }
+
+  async function handleGrnSubmit(e) {
+    e.preventDefault()
+    if (!orgId || !selectedIndent) return
     setSaving(true)
     try {
-      await addDoc(collection(db, 'organisation', orgId, 'inventory'), {
-        siteId,
-        siteName: sites.find((s) => s.id === siteId)?.projectName || 'Site',
-        materialName,
-        currentStock: Number(quantity),
-        unit,
-        challanNo: challanNo || `CH-${Date.now().toString().slice(-4)}`,
-        supplierName: supplierName || 'Direct Vendor',
-        status: 'In Stock',
-        lastUpdated: serverTimestamp(),
-      })
+      await recordGrnReceipt(orgId, selectedIndent.id, formData)
       setIsGrnOpen(false)
-      alert('Goods Received Note (GRN) logged and site stock incremented!')
+      alert('Goods Received Note (GRN) recorded and stock updated!')
     } catch (err) {
       alert('Error: ' + err.message)
     } finally {
@@ -643,298 +755,144 @@ function MaterialsManager({ orgId, materials = [], sites = [] }) {
     }
   }
 
+  const columns = [
+    {
+      header: 'PO / Indent #',
+      accessor: 'poNumber',
+      render: (row) => <span className="font-mono text-blue-700 font-bold">{row.poNumber || row.id}</span>,
+    },
+    {
+      header: 'Site',
+      accessor: 'projectName',
+      render: (row) => row.projectName || 'Site',
+    },
+    {
+      header: 'Requested By',
+      accessor: 'requestedByName',
+      render: (row) => row.requestedByName || 'Supervisor',
+    },
+    {
+      header: 'Urgency',
+      accessor: 'urgency',
+      align: 'center',
+      render: (row) => <StatusBadge status={row.urgency || 'medium'} />,
+    },
+    {
+      header: 'Status',
+      accessor: 'status',
+      align: 'center',
+      render: (row) => <StatusBadge status={row.status || 'pending'} />,
+    },
+    {
+      header: 'Actions',
+      align: 'center',
+      render: (row) => {
+        const isPending = row.status === 'pending_manager' || row.status === 'pending'
+        const isApproved = row.status === 'approved' || row.status === 'ordered'
+        if (isPending) {
+          return (
+            <button
+              type="button"
+              onClick={() => handleApproveIndent(row)}
+              className="px-3 py-1 rounded-lg text-xs font-bold bg-[#0B3470] text-white hover:bg-blue-800"
+            >
+              Approve PO ✓
+            </button>
+          )
+        }
+        if (isApproved) {
+          return (
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedIndent(row)
+                setIsGrnOpen(true)
+              }}
+              className="px-3 py-1 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-500"
+            >
+              Record GRN ＋
+            </button>
+          )
+        }
+        return <span className="text-xs text-slate-400 font-medium">Received ✓</span>
+      },
+    },
+  ]
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">Inventory & Goods Inward</p>
-          <h1 className="text-xl font-bold text-slate-900">Materials Stock, Requisitions & Inward Delivery (GRN)</h1>
-        </div>
-        <button
-          type="button"
-          onClick={() => setIsGrnOpen(true)}
-          className="px-4 py-2.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white shadow-xs"
-        >
-          ＋ Inward Delivery (Create GRN)
-        </button>
-      </div>
-
-      {/* Materials Table */}
-      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-700">
-            <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
-              <tr>
-                <th className="p-3.5">Material Item</th>
-                <th className="p-3.5">Site Name</th>
-                <th className="p-3.5">Challan / Ref #</th>
-                <th className="p-3.5">Supplier / Vendor</th>
-                <th className="p-3.5 text-center">Current Stock</th>
-                <th className="p-3.5 text-center">Status</th>
-                <th className="p-3.5 text-right">Last Updated</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {materials.length === 0 ? (
-                <tr>
-                  <td colSpan="7" className="p-8 text-center text-slate-400">
-                    No site inventory logged yet. Click "Inward Delivery (Create GRN)" to add material stock.
-                  </td>
-                </tr>
-              ) : (
-                materials.map((m) => (
-                  <tr key={m.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="p-3.5 font-bold text-slate-900">{m.materialName || m.name}</td>
-                    <td className="p-3.5 text-slate-700">{m.siteName || m.siteId}</td>
-                    <td className="p-3.5 font-mono text-slate-500">{m.challanNo || 'CH-0042'}</td>
-                    <td className="p-3.5 text-slate-600">{m.supplierName || 'Ultratech Cement Co.'}</td>
-                    <td className="p-3.5 text-center font-bold text-blue-700">{m.currentStock || m.quantity || 0} {m.unit || 'Units'}</td>
-                    <td className="p-3.5 text-center"><StatusBadge status={m.status || 'In Stock'} /></td>
-                    <td className="p-3.5 text-right text-slate-500">{formatDate(m.lastUpdated || m.createdAt)}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+          <p className="text-xs font-bold text-blue-600 uppercase tracking-widest">Manager / Procurement</p>
+          <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Material Indents & Goods Inward (GRN)</h1>
+          <p className="text-xs text-slate-500 mt-1">Review supervisor field requisitions, approve Purchase Orders, and log GRN deliveries.</p>
         </div>
       </div>
 
-      {/* Modal */}
-      <Modal isOpen={isGrnOpen} onClose={() => setIsGrnOpen(false)} title="Create Goods Received Note (GRN)">
-        <form onSubmit={handleCreateGRN} className="space-y-4">
-          <label className="block text-xs font-medium text-slate-700">
-            Receiving Site
-            <select
-              value={siteId}
-              onChange={(e) => setSiteId(e.target.value)}
-              className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-xs focus:border-blue-600 outline-none"
-            >
-              {sites.map((s) => (
-                <option key={s.id} value={s.id}>{s.projectName || s.siteName || s.id}</option>
-              ))}
-            </select>
-          </label>
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block text-xs font-medium text-slate-700">
-              Material Description
+      <FilterBar
+        searchQuery={search}
+        onSearchChange={setSearch}
+        placeholder="Search indents by PO#, site, supervisor..."
+      />
+
+      <DataTable
+        columns={columns}
+        data={materialRequests}
+        searchQuery={search}
+        searchFields={['poNumber', 'projectName', 'requestedByName', 'supplierName']}
+        emptyMessage="No material indents pending review."
+      />
+
+      {/* GRN Modal */}
+      <Modal isOpen={isGrnOpen} onClose={() => setIsGrnOpen(false)} title="Record Goods Received Note (GRN)">
+        {selectedIndent && (
+          <form onSubmit={handleGrnSubmit} className="space-y-4 text-xs">
+            <p className="text-slate-600">
+              Confirming delivery for <strong>{selectedIndent.poNumber || 'PO'}</strong> at <strong>{selectedIndent.projectName}</strong>.
+            </p>
+            <label className="block font-medium text-slate-700">
+              Supplier Delivery Challan / Invoice # *
               <input
                 required
-                value={materialName}
-                onChange={(e) => setMaterialName(e.target.value)}
-                placeholder="e.g. 20mm Aggregate Stone"
-                className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-xs focus:border-blue-600 outline-none"
+                value={formData.invoiceNumber}
+                onChange={(e) => setFormData({ ...formData, invoiceNumber: e.target.value })}
+                placeholder="e.g. CH-9901"
+                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
               />
             </label>
-            <label className="block text-xs font-medium text-slate-700">
-              Quantity & Unit
-              <div className="flex gap-2 mt-1">
-                <input
-                  type="number"
-                  required
-                  value={quantity}
-                  onChange={(e) => setQuantity(e.target.value)}
-                  className="w-2/3 bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-xs focus:border-blue-600 outline-none"
-                />
-                <input
-                  value={unit}
-                  onChange={(e) => setUnit(e.target.value)}
-                  placeholder="Bags/CFT"
-                  className="w-1/3 bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-xs focus:border-blue-600 outline-none"
-                />
-              </div>
-            </label>
-            <label className="block text-xs font-medium text-slate-700">
-              Vendor / Supplier Slip #
+            <label className="block font-medium text-slate-700">
+              Received By (Storekeeper / Supervisor)
               <input
-                value={challanNo}
-                onChange={(e) => setChallanNo(e.target.value)}
-                placeholder="e.g. INV-9901"
-                className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-xs focus:border-blue-600 outline-none"
+                value={formData.receivedBy}
+                onChange={(e) => setFormData({ ...formData, receivedBy: e.target.value })}
+                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
               />
             </label>
-            <label className="block text-xs font-medium text-slate-700">
-              Supplier / Company Name
-              <input
-                value={supplierName}
-                onChange={(e) => setSupplierName(e.target.value)}
-                placeholder="e.g. JSW Steel Dist."
-                className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-xs focus:border-blue-600 outline-none"
-              />
-            </label>
-          </div>
-          <button
-            type="submit"
-            disabled={saving}
-            className="w-full py-2.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white shadow-xs"
-          >
-            {saving ? 'Processing GRN...' : '✓ Confirm Goods Inward & Update Stock'}
-          </button>
-        </form>
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsGrnOpen(false)}
+                className="w-1/2 py-2.5 rounded-xl font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="w-1/2 py-2.5 rounded-xl font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition-colors"
+              >
+                {saving ? 'Processing...' : '✓ Confirm GRN Receipt'}
+              </button>
+            </div>
+          </form>
+        )}
       </Modal>
     </div>
   )
 }
 
 // ------------------------------------------------------------------------------------------------
-// 4. TOOLS & EQUIPMENT TRACKING - LIGHT MODE
-// ------------------------------------------------------------------------------------------------
-function ToolsManager({ orgId, tools = [], sites = [] }) {
-  const [isAddOpen, setIsAddOpen] = useState(false)
-  const [toolName, setToolName] = useState('')
-  const [assetTag, setAssetTag] = useState('')
-  const [siteId, setSiteId] = useState(sites[0]?.id || '')
-  const [assignedTo, setAssignedTo] = useState('')
-  const [condition, setCondition] = useState('Good')
-  const [saving, setSaving] = useState(false)
-
-  async function handleAddTool(e) {
-    e.preventDefault()
-    if (!orgId) return
-    setSaving(true)
-    try {
-      await addDoc(collection(db, 'organisation', orgId, 'equipment'), {
-        toolName,
-        assetTag: assetTag || `EQ-${Date.now().toString().slice(-4)}`,
-        siteId,
-        siteName: sites.find((s) => s.id === siteId)?.projectName || 'Site',
-        assignedTo: assignedTo || 'Site Store',
-        condition,
-        status: 'Active',
-        createdAt: serverTimestamp(),
-      })
-      setIsAddOpen(false)
-      alert('Tool issued / asset registered successfully.')
-    } catch (err) {
-      alert('Error: ' + err.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">Equipment & Assets</p>
-          <h1 className="text-xl font-bold text-slate-900">Machinery & Tools Movement, Condition & Issue Logs</h1>
-        </div>
-        <button
-          type="button"
-          onClick={() => setIsAddOpen(true)}
-          className="px-4 py-2.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white shadow-xs"
-        >
-          ＋ Issue / Register Tool
-        </button>
-      </div>
-
-      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-700">
-            <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
-              <tr>
-                <th className="p-3.5">Asset Tag</th>
-                <th className="p-3.5">Equipment / Tool</th>
-                <th className="p-3.5">Current Site</th>
-                <th className="p-3.5">Assigned Custodian</th>
-                <th className="p-3.5 text-center">Condition</th>
-                <th className="p-3.5 text-center">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {tools.length === 0 ? (
-                <tr>
-                  <td colSpan="6" className="p-8 text-center text-slate-400">
-                    No tools logged yet. Click "Issue / Register Tool" to track site equipment.
-                  </td>
-                </tr>
-              ) : (
-                tools.map((t) => (
-                  <tr key={t.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="p-3.5 font-mono text-blue-700 font-bold">{t.assetTag || 'EQ-01'}</td>
-                    <td className="p-3.5 font-semibold text-slate-900">{t.toolName || t.name}</td>
-                    <td className="p-3.5 text-slate-700">{t.siteName || t.siteId}</td>
-                    <td className="p-3.5 text-slate-600">{t.assignedTo || 'Store Keeper'}</td>
-                    <td className="p-3.5 text-center"><StatusBadge status={t.condition || 'Good'} /></td>
-                    <td className="p-3.5 text-center"><StatusBadge status={t.status || 'Active'} /></td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <Modal isOpen={isAddOpen} onClose={() => setIsAddOpen(false)} title="Issue & Register Site Tool">
-        <form onSubmit={handleAddTool} className="space-y-4">
-          <label className="block text-xs font-medium text-slate-700">
-            Tool / Machine Name *
-            <input
-              required
-              value={toolName}
-              onChange={(e) => setToolName(e.target.value)}
-              placeholder="e.g. Concrete Vibrator Needle 40mm"
-              className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-xs focus:border-blue-600 outline-none"
-            />
-          </label>
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block text-xs font-medium text-slate-700">
-              Asset Tag / Barcode #
-              <input
-                value={assetTag}
-                onChange={(e) => setAssetTag(e.target.value)}
-                placeholder="e.g. AST-VIB-01"
-                className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-xs focus:border-blue-600 outline-none"
-              />
-            </label>
-            <label className="block text-xs font-medium text-slate-700">
-              Assigned Site
-              <select
-                value={siteId}
-                onChange={(e) => setSiteId(e.target.value)}
-                className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-xs focus:border-blue-600 outline-none"
-              >
-                {sites.map((s) => (
-                  <option key={s.id} value={s.id}>{s.projectName || s.siteName || s.id}</option>
-                ))}
-              </select>
-            </label>
-            <label className="block text-xs font-medium text-slate-700">
-              Issued To (Supervisor / Sub-Contractor)
-              <input
-                value={assignedTo}
-                onChange={(e) => setAssignedTo(e.target.value)}
-                placeholder="e.g. Ramesh S. (Civil Lead)"
-                className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-xs focus:border-blue-600 outline-none"
-              />
-            </label>
-            <label className="block text-xs font-medium text-slate-700">
-              Equipment Condition
-              <select
-                value={condition}
-                onChange={(e) => setCondition(e.target.value)}
-                className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 text-xs focus:border-blue-600 outline-none"
-              >
-                <option value="Good">Good Condition</option>
-                <option value="Maintenance Required">Maintenance Required</option>
-                <option value="Damaged">Damaged / Repair Needed</option>
-              </select>
-            </label>
-          </div>
-          <button
-            type="submit"
-            disabled={saving}
-            className="w-full py-2.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white shadow-xs"
-          >
-            {saving ? 'Registering...' : '✓ Issue Tool & Save Entry'}
-          </button>
-        </form>
-      </Modal>
-    </div>
-  )
-}
-
-// ------------------------------------------------------------------------------------------------
-// 5. 3-TIER PAYMENT APPROVALS - LIGHT MODE
+// 5. 3-TIER PAYMENT APPROVALS (LIGHT MODE)
 // ------------------------------------------------------------------------------------------------
 function ManagerApprovals({ orgId, approvals = [] }) {
   const [selectedApproval, setSelectedApproval] = useState(null)
@@ -942,32 +900,20 @@ function ManagerApprovals({ orgId, approvals = [] }) {
   const [utrRef, setUtrRef] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
-  // Tier 1 Manager Review (Forward to Org)
   async function handleTier1Review(approval, isApproved) {
     if (!orgId) return
     setSubmitting(true)
     try {
-      await updateDoc(doc(db, 'organisation', orgId, 'approvals', approval.id), {
-        approvalStatus: isApproved ? 'pending_org_approval' : 'rejected',
-        status: isApproved ? 'pending_org_approval' : 'rejected',
-        tier1_managerReview: {
-          reviewedBy: 'Manager',
-          reviewedAt: serverTimestamp(),
-          notes: actionNotes || (isApproved ? 'Verified site measurement and progress.' : 'Measurement discrepancy.'),
-          isApproved,
-        },
-        reviewedAt: serverTimestamp(),
-      })
+      await executeTier1Review(orgId, approval.id, 'Operations Manager', isApproved, actionNotes)
       setSelectedApproval(null)
-      alert(isApproved ? 'Tier 1 Review completed. Forwarded to Organization for Tier 2 Approval.' : 'Payment claim rejected.')
+      alert(isApproved ? 'Tier 1 Review verified and forwarded to Organization.' : 'Claim rejected.')
     } catch (err) {
-      alert('Error updating approval: ' + err.message)
+      alert('Error: ' + err.message)
     } finally {
       setSubmitting(false)
     }
   }
 
-  // Tier 3 Manager Clearance (Bank UTR Released)
   async function handleTier3Clearance(approval) {
     if (!orgId || !utrRef) {
       alert('Please enter the bank UTR / Reference number.')
@@ -975,21 +921,11 @@ function ManagerApprovals({ orgId, approvals = [] }) {
     }
     setSubmitting(true)
     try {
-      await updateDoc(doc(db, 'organisation', orgId, 'approvals', approval.id), {
-        approvalStatus: 'cleared',
-        status: 'cleared',
-        tier3_managerClearance: {
-          clearedBy: 'Manager',
-          clearedAt: serverTimestamp(),
-          utrReference: utrRef,
-          isCleared: true,
-        },
-        clearedAt: serverTimestamp(),
-      })
+      await executeTier3Clearance(orgId, approval.id, 'Operations Manager', utrRef)
       setSelectedApproval(null)
       alert('Tier 3 Payment Clearance completed! Payment marked as cleared.')
     } catch (err) {
-      alert('Error clearing payment: ' + err.message)
+      alert('Error: ' + err.message)
     } finally {
       setSubmitting(false)
     }
@@ -998,15 +934,15 @@ function ManagerApprovals({ orgId, approvals = [] }) {
   return (
     <div className="space-y-6">
       <div>
-        <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">3-Tier Approval Lifecycle</p>
-        <h1 className="text-xl font-bold text-slate-900">Payment Verification & Final Clearance Portal</h1>
-        <p className="text-xs text-slate-500 mt-1">Execute Tier 1 Technical Reviews and Tier 3 Banking Clearance.</p>
+        <p className="text-xs font-bold text-blue-600 uppercase tracking-widest">Manager / Approvals</p>
+        <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Payment Verification & Final Clearance</h1>
+        <p className="text-xs text-slate-500 mt-1">Execute Tier 1 Site Measurement Reviews and Tier 3 Banking Clearance.</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {approvals.length === 0 ? (
-          <div className="col-span-full p-8 text-center bg-white border border-slate-200 rounded-2xl text-slate-400 shadow-xs">
-            No payment approval claims pending at this time.
+          <div className="col-span-full p-12 text-center bg-white border border-slate-200 rounded-2xl text-slate-400">
+            No payment claims pending action.
           </div>
         ) : (
           approvals.map((app) => {
@@ -1015,19 +951,14 @@ function ManagerApprovals({ orgId, approvals = [] }) {
             const isTier3Pending = status.includes('manager_clearance') || status === 'approved'
 
             return (
-              <div key={app.id} className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs hover:shadow-md transition-all space-y-3 flex flex-col justify-between">
+              <div key={app.id} className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs hover:shadow-md transition-all space-y-3 flex flex-col justify-between">
                 <div className="space-y-2">
                   <div className="flex items-start justify-between gap-2">
                     <h3 className="text-sm font-bold text-slate-900 line-clamp-1">{app.payeeName || app.title || 'Contractor Claim'}</h3>
                     <StatusBadge status={status} />
                   </div>
-                  <p className="text-xs text-slate-500">{app.projectName || app.siteName || 'Site Location'} · Stage: {app.stage || 'Structure'}</p>
-                  <div className="text-lg font-extrabold text-emerald-600">{formatCurrency(app.claimedAmount || app.amount || 0)}</div>
-                  {app.tier1_managerReview?.notes && (
-                    <p className="text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-200 italic">
-                      " {app.tier1_managerReview.notes} "
-                    </p>
-                  )}
+                  <p className="text-xs text-slate-500">{app.projectName || 'Site Location'} · Stage: {app.stage || 'Structure'}</p>
+                  <div className="text-lg font-extrabold text-emerald-700">{money(app.claimedAmount || app.amount || 0)}</div>
                 </div>
 
                 <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
@@ -1050,7 +981,7 @@ function ManagerApprovals({ orgId, approvals = [] }) {
                     </button>
                   )}
                   {!isTier1Pending && !isTier3Pending && (
-                    <span className="text-xs text-slate-500">Status: {status}</span>
+                    <span className="text-xs text-slate-400 font-medium">Reviewed ({status})</span>
                   )}
                 </div>
               </div>
@@ -1059,7 +990,6 @@ function ManagerApprovals({ orgId, approvals = [] }) {
         )}
       </div>
 
-      {/* Action Modal */}
       {selectedApproval && (
         <Modal
           isOpen={Boolean(selectedApproval)}
@@ -1068,17 +998,17 @@ function ManagerApprovals({ orgId, approvals = [] }) {
         >
           {selectedApproval.actionType === 'tier1' ? (
             <div className="space-y-4 text-xs">
-              <p className="text-slate-700">
-                Confirm that site measurements and work milestones for <strong>{selectedApproval.payeeName}</strong> ({formatCurrency(selectedApproval.claimedAmount || selectedApproval.amount)}) match verified physical progress.
+              <p className="text-slate-600">
+                Confirm that site measurements for <strong>{selectedApproval.payeeName}</strong> ({money(selectedApproval.claimedAmount || selectedApproval.amount)}) match physical progress.
               </p>
               <label className="block font-medium text-slate-700">
-                Technical Review Remarks & Verification Notes:
+                Verification Remarks:
                 <textarea
                   rows="3"
                   value={actionNotes}
                   onChange={(e) => setActionNotes(e.target.value)}
-                  placeholder="e.g. 100% plastering completed as per specification. Measurement sheet verified."
-                  className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 focus:border-blue-600 outline-none"
+                  placeholder="Measurement sheet verified against stage progress."
+                  className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
                 />
               </label>
               <div className="flex gap-3 pt-2">
@@ -1094,7 +1024,7 @@ function ManagerApprovals({ orgId, approvals = [] }) {
                   type="button"
                   disabled={submitting}
                   onClick={() => handleTier1Review(selectedApproval, true)}
-                  className="w-1/2 py-2.5 rounded-xl font-bold bg-[#0B3470] hover:bg-blue-800 text-white"
+                  className="w-1/2 py-2.5 rounded-xl font-bold bg-[#0B3470] hover:bg-blue-800 text-white shadow-sm"
                 >
                   {submitting ? 'Submitting...' : '✓ Approve & Forward to Org'}
                 </button>
@@ -1102,24 +1032,24 @@ function ManagerApprovals({ orgId, approvals = [] }) {
             </div>
           ) : (
             <div className="space-y-4 text-xs">
-              <p className="text-slate-700">
-                Organization has approved payment of <strong>{formatCurrency(selectedApproval.claimedAmount || selectedApproval.amount)}</strong>. Record the bank transaction UTR reference to mark as cleared.
+              <p className="text-slate-600">
+                Organization approved payment of <strong>{money(selectedApproval.claimedAmount || selectedApproval.amount)}</strong>. Record the bank transaction UTR reference to mark as cleared.
               </p>
               <label className="block font-medium text-slate-700">
-                Bank UTR / Transaction Reference Number *
+                Bank UTR / Transaction Reference *
                 <input
                   required
                   value={utrRef}
                   onChange={(e) => setUtrRef(e.target.value)}
                   placeholder="e.g. HDFC000192837465"
-                  className="mt-1 w-full bg-white border border-slate-300 rounded-xl p-2.5 text-slate-900 focus:border-blue-600 outline-none"
+                  className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600 font-mono"
                 />
               </label>
               <button
                 type="button"
                 disabled={submitting}
                 onClick={() => handleTier3Clearance(selectedApproval)}
-                className="w-full py-2.5 rounded-xl font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs"
+                className="w-full py-2.5 rounded-xl font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm"
               >
                 {submitting ? 'Clearing...' : '✓ Record UTR & Clear Payment'}
               </button>
@@ -1143,19 +1073,19 @@ export default function ManagerModule() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [globalQuery, setGlobalQuery] = useState('')
 
-  const { sites, workforce, materials, tools, approvals, loading, error } =
-    useManagerDashboard(orgId, user?.uid, userData?.assignedSites || [])
+  const dashboardData = useManagerDashboard(orgId, user?.uid, userData?.assignedSites || [])
+  const { sites, workforce, materials, materialRequests, tools, approvals, dailyLogs, loading, error } = dashboardData
 
   const managerName = userData?.fullName || userData?.FullName || userData?.name || user?.displayName || 'Operations Manager'
 
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard', href: '/manager/dashboard', icon: '⌂' },
+    { id: 'dashboard', label: 'Command Center', href: '/manager/dashboard', icon: '⌂' },
     { id: 'site-wizard', label: 'Site Setup Wizard', href: '/manager/site-wizard', icon: '⚡' },
-    { id: 'sites', label: 'Sites Register', href: '/manager/sites', icon: '▦' },
-    { id: 'workforce', label: 'Daily Workforce', href: '/manager/workforce', icon: '👷' },
-    { id: 'materials', label: 'Materials & GRN', href: '/manager/materials', icon: '📦' },
-    { id: 'tools', label: 'Tools Movement', href: '/manager/tools', icon: '🔧' },
-    { id: 'approvals', label: 'Payment Approvals', href: '/manager/approvals', icon: '✓' },
+    { id: 'sites', label: 'Sites Portfolio', href: '/manager/sites', icon: '▦' },
+    { id: 'daily-logs', label: 'Daily Progress Diaries', href: '/manager/daily-logs', icon: '📝' },
+    { id: 'workforce', label: 'Muster Roll & Wages', href: '/manager/workforce', icon: '👷' },
+    { id: 'materials', label: 'Materials & Indents', href: '/manager/materials', icon: '📦' },
+    { id: 'approvals', label: 'Payment Approvals', href: '/manager/approvals', icon: '✓', badge: approvals.filter((a) => String(a.approvalStatus || a.status).includes('pending')).length },
   ]
 
   async function handleLogout() {
@@ -1164,7 +1094,7 @@ export default function ManagerModule() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 flex font-sans">
+    <div className="h-screen bg-[#F8FAFC] text-slate-900 flex font-sans overflow-hidden">
       {/* Mobile Drawer Backdrop */}
       {isMobileMenuOpen && (
         <div
@@ -1173,9 +1103,9 @@ export default function ManagerModule() {
         />
       )}
 
-      {/* Strict #0B3470 Sidebar (Desktop & Mobile Drawer) */}
+      {/* Strict #0B3470 Sidebar (Desktop Fixed & Mobile Drawer) */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#0B3470] p-4 flex flex-col justify-between shadow-2xl transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 lg:shadow-xl lg:z-20 ${
+        className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#0B3470] p-4 flex flex-col justify-between shadow-2xl transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 lg:shadow-xl lg:z-20 shrink-0 h-screen overflow-y-auto ${
           isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
@@ -1185,7 +1115,7 @@ export default function ManagerModule() {
               <img className="h-10 w-auto rounded-xl object-contain bg-white p-1 shadow-md" src={logo} alt="eBricks" />
               <div className="text-white">
                 <strong className="block text-sm font-extrabold tracking-wide">eBricks</strong>
-                <span className="text-[10px] font-bold tracking-widest text-blue-200 uppercase">Manager Hub</span>
+                <span className="text-[10px] font-bold tracking-widest text-blue-200 uppercase">Operations Hub</span>
               </div>
             </Link>
             <button
@@ -1199,7 +1129,7 @@ export default function ManagerModule() {
           </div>
 
           <div className="space-y-1">
-            <p className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-blue-200/60">OPERATIONAL MODULES</p>
+            <p className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-blue-200/60">OPERATIONAL DESK</p>
             {navItems.map((item) => {
               const isActive = module === item.id || (item.id === 'dashboard' && !module)
               return (
@@ -1217,6 +1147,11 @@ export default function ManagerModule() {
                     <span>{item.icon}</span>
                     {item.label}
                   </span>
+                  {item.badge > 0 && (
+                    <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-400 text-slate-950 rounded-full shadow-xs">
+                      {item.badge}
+                    </span>
+                  )}
                 </Link>
               )
             })}
@@ -1231,10 +1166,10 @@ export default function ManagerModule() {
         </div>
       </aside>
 
-      {/* Main Light Content Surface */}
-      <div className="flex-1 min-w-0 flex flex-col bg-[#F8FAFC]">
-        {/* Topbar Header (Light Mode) */}
-        <header className="sticky top-0 z-30 flex items-center justify-between gap-4 px-4 sm:px-6 py-3.5 bg-white border-b border-slate-200/90 shadow-xs">
+      {/* Main Light Content Surface (Independently Scrollable) */}
+      <div className="flex-1 min-w-0 flex flex-col h-screen overflow-y-auto bg-[#F8FAFC]">
+        {/* Topbar Header */}
+        <header className="sticky top-0 z-30 flex items-center justify-between gap-4 px-4 sm:px-6 py-3.5 bg-white/95 backdrop-blur-md border-b border-slate-200/90 shadow-xs shrink-0">
           <div className="flex items-center gap-3 flex-1 max-w-md">
             <button
               type="button"
@@ -1281,23 +1216,23 @@ export default function ManagerModule() {
           </div>
         </header>
 
-        {/* Submodule View */}
-        <main className="p-6 md:p-8 max-w-6xl w-full mx-auto flex-1">
+        {/* Submodule Main Surface */}
+        <main className="p-6 md:p-8 max-w-7xl w-full mx-auto flex-1">
           {module === 'site-wizard' && <SiteSetupWizard orgId={orgId} />}
+          {module === 'daily-logs' && <DailyLogsManager orgId={orgId} dailyLogs={dailyLogs} sites={sites} />}
           {module === 'workforce' && <WorkforceManager orgId={orgId} workforce={workforce} sites={sites} />}
-          {module === 'materials' && <MaterialsManager orgId={orgId} materials={materials} sites={sites} />}
-          {module === 'tools' && <ToolsManager orgId={orgId} tools={tools} sites={sites} />}
+          {module === 'materials' && <MaterialsProcurement orgId={orgId} materialRequests={materialRequests} materials={materials} sites={sites} />}
           {module === 'approvals' && <ManagerApprovals orgId={orgId} approvals={approvals} />}
           {(!module || module === 'sites' || module === 'dashboard') && (
             <div className="space-y-6">
               <div className="flex items-center justify-between pb-3 border-b border-slate-200">
                 <div>
                   <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">Active Portfolio</p>
-                  <h1 className="text-xl font-bold text-slate-900">Registered Sites & Progress Status</h1>
+                  <h1 className="text-xl font-bold text-slate-900">Registered Construction Sites</h1>
                 </div>
                 <Link
                   to="/manager/site-wizard"
-                  className="px-4 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white shadow-xs"
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white shadow-xs transition-colors"
                 >
                   ＋ New Site Wizard
                 </Link>
@@ -1306,13 +1241,13 @@ export default function ManagerModule() {
                 {sites.map((s) => (
                   <div key={s.id} className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs hover:shadow-md transition-all space-y-3">
                     <div className="flex items-start justify-between">
-                      <h3 className="font-bold text-slate-900 text-base">{s.projectName || s.siteName || s.id}</h3>
-                      <StatusBadge status={s.currentStatus || s.status || 'Active'} />
+                      <h3 className="font-bold text-slate-900 text-base">{s.name || s.projectName || s.id}</h3>
+                      <StatusBadge status={s.status || s.currentStatus || 'Active'} />
                     </div>
-                    <p className="text-xs text-slate-500">{s.siteLocation || 'Location registered'}</p>
+                    <p className="text-xs text-slate-500">{s.location?.address || s.siteLocation || 'Location registered'}</p>
                     <div className="space-y-1">
                       <div className="flex justify-between text-xs text-slate-700">
-                        <span>Current Stage: <strong className="text-slate-900">{s.projectStage || s.stage || 'Foundation'}</strong></span>
+                        <span>Current Stage: <strong className="text-slate-900">{s.currentStage || s.projectStage || 'Foundation'}</strong></span>
                         <span className="font-bold text-blue-700">{s.progress || 0}%</span>
                       </div>
                       <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200/60">
@@ -1327,7 +1262,6 @@ export default function ManagerModule() {
         </main>
       </div>
 
-      {/* Notification Drawer */}
       <NotificationDrawer isOpen={isNotifOpen} onClose={() => setIsNotifOpen(false)} role="Manager" />
     </div>
   )

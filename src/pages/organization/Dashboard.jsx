@@ -14,9 +14,30 @@ function value(record, fields, fallback = '') {
   return fields.map((field) => record?.[field]).find((item) => item !== undefined && item !== null && item !== '') ?? fallback
 }
 
+function parseAmount(val) {
+  if (val === undefined || val === null || val === '') return 0
+  if (typeof val === 'number') return Number.isFinite(val) ? val : 0
+  if (typeof val === 'string') {
+    const cleaned = val.replace(/[^0-9.-]+/g, '').trim()
+    if (!cleaned) return 0
+    const parsed = parseFloat(cleaned)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
+
 function number(record, fields) {
-  const parsed = Number(value(record, fields, 0))
-  return Number.isFinite(parsed) ? parsed : 0
+  if (!record || !fields) return 0
+  for (const field of fields) {
+    const val = record[field]
+    if (val !== undefined && val !== null && val !== '') {
+      const parsed = parseAmount(val)
+      if (parsed !== 0 || val === 0 || val === '0') {
+        return parsed
+      }
+    }
+  }
+  return 0
 }
 
 function progressOf(record) {
@@ -176,8 +197,34 @@ export default function OrganizationDashboard() {
   const [isNotifOpen, setIsNotifOpen] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
-  const { sites, managers, approvals, expenses, inventory, equipment, pettyCash, loading, error } =
-    useOrganizationDashboard(orgId)
+  const {
+    projects,
+    sites,
+    materials,
+    materialRequests,
+    pettyCashAccounts,
+    pettyCashRequests,
+    pettyCashExpenses,
+    contractors,
+    contractorBills,
+    workers,
+    workerAttendance,
+    tools,
+    vehicles,
+    qualityChecklists,
+    safetyIncidents,
+    customerInvoices,
+    dailySiteLogs,
+    approvals,
+    managers,
+    expenses,
+    pettyCash,
+    totalSiteExpensesPerDay,
+    sitePayments,
+    subscription,
+    loading,
+    error,
+  } = useOrganizationDashboard(orgId)
   const [selectedProjectId, setSelectedProjectId] = useState('all')
   const [globalQuery, setGlobalQuery] = useState('')
 
@@ -204,11 +251,59 @@ export default function OrganizationDashboard() {
 
   const validProgress = filteredSites.map(progressOf).filter((progress) => progress !== null)
   const siteProgress = validProgress.length ? Math.round(validProgress.reduce((total, p) => total + p, 0) / validProgress.length) : null
-  const plannedBudget = filteredSites.reduce((total, site) => total + number(site, ['budget', 'plannedBudget', 'projectBudget']), 0)
-  const spentBudget = filteredSites.reduce(
-    (total, site) => total + number(site, ['actual', 'actualExpenditure', 'spent', 'expenditure', 'amountSpent', 'amountSpend']),
+  const plannedBudget = filteredSites.reduce(
+    (total, site) =>
+      total +
+      number(site, [
+        'projectBudget',
+        'budget',
+        'totalBudget',
+        'estimatedBudget',
+        'plannedBudget',
+        'project_budget',
+        'contractValue',
+        'total_budget',
+      ]),
     0
   )
+
+  const spentBudget = filteredSites.reduce((total, site) => {
+    const sId = String(site.id || site.siteId || site.siteid || site.code || '').trim().toLowerCase()
+    const sName = String(site.name || site.siteName || site.sitename || site.projectName || '').trim().toLowerCase()
+
+    const expDoc = totalSiteExpensesPerDay.find((d) => {
+      const dId = String(d.id || d.siteId || d.siteid || d.projectId || '').trim().toLowerCase()
+      const dName = String(d.siteName || d.sitename || d.projectName || d.name || '').trim().toLowerCase()
+      return (sId && dId && (sId === dId || dId.includes(sId) || sId.includes(dId))) ||
+             (sName && dName && (sName === dName || dName.includes(sName) || sName.includes(dName)))
+    })
+
+    const totalAllExp = expDoc ? number(expDoc, ['totalAllExpenses', 'totalAllExpense', 'total_all_expenses', 'totalExpenses', 'totalExpense']) : 0
+    const supervisorExp = expDoc ? number(expDoc, ['totalSiteExpense', 'totalSupervisorExpense', 'siteExpense']) : 0
+    const mgrExp = expDoc ? number(expDoc, ['totalMgrExpense', 'totalManagerExpense', 'managerExpense']) : 0
+    const orgExp = expDoc ? number(expDoc, ['totalOrgExpense', 'totalOrganizationExpense', 'orgExpense']) : 0
+    const conExp = expDoc ? number(expDoc, ['totalContractorExpense', 'totalContractorPayments']) : 0
+    const incExp = expDoc ? number(expDoc, ['totalIncentiveExpenses', 'totalIncentives']) : 0
+    const calculatedDocExp = supervisorExp + mgrExp + orgExp + conExp + incExp
+
+    const directSiteExp = number(site, [
+      'amountSpent',
+      'amountSpend',
+      'spent',
+      'spentAmount',
+      'actual',
+      'actualExpenditure',
+      'actualExpense',
+      'totalAllExpenses',
+      'totalExpenses',
+      'totalExpense',
+      'expenditure',
+      'amount_spent',
+    ])
+
+    const siteSpend = totalAllExp > 0 ? totalAllExp : calculatedDocExp > 0 ? calculatedDocExp : directSiteExp
+    return total + siteSpend
+  }, 0)
   const activeSites = filteredSites.filter((site) => ['active', 'in progress', 'ongoing', 'live'].includes(statusOf(site).toLowerCase())).length
   const completedSites = filteredSites.filter((site) => statusOf(site).toLowerCase() === 'completed').length
   const planningSites = filteredSites.filter((site) => statusOf(site).toLowerCase() === 'planning').length
@@ -242,7 +337,7 @@ export default function OrganizationDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 flex font-sans">
+    <div className="h-screen bg-[#F8FAFC] text-slate-900 flex font-sans overflow-hidden">
       {/* Mobile Drawer Backdrop */}
       {isMobileMenuOpen && (
         <div
@@ -251,9 +346,9 @@ export default function OrganizationDashboard() {
         />
       )}
 
-      {/* Strict #0B3470 Sidebar (Desktop & Mobile Drawer) */}
+      {/* Strict #0B3470 Sidebar (Desktop Fixed & Mobile Drawer) */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#0B3470] p-4 flex flex-col justify-between shadow-2xl transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 lg:shadow-xl lg:z-20 ${
+        className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#0B3470] p-4 flex flex-col justify-between shadow-2xl transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 lg:shadow-xl lg:z-20 shrink-0 h-screen overflow-y-auto ${
           isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
@@ -321,10 +416,10 @@ export default function OrganizationDashboard() {
         </div>
       </aside>
 
-      {/* Main Light Content Surface */}
-      <div className="flex-1 min-w-0 flex flex-col bg-[#F8FAFC]">
+      {/* Main Light Content Surface (Independently Scrollable) */}
+      <div className="flex-1 min-w-0 flex flex-col h-screen overflow-y-auto bg-[#F8FAFC]">
         {/* Topbar Header (Light Mode) */}
-        <header className="sticky top-0 z-30 flex items-center justify-between gap-4 px-4 sm:px-6 py-3.5 bg-white border-b border-slate-200/90 shadow-xs">
+        <header className="sticky top-0 z-30 flex items-center justify-between gap-4 px-4 sm:px-6 py-3.5 bg-white/95 backdrop-blur-md border-b border-slate-200/90 shadow-xs shrink-0">
           <div className="flex items-center gap-3 flex-1 max-w-md">
             <button
               type="button"
@@ -368,10 +463,30 @@ export default function OrganizationDashboard() {
           {activeModule !== 'dashboard' ? (
             <OrganizationModule
               module={activeModule}
+              projects={projects}
               sites={sites}
+              materials={materials}
+              materialRequests={materialRequests}
+              pettyCashAccounts={pettyCashAccounts}
+              pettyCashRequests={pettyCashRequests}
+              pettyCashExpenses={pettyCashExpenses}
+              contractors={contractors}
+              contractorBills={contractorBills}
+              workers={workers}
+              workerAttendance={workerAttendance}
+              tools={tools}
+              vehicles={vehicles}
+              qualityChecklists={qualityChecklists}
+              safetyIncidents={safetyIncidents}
+              customerInvoices={customerInvoices}
+              dailySiteLogs={dailySiteLogs}
               approvals={approvals}
+              managers={managers}
               expenses={expenses}
               pettyCash={pettyCash}
+              totalSiteExpensesPerDay={totalSiteExpensesPerDay}
+              sitePayments={sitePayments}
+              subscription={subscription}
               loading={loading}
               error={error}
             />

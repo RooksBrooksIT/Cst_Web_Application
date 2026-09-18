@@ -1,0 +1,383 @@
+====================================================================================================
+            ORGANIZATION MODULE -> REPORTS & ANALYTICS SECTION WITH BACKEND DATA FLOW
+                             COMPREHENSIVE TECHNICAL SPECIFICATION
+====================================================================================================
+Document Version : 1.0.0
+Application      : CST White Label Application (EBricks)
+Target Module    : Organization Module -> Reports & Analytics Hub (Insights Dashboard & Sub-Reports)
+Source Code References:
+  - lib/screens/reports/insights_dashboard.dart
+  - lib/screens/organization/organization_insights_screen.dart
+  - lib/screens/reports/daily_site_report.dart
+  - lib/screens/reports/site_expenses_report_page.dart
+  - lib/screens/reports/site_summary_page.dart
+  - lib/screens/reports/project_stage_insights_dashboard.dart
+  - lib/screens/reports/project_stage_site_summary_report.dart
+  - lib/screens/reports/project_stage_expenses_report_page.dart
+  - lib/screens/reports/site_status_report.dart
+  - lib/screens/reports/site_status_report_page.dart
+  - lib/screens/reports/financial_status_report.dart
+  - lib/screens/reports/project_financial_status_report_page.dart
+  - lib/screens/reports/site_weekly_financial_report.dart
+  - lib/screens/reports/organization_petty_cash_insights_screen.dart
+  - lib/screens/organization/petty_cash_report_pdf_helper.dart
+  - lib/screens/manager/contractor_report_page.dart
+  - lib/screens/reports/material_report.dart
+  - lib/screens/reports/tools_inventory_report.dart
+  - lib/screens/reports/worker_summary_report_page.dart
+  - lib/screens/reports/workers_availability_report_page.dart
+  - lib/screens/reports/vehicle_inventory_pdf.dart
+  - lib/screens/reports/incentive_calculation_sheet.dart
+  - lib/services/firestore_service.dart
+  - lib/services/expense_service.dart
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+1. ARCHITECTURAL HIERARCHY & NAVIGATION
+----------------------------------------------------------------------------------------------------
+The Organization Reports system is organized around the Central Insights Dashboard 
+(accessed via Bottom Navigation Index 3 or Organization Dashboard quick actions) 
+and specialized inventory/workforce sub-modules:
+
+                              INSIGHTS DASHBOARD (BottomNav #3)
+                                          │
+       ┌──────────────────┬───────────────┼───────────────┬──────────────────┐
+       │                  │               │               │                  │
+[1. Site Expenses]  [2. Stage Exp.]  [3. Status]    [4. Financial]     [5. Petty Cash]
+   - Daily Report      - Stage Summary   - Progress    - Financial Status  - Insights
+   - Range Report      - Stage Detail    - Timeline    - Weekly Breakdown  - PDF Export
+   - Site Summary                                                          - Reconcile
+       │                  │               │               │                  │
+       └──────────────────┴───────────────┼───────────────┴──────────────────┘
+                                          │
+                    [6. Domain & Inventory Reports]
+                       - Contractor Report (Contractor Payouts)
+                       - Material Report (Stock & Consumption)
+                       - Tools & Equipment Report (Movement & Logs)
+                       - Worker Summary & Attendance Report
+                       - Vehicle Inventory Report
+                       - Supervisor Incentive Calculation Sheet
+
+====================================================================================================
+2. REPORTS MODULES: FRONTEND UI & BACKEND DATA SPECIFICATION
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+MODULE 1: SITE / PROJECT EXPENSES REPORT HUB (OrganizationInsightsScreen)
+----------------------------------------------------------------------------------------------------
+Frontend Entry & Options:
+  1. Site Selector Dropdown: Shows all active sites with canonical formatting.
+  2. Report Type Selector:
+     - (A) "Daily Site Expense Report" (Single Date Picker)
+     - (B) "Date Range Expense Report" (From Date & To Date Range Picker)
+     - (C) "Site Summary Report" (Cumulative Site Lifetime Overview)
+  3. Action CTA: "GENERATE REPORT"
+
+A. Sub-Report 1A: Daily Site Expenses Report (DailySiteExpensesReportPage)
+   - Frontend Elements:
+     * Header: Site Name, Date, Supervisor Name, Project Stage (optional filter).
+     * 5 Consolidated Breakdown Cards:
+       1. Labour Expenses      : Detailed worker roles, counts, unit rates, subtotal.
+       2. Material Expenses    : Material names, quantities, unit prices, subtotal.
+       3. Food Expenses        : Daily supervisor food allowance amount.
+       4. Transport & Fuel     : Vehicle fuel & transportation expenses.
+       5. Manager & Org Bills  : Vouchers, bills, contractor payouts for that date.
+     * Grand Total Daily Expense Highlight (Big Banner).
+     * Action: "Download PDF" / "Print PDF".
+   - Backend Firestore Flow:
+     * Composite Key: Document ID = `{siteId}_{ddMMyyyy}` (e.g. `SITE001_18092026`).
+     * Collection Queries:
+       1. `/organisation/{orgId}/siteSupervisorEntries/{siteId}_{ddMMyyyy}`
+       2. `/organisation/{orgId}/managerExpenses/{siteId}_{ddMMyyyy}`
+       3. `/organisation/{orgId}/organizationExpenses` (.where('siteId', isEqualTo: siteId))
+       4. `/organisation/{orgId}/contractorEntries` (.where('siteId', isEqualTo: siteId).where('date', isEqualTo: yyyy-MM-dd))
+       5. `/organisation/{orgId}/totalSiteExpensesPerDay` (.where('siteId', isEqualTo: siteId).where('date', isEqualTo: yyyy-MM-dd))
+
+B. Sub-Report 1B: Date Range Expenses Report (SiteExpensesReportPage)
+   - Frontend Elements:
+     * Date Range Header: e.g., "01 Sep 2026 to 18 Sep 2026".
+     * Day-by-day Chronological Accordion Cards:
+       - Date, Day Name, Daily Total.
+       - Expandable detail view of labours, materials, petty cash, bills.
+     * KPI Summary Grid:
+       - Total Labour Cost | Total Material Cost | Total Bills/Vouchers | Grand Total.
+     * PDF Generation with tables and categorized columns.
+   - Backend Firestore Flow:
+     * Loops date iterator from `fromDate` to `toDate`.
+     * For each day: resolves canonical site doc key `{siteId}_{ddMMyyyy}`.
+     * Queries `siteSupervisorEntries`, `managerExpenses`, `organizationEntries`, `contractorEntries`.
+     * Merges in memory, filters by `projectStage` (if specified), and computes running sums.
+
+C. Sub-Report 1C: Site Summary Report (SiteSummaryPage)
+   - Frontend Elements:
+     * Lifetime Financial Performance: Total Budget vs Total Paid vs Total Spent.
+     * Category Distribution: Labour %, Material %, Bills %, Incentives %.
+     * Supervisor Activity Log & stage progression.
+   - Backend Firestore Flow:
+     * Direct query on `/organisation/{orgId}/projects/{siteId}`.
+     * Direct query on `/organisation/{orgId}/totalSiteExpensesPerDay/{canonicalSiteDocId}`.
+
+----------------------------------------------------------------------------------------------------
+MODULE 2: PROJECT STAGE EXPENSES REPORT HUB (ProjectstageInsightsDashboard)
+----------------------------------------------------------------------------------------------------
+Frontend Entry & Behavior:
+  - Stage Selector: Foundation, Plinth, Superstructure, Brickwork, Plastering, Electrical, 
+    Plumbing, Flooring, Painting, Finishing.
+  - Sub-Reports:
+    1. Project Stage Site Summary (`ProjectStageSiteSummaryReport`):
+       * Shows all sites currently in that stage and their stage-specific expenditure.
+    2. Project Stage Expenses Detail (`ProjectStageExpensesReportPage`):
+       * Deep breakdown of labour, materials, bills tagged specifically with `projectStage`.
+
+Backend Firestore Flow:
+  - Queries `siteSupervisorEntries` where `projectStage == selectedStage`.
+  - Queries `managerExpenses` and `organizationEntries` where `projectStage == selectedStage`.
+  - Aggregates stage burn rate against allocated stage budget.
+
+----------------------------------------------------------------------------------------------------
+MODULE 3: SITE / PROJECT STATUS & PROGRESS REPORT (SiteStatusReportScreen)
+----------------------------------------------------------------------------------------------------
+Frontend Elements:
+  - Site Status Matrix: Live, In Progress, Planning, Completed, On Hold.
+  - Planned vs Actual Dates:
+    * Planned Start & End Date (`plannedStartDate`, `plannedEndDate`).
+    * Actual Start & Completion Date (`actualStartDate`, `actualEndDate`).
+  - Stage Completion Progress Bar (% completed).
+  - Delay & Overdue Indicators with dynamic color alerts.
+  - Supervisor Assigned & Site Location details.
+
+Backend Firestore Flow:
+  - Collection: `/organisation/{orgId}/projects`
+  - Fields Read: `siteId`, `siteName`, `currentStatus`, `plannedStartDate`, `plannedEndDate`, 
+    `actualStartDate`, `actualEndDate`, `projectStage`, `percentageCompleted`, `siteLocation`.
+  - Collection: `/organisation/{orgId}/siteSupervisorProjectStageActual` (Stage tracking).
+
+----------------------------------------------------------------------------------------------------
+MODULE 4: FINANCIAL STATUS & CASH FLOW REPORT (ProjectFinancialStatusReportPage)
+----------------------------------------------------------------------------------------------------
+Frontend Elements:
+  - Complete Financial Health Statement:
+    * Total Project Contract / Budget (₹).
+    * Client Amount Received to Date (₹).
+    * Total Actual Outflows Spent (₹).
+    * Balance from Received (Cash in Hand = Received - Spent).
+    * Budget Remaining (Contract Budget - Spent).
+    * Budget Utilization Rate (% spent).
+  - Weekly Financial Flow Tabs (`SiteWeeklyFinancialReportPage`):
+    * Week-by-week cash inflow vs outflow tracking.
+  - PDF Export Button: Generates official "FINANCIAL STATUS STATEMENT" (A4 format).
+
+Backend Firestore Flow:
+  - Primary Documents:
+    1. `/organisation/{orgId}/projects/{siteId}`: `projectBudget`, `amountPaid`, `amountSpent`.
+    2. `/organisation/{orgId}/totalSiteExpensesPerDay/{canonicalId}`: Real-time recalculations.
+    3. `/organisation/{orgId}/SitePayment`: Client installment timestamps and amounts.
+
+----------------------------------------------------------------------------------------------------
+MODULE 5: PETTY CASH INSIGHTS & AUDIT REPORT (OrganizationPettyCashInsightsScreen)
+----------------------------------------------------------------------------------------------------
+Frontend Elements:
+  - Overview KPI Cards:
+    * Total Petty Cash Disbursed to Sites (₹).
+    * Total Petty Cash Spent by Supervisors (₹).
+    * Total Net Petty Cash in Hand across all Sites (₹).
+  - Site-by-site Petty Cash Audit List:
+    * Site Name, Supervisor Name, Status (Active / Overspent).
+    * Disbursed Amount | Spent Amount | Remaining Cash Balance.
+  - Monthly Petty Cash Report Tab:
+    * Month Selector (e.g., "September 2026").
+    * Itemized transaction list: Date, Vendor, Category (Fuel, Food, Tools, Hardware), Amount.
+  - Export: "Download Petty Cash PDF Report" (Multi-page branded PDF statement).
+
+Backend Firestore Flow:
+  - Collections:
+    1. `/organisation/{orgId}/pettyCashAccounts`: Balances per supervisor/site.
+    2. `/organisation/{orgId}/pettyCashTransactions`: Granular receipts, dates, categories.
+    3. `/organisation/{orgId}/pettyCashRequests`: Disbursal approvals.
+    4. `/organisation/{orgId}/pettyCashReconciliations`: Month-end audit sign-offs.
+
+----------------------------------------------------------------------------------------------------
+MODULE 6: CONTRACTOR REPORT (ContractorReportPage)
+----------------------------------------------------------------------------------------------------
+Frontend Elements:
+  - Contractor-wise Entry Cards:
+    * Contractor Name, Assigned Site, Trade (e.g., Carpentry, Masonry, Plumbing).
+    * Work Description, Date, Amount Paid.
+  - Total Contractor Expenditure KPI.
+  - Filter by Contractor Name / Date / Site.
+
+Backend Firestore Flow:
+  - Collection: `/organisation/{orgId}/contractorEntries`
+  - Fields Read: `contractorName`, `siteId`, `siteName`, `category`, `totalAmount`, `amount`, `date`, `createdAt`.
+
+----------------------------------------------------------------------------------------------------
+MODULE 7: MATERIALS & INVENTORY REPORT (MaterialReportPage)
+----------------------------------------------------------------------------------------------------
+Frontend Elements:
+  - Stock Availability Table:
+    * Material Category, Material Name, Unit (Bags, Tons, Nos, Sq.Ft).
+    * Total Purchased | Current Stock at Company Warehouse | Allocated to Sites | Total Consumed.
+  - Site-wise Material Consumption Breakdown:
+    * Quantity dispatched to Site vs Daily consumed logs.
+  - PDF Generation: Branded Material Stock & Movement Sheet.
+
+Backend Firestore Flow:
+  - Collections:
+    1. `/organisation/{orgId}/materials`: Master material inventory.
+    2. `/organisation/{orgId}/siteMaterialAllocations`: Material batches allocated to sites.
+    3. `/organisation/{orgId}/materialTransactions`: Inward/outward movement logs.
+    4. `/organisation/{orgId}/dailyMaterialConsumptions`: Supervisor daily usage reports.
+
+----------------------------------------------------------------------------------------------------
+MODULE 8: TOOLS & EQUIPMENT INVENTORY REPORT (ToolsInventoryReportPage)
+----------------------------------------------------------------------------------------------------
+Frontend Elements:
+  - Summary KPIs: Total Equipment, In Company Warehouse, Deployed at Sites, Under Repair.
+  - Tools Movement Log:
+    * Tool Name, Serial/Asset ID, Dispatched From, Dispatched To (Site), Movement Date, Return Date.
+  - Export: PDF Tool Inventory & Allocation Register.
+
+Backend Firestore Flow:
+  - Collections:
+    1. `/organisation/{orgId}/tools`: Master tool registry.
+    2. `/organisation/{orgId}/toolsAtCompany`: Company stock.
+    3. `/organisation/{orgId}/toolsAtSite`: Site deployment registry.
+    4. `/organisation/{orgId}/toolsMovement`: Dispatch and transfer transactions.
+    5. `/organisation/{orgId}/toolsReturn`: Return confirmations.
+
+----------------------------------------------------------------------------------------------------
+MODULE 9: WORKER SUMMARY & ATTENDANCE REPORT (WorkerSummaryReportPage)
+----------------------------------------------------------------------------------------------------
+Frontend Elements:
+  - Daily Worker Attendance & Wage Sheet:
+    * Worker Name, Trade / Skill (Mason, Helper, Carpenter, Barbender).
+    * Site Assigned, Attendance Status (Present / Half Day / Absent).
+    * Daily Wage Rate (₹), Overtime, Total Payable.
+  - Site-wise Workforce Distribution Matrix.
+  - PDF Export via `WorkerReportPdfHelper`: Printable Muster Roll & Wage Sheet.
+
+Backend Firestore Flow:
+  - Collections:
+    1. `/organisation/{orgId}/workerSiteMap` / `workerSiteMapping`: Worker site allocations.
+    2. `/organisation/{orgId}/workersAttendance`: Daily check-in/out records.
+    3. `/organisation/{orgId}/workersConfig`: Worker profiles, roles, and wage configurations.
+
+----------------------------------------------------------------------------------------------------
+MODULE 10: SUPERVISOR INCENTIVE CALCULATION SHEET (IncentiveCalculationSheet)
+----------------------------------------------------------------------------------------------------
+Frontend Elements:
+  - Supervisor Milestone & Performance Incentive Ledger:
+    * Supervisor Name, Project / Site, Milestone Stage Completed, Incentive Amount (₹), Approval Date.
+  - Net Incentive Total.
+
+Backend Firestore Flow:
+  - Collection: `/organisation/{orgId}/siteSupervisorIncentives`
+  - Fields Read: `supervisorName`, `siteId`, `role`, `incentiveAmount`, `amount`, `date`, `createdAt`.
+
+====================================================================================================
+3. COMPREHENSIVE BACKEND DATA FLOW & COMPUTATION PIPELINE
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+A. DYNAMIC SITE CANONICAL RESOLUTION
+----------------------------------------------------------------------------------------------------
+To handle legacy, prefixed, or slugged site IDs across multiple collections, the backend 
+report pipeline utilizes `ExpenseService.resolveCanonicalSiteDocId` and `ExpenseService.resolveSiteKeys`:
+
+  1. Input Site ID: "SITE_001" or "ABC Project" or doc.id.
+  2. Resolution Algorithm:
+     - Checks `projects` and `Site` collections for matching `siteId`, `siteCode`, `siteName`.
+     - Generates canonical composite key: `{canonicalSiteId}_{ddMMyyyy}`.
+     - Resolves alternate query keys (up to 10 fallback identifiers) for compound `whereIn` queries.
+
+----------------------------------------------------------------------------------------------------
+B. REAL-TIME MULTI-COLLECTION AGGREGATION PIPELINE
+----------------------------------------------------------------------------------------------------
+When generating any comprehensive report (e.g. Date Range Report or Financial Status), 
+the background engine executes the following calculation flow:
+
+```
+[Firestore Master Sources]
+   ├── siteSupervisorEntries  ──> Labours + Materials + Food + Transport
+   ├── managerExpenses        ──> Manager Approved Bills & Vouchers
+   ├── organizationEntries    ──> Central Direct Organization Bills
+   ├── contractorEntries      ──> Contractor Payouts
+   ├── siteSupervisorIncentives ──> Performance Incentives
+   └── pettyCashTransactions  ──> Direct Site Petty Cash Outflows
+                  │
+                  ▼
+   [ExpenseService Aggregation & De-duplication]
+   (Flags checked: isManagerEntry, isOrgEntry, isPettyCash to prevent double-counting)
+                  │
+                  ▼
+   [totalSiteExpensesPerDay Synced Document]
+   (Stored at: /organisation/{orgId}/totalSiteExpensesPerDay/{canonicalId})
+                  │
+                  ▼
+   [Frontend Report State / PDF Generation Engine]
+   (Calculates Total Income, Actual Outflows, Cash in Hand, Budget Margin, Variance)
+```
+
+----------------------------------------------------------------------------------------------------
+C. DATE HANDLING & FORMATTING STANDARDS
+----------------------------------------------------------------------------------------------------
+- Document Storage Key Format : `ddMMyyyy` (e.g., `18092026`)
+- Firestore Query Date Format : `yyyy-MM-dd` (e.g., `2026-09-18`)
+- In-memory Timestamp Parsing : Accommodates `Timestamp`, `DateTime`, and ISO-8601 `String`
+- UI & PDF Display Format     : `dd MMM yyyy` (e.g., `18 Sep 2026`)
+
+----------------------------------------------------------------------------------------------------
+D. PDF REPORT GENERATION & EXPORT ENGINE
+----------------------------------------------------------------------------------------------------
+All reports feature direct PDF generation and printing via Flutter's `pdf` and `printing` packages:
+  - Font Engine: Google Fonts Inter (Regular & Bold) via `PdfGoogleFonts.interRegular()`.
+  - Layout Standard: ISO A4 format with 32pt margins.
+  - Branded Headers: Dynamic Organization Name, App Branding Colors, Generation Timestamp.
+  - Tables & Watermarks: Dynamic zebra-striping, currency formatting (₹), and digital verification footer.
+  - Native Sharing: Instant preview, AirPrint/Cloud Print, and Save to PDF/Files.
+
+====================================================================================================
+4. FIRESTORE COLLECTIONS MASTER REFERENCE TABLE FOR REPORTS
+====================================================================================================
+
++-------------------------------------+---------------------------------+------------------------------------------+
+| Report Name                         | Primary Firestore Collections   | Key Fields Used                          |
++-------------------------------------+---------------------------------+------------------------------------------+
+| Daily Site Expense Report           | siteSupervisorEntries,          | labours, materials, food, transport,     |
+|                                     | managerExpenses, orgExpenses    | totalAmount, date, projectStage          |
+|                                     |                                 |                                          |
+| Date Range Expense Report           | siteSupervisorEntries, orgBills,| siteId, date, bills, contractorName,     |
+|                                     | managerExpenses, contractorEnt. | totalAmount, vendorName                  |
+|                                     |                                 |                                          |
+| Site Summary Report                 | projects, totalSiteExpensesPerDay| projectBudget, amountPaid, amountSpent, |
+|                                     |                                 | totalAllExpenses, remainingPettyCash     |
+|                                     |                                 |                                          |
+| Project Stage Expenses Report       | siteSupervisorEntries,          | projectStage, workStage, totalAmount,    |
+|                                     | managerExpenses, orgExpenses    | date, bills                              |
+|                                     |                                 |                                          |
+| Site Status & Timeline Report       | projects, siteSupervisorActual  | currentStatus, plannedStartDate/EndDate, |
+|                                     |                                 | actualStartDate/EndDate, % completed     |
+|                                     |                                 |                                          |
+| Financial Status Report             | projects, SitePayment,          | projectBudget, amountPaid, paymentDate,  |
+|                                     | totalSiteExpensesPerDay         | totalAllExpenses, amountBalance          |
+|                                     |                                 |                                          |
+| Petty Cash Insights Report          | pettyCashAccounts,              | totalPettyCashReceived, pettyCashSpent,  |
+|                                     | pettyCashTransactions, requests | remainingPettyCash, transactionDate      |
+|                                     |                                 |                                          |
+| Contractor Payout Report            | contractorEntries               | contractorName, category, totalAmount    |
+|                                     |                                 |                                          |
+| Material Stock & Consumption Report | materials, siteMaterialAlloc.,  | materialName, stockAvailable, allocated, |
+|                                     | dailyMaterialConsumptions       | quantityConsumed, unit                   |
+|                                     |                                 |                                          |
+| Tools & Equipment Inventory Report  | tools, toolsAtCompany,          | toolName, serialNo, siteId,              |
+|                                     | toolsAtSite, toolsMovement      | dispatchDate, returnDate                 |
+|                                     |                                 |                                          |
+| Worker Attendance & Wages Report    | workerSiteMap, workersAttendance| workerName, role, dailyWage,             |
+|                                     | workersConfig                   | attendanceStatus, date                   |
+|                                     |                                 |                                          |
+| Supervisor Incentive Report         | siteSupervisorIncentives        | supervisorName, incentiveAmount, date    |
++-------------------------------------+---------------------------------+------------------------------------------+
+
+====================================================================================================
+                                      END OF SPECIFICATION FILE
+====================================================================================================

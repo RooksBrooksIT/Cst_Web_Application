@@ -1,0 +1,979 @@
+/**
+ * Comprehensive Reports & Analytics Service
+ * Complies with ORGANIZATION_REPORTS_SECTION_AND_BACKEND_FLOW_SPECIFICATION.txt
+ * Handles canonical site resolution, composite keys ({siteId}_{ddMMyyyy}),
+ * multi-collection aggregation pipelines, and calculation models for all 10 reports across 6 hubs.
+ */
+
+import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firestore'
+import { db } from './firebase'
+
+// ------------------------------------------------------------------------------------------------
+// UTILITIES: Currency, Numbers, Dates, Canonical Matching
+// ------------------------------------------------------------------------------------------------
+
+export function parseAmount(val) {
+  if (val === undefined || val === null || val === '') return 0
+  if (typeof val === 'number') return Number.isFinite(val) ? val : 0
+  if (typeof val === 'string') {
+    const cleaned = val.replace(/[^0-9.-]+/g, '').trim()
+    if (!cleaned) return 0
+    const parsed = parseFloat(cleaned)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
+
+export function money(amount) {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0,
+  }).format(amount || 0)
+}
+
+export function formatDateToKey(dateObj) {
+  if (!dateObj) return ''
+  const d = new Date(dateObj)
+  if (isNaN(d.getTime())) return ''
+  const dd = String(d.getDate()).padStart(2, '0')
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const yyyy = d.getFullYear()
+  return `${dd}${mm}${yyyy}`
+}
+
+export function formatDateToISO(dateObj) {
+  if (!dateObj) return ''
+  const d = new Date(dateObj)
+  if (isNaN(d.getTime())) return ''
+  return d.toISOString().slice(0, 10)
+}
+
+export function formatDateDisplay(dateInput) {
+  if (!dateInput) return 'N/A'
+  // Handle ddMMyyyy
+  if (typeof dateInput === 'string' && /^\d{8}$/.test(dateInput)) {
+    const day = dateInput.slice(0, 2)
+    const month = parseInt(dateInput.slice(2, 4), 10) - 1
+    const year = dateInput.slice(4, 8)
+    const d = new Date(year, month, day)
+    return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+  }
+  const d = new Date(dateInput)
+  if (isNaN(d.getTime())) return String(dateInput)
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+export function getDayName(dateInput) {
+  const d = new Date(dateInput)
+  if (isNaN(d.getTime())) return ''
+  return d.toLocaleDateString('en-IN', { weekday: 'short' })
+}
+
+/**
+ * Checks if a record matches a given site identifier across multiple potential fields.
+ */
+export function matchesSite(record, site) {
+  if (!record || !site) return false
+  const targetId = String(site.id || site.siteId || site.siteCode || '').trim().toLowerCase()
+  const targetName = String(site.projectName || site.siteName || site.name || '').trim().toLowerCase()
+  const targetCode = String(site.siteCode || site.code || '').trim().toLowerCase()
+
+  const recSiteId = String(record.siteId || record.site_id || record.projectId || record.project_id || record.id || '').trim().toLowerCase()
+  const recSiteName = String(record.siteName || record.site_name || record.projectName || record.project_name || record.name || '').trim().toLowerCase()
+  const recSiteCode = String(record.siteCode || record.code || '').trim().toLowerCase()
+
+  if (targetId && (recSiteId === targetId || recSiteName === targetId)) return true
+  if (targetName && (recSiteName === targetName || recSiteId === targetName)) return true
+  if (targetCode && (recSiteCode === targetCode || recSiteId === targetCode)) return true
+
+  return false
+}
+
+// ------------------------------------------------------------------------------------------------
+// 1. SITE / PROJECT EXPENSES REPORT HUB
+// ------------------------------------------------------------------------------------------------
+
+/**
+ * Sub-Report 1A: Daily Site Expenses Calculation
+ * Gathers 5 breakdown cards: Labour, Material, Food, Transport/Fuel, Manager & Org Bills
+ */
+export function calculateDailySiteExpenses({
+  site,
+  selectedDate,
+  selectedStage,
+  siteSupervisorEntries = [],
+  managerExpenses = [],
+  organizationEntries = [],
+  contractorEntries = [],
+  totalSiteExpensesPerDay = [],
+  dailySiteLogs = [],
+}) {
+  const targetDateKey = formatDateToKey(selectedDate)
+  const targetDateISO = formatDateToISO(selectedDate)
+
+  // Find matching daily records for this site and date
+  const supervisorEntry = siteSupervisorEntries.find((entry) => {
+    const isThisSite = site ? matchesSite(entry, site) : true
+    const entryDateKey = entry.dateKey || formatDateToKey(entry.date || entry.createdAt)
+    const entryDateISO = formatDateToISO(entry.date || entry.createdAt)
+    const matchesDate = entryDateKey === targetDateKey || entryDateISO === targetDateISO || entry.id?.endsWith?.(targetDateKey)
+    const matchesStage = !selectedStage || selectedStage === 'all' || (entry.projectStage || entry.stage) === selectedStage
+    return isThisSite && matchesDate && matchesStage
+  })
+
+  // Find daily log / manager entry
+  const managerEntry = managerExpenses.find((entry) => {
+    const isThisSite = site ? matchesSite(entry, site) : true
+    const entryDateKey = entry.dateKey || formatDateToKey(entry.date || entry.createdAt)
+    const entryDateISO = formatDateToISO(entry.date || entry.createdAt)
+    return isThisSite && (entryDateKey === targetDateKey || entryDateISO === targetDateISO || entry.id?.endsWith?.(targetDateKey))
+  })
+
+  // Find direct org expenses
+  const orgBillsForDay = organizationEntries.filter((entry) => {
+    const isThisSite = site ? matchesSite(entry, site) : true
+    const entryDateISO = formatDateToISO(entry.date || entry.createdAt)
+    return isThisSite && entryDateISO === targetDateISO
+  })
+
+  // Find contractor payouts for this day
+  const contractorBillsForDay = contractorEntries.filter((entry) => {
+    const isThisSite = site ? matchesSite(entry, site) : true
+    const entryDateISO = formatDateToISO(entry.date || entry.createdAt)
+    return isThisSite && entryDateISO === targetDateISO
+  })
+
+  // 1. Labour breakdown
+  const labours = Array.isArray(supervisorEntry?.labours)
+    ? supervisorEntry.labours.map((item) => ({
+        role: item.role || item.trade || item.name || 'Worker',
+        count: parseAmount(item.count || item.headcount || 1),
+        rate: parseAmount(item.rate || item.unitRate || item.dailyWage || 0),
+        amount: parseAmount(item.totalAmount || item.amount || (parseAmount(item.count || 1) * parseAmount(item.rate || item.dailyWage || 0))),
+      }))
+    : []
+  const totalLabour = labours.reduce((acc, curr) => acc + curr.amount, parseAmount(supervisorEntry?.totalLabourAmount || supervisorEntry?.labourTotal || 0))
+
+  // 2. Material breakdown
+  const materials = Array.isArray(supervisorEntry?.materials)
+    ? supervisorEntry.materials.map((item) => ({
+        name: item.materialName || item.name || 'Material Item',
+        quantity: parseAmount(item.quantity || item.qty || 0),
+        unit: item.unit || 'Units',
+        unitPrice: parseAmount(item.unitPrice || item.rate || item.price || 0),
+        amount: parseAmount(item.totalAmount || item.amount || (parseAmount(item.quantity || 0) * parseAmount(item.unitPrice || 0))),
+      }))
+    : []
+  const totalMaterial = materials.reduce((acc, curr) => acc + curr.amount, parseAmount(supervisorEntry?.totalMaterialAmount || supervisorEntry?.materialTotal || 0))
+
+  // 3. Food allowance
+  const foodAmount = parseAmount(supervisorEntry?.foodAllowance || supervisorEntry?.foodExpense || supervisorEntry?.food || 0)
+
+  // 4. Transport & Fuel
+  const transportAmount = parseAmount(supervisorEntry?.transportAmount || supervisorEntry?.fuelExpense || supervisorEntry?.transport || 0)
+
+  // 5. Manager & Org Bills
+  const bills = []
+  if (managerEntry) {
+    if (Array.isArray(managerEntry.bills)) {
+      managerEntry.bills.forEach((b) => {
+        bills.push({
+          source: 'Manager Voucher',
+          description: b.description || b.category || 'Manager Approved Expense',
+          amount: parseAmount(b.amount || b.totalAmount),
+          vendor: b.vendor || b.vendorName || 'Voucher',
+        })
+      })
+    } else if (managerEntry.amount || managerEntry.totalAmount) {
+      bills.push({
+        source: 'Manager Voucher',
+        description: managerEntry.description || 'Manager Expense Entry',
+        amount: parseAmount(managerEntry.amount || managerEntry.totalAmount),
+        vendor: managerEntry.vendorName || 'Manager Approved',
+      })
+    }
+  }
+
+  orgBillsForDay.forEach((b) => {
+    bills.push({
+      source: 'Direct Org Bill',
+      description: b.description || b.title || 'Central Office Expense',
+      amount: parseAmount(b.amount || b.totalAmount),
+      vendor: b.vendorName || b.partyName || 'Direct Bill',
+    })
+  })
+
+  contractorBillsForDay.forEach((b) => {
+    bills.push({
+      source: 'Contractor Payout',
+      description: `${b.contractorName || 'Contractor'} - ${b.category || b.workDescription || 'Contract Works'}`,
+      amount: parseAmount(b.totalAmount || b.amount || b.paidAmount),
+      vendor: b.contractorName || 'Contractor',
+    })
+  })
+
+  const totalBills = bills.reduce((acc, curr) => acc + curr.amount, 0)
+  const grandTotal = totalLabour + totalMaterial + foodAmount + transportAmount + totalBills
+
+  return {
+    siteName: site?.projectName || site?.siteName || site?.name || 'Selected Site',
+    siteLocation: site?.siteLocation || site?.location || 'Registered Site Location',
+    supervisorName: supervisorEntry?.supervisorName || site?.supervisor || site?.managerName || 'Assigned Supervisor',
+    projectStage: supervisorEntry?.projectStage || site?.projectStage || selectedStage || 'Foundation',
+    date: selectedDate,
+    labours,
+    totalLabour,
+    materials,
+    totalMaterial,
+    foodAmount,
+    transportAmount,
+    bills,
+    totalBills,
+    grandTotal,
+    hasData: grandTotal > 0 || labours.length > 0 || materials.length > 0,
+  }
+}
+
+/**
+ * Sub-Report 1B: Date Range Expenses Calculation
+ * Computes day-by-day chronological entries and KPI summary grid
+ */
+export function calculateDateRangeExpenses({
+  site,
+  fromDate,
+  toDate,
+  selectedStage,
+  siteSupervisorEntries = [],
+  managerExpenses = [],
+  organizationEntries = [],
+  contractorEntries = [],
+  totalSiteExpensesPerDay = [],
+}) {
+  const start = new Date(fromDate)
+  const end = new Date(toDate)
+  const dayCards = []
+
+  let totalRangeLabour = 0
+  let totalRangeMaterial = 0
+  let totalRangeFood = 0
+  let totalRangeTransport = 0
+  let totalRangeBills = 0
+  let grandRangeTotal = 0
+
+  if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && start <= end) {
+    const cur = new Date(start)
+    while (cur <= end) {
+      const curISO = formatDateToISO(cur)
+      const dayData = calculateDailySiteExpenses({
+        site,
+        selectedDate: curISO,
+        selectedStage,
+        siteSupervisorEntries,
+        managerExpenses,
+        organizationEntries,
+        contractorEntries,
+        totalSiteExpensesPerDay,
+      })
+
+      if (dayData.hasData || dayData.grandTotal > 0) {
+        dayCards.push({
+          date: curISO,
+          dayName: getDayName(curISO),
+          ...dayData,
+        })
+        totalRangeLabour += dayData.totalLabour
+        totalRangeMaterial += dayData.totalMaterial
+        totalRangeFood += dayData.foodAmount
+        totalRangeTransport += dayData.transportAmount
+        totalRangeBills += dayData.totalBills
+        grandRangeTotal += dayData.grandTotal
+      }
+
+      cur.setDate(cur.getDate() + 1)
+    }
+  }
+
+  return {
+    siteName: site ? (site.projectName || site.siteName || site.name) : 'All Portfolio Sites',
+    fromDate: formatDateDisplay(fromDate),
+    toDate: formatDateDisplay(toDate),
+    daysCount: dayCards.length,
+    dayCards,
+    kpis: {
+      totalLabour: totalRangeLabour,
+      totalMaterial: totalRangeMaterial,
+      totalFood: totalRangeFood,
+      totalTransport: totalRangeTransport,
+      totalBills: totalRangeBills,
+      grandTotal: grandRangeTotal,
+    },
+  }
+}
+
+/**
+ * Sub-Report 1C: Lifetime Site Summary
+ */
+export function calculateSiteLifetimeSummary({
+  site,
+  totalSiteExpensesPerDay = [],
+  siteSupervisorEntries = [],
+  sitePayments = [],
+  contractorEntries = [],
+  siteSupervisorIncentives = [],
+}) {
+  if (!site) return null
+
+  const budget = parseAmount(site.projectBudget || site.budget || site.estimatedBudget || 0)
+  
+  // Received payments
+  const matchingPayments = sitePayments.filter((p) => matchesSite(p, site))
+  const totalReceived = matchingPayments.reduce((acc, p) => acc + parseAmount(p.amountPaid || p.amount || p.totalAmount || 0), parseAmount(site.amountPaid || site.receivedAmount || 0))
+
+  // Calculate spent from totalSiteExpensesPerDay or rolled-up entries
+  const matchingDayRollups = totalSiteExpensesPerDay.filter((r) => matchesSite(r, site))
+  let totalLabour = 0
+  let totalMaterial = 0
+  let totalFoodTransport = 0
+  let totalBills = 0
+  let totalIncentives = 0
+
+  if (matchingDayRollups.length > 0) {
+    matchingDayRollups.forEach((r) => {
+      totalLabour += parseAmount(r.totalLabour || r.labourAmount || 0)
+      totalMaterial += parseAmount(r.totalMaterial || r.materialAmount || 0)
+      totalFoodTransport += parseAmount(r.totalFood || r.foodExpense || 0) + parseAmount(r.totalTransport || r.transportExpense || 0)
+      totalBills += parseAmount(r.totalBills || r.billsAmount || 0)
+    })
+  } else {
+    // Fallback to entries
+    const supEntries = siteSupervisorEntries.filter((e) => matchesSite(e, site))
+    supEntries.forEach((e) => {
+      totalLabour += parseAmount(e.totalLabourAmount || e.labourTotal || 0)
+      totalMaterial += parseAmount(e.totalMaterialAmount || e.materialTotal || 0)
+      totalFoodTransport += parseAmount(e.foodAllowance || 0) + parseAmount(e.transportAmount || 0)
+    })
+  }
+
+  const matchingIncentives = siteSupervisorIncentives.filter((inc) => matchesSite(inc, site))
+  totalIncentives = matchingIncentives.reduce((acc, inc) => acc + parseAmount(inc.incentiveAmount || inc.amount || 0), 0)
+
+  const totalSpent = parseAmount(site.amountSpent || site.spentAmount) || (totalLabour + totalMaterial + totalFoodTransport + totalBills + totalIncentives)
+  const cashInHand = totalReceived - totalSpent
+  const budgetRemaining = budget - totalSpent
+  const utilizationRate = budget > 0 ? ((totalSpent / budget) * 100).toFixed(1) : '0.0'
+
+  return {
+    siteId: site.id,
+    siteName: site.projectName || site.siteName || site.name || 'Site',
+    siteLocation: site.siteLocation || site.location || 'Location',
+    currentStage: site.projectStage || site.stage || 'Foundation',
+    supervisorName: site.supervisor || site.managerName || 'Assigned Supervisor',
+    budget,
+    totalReceived,
+    totalSpent,
+    cashInHand,
+    budgetRemaining,
+    utilizationRate,
+    breakdown: {
+      labour: totalLabour,
+      material: totalMaterial,
+      foodTransport: totalFoodTransport,
+      bills: totalBills,
+      incentives: totalIncentives,
+    },
+  }
+}
+
+// ------------------------------------------------------------------------------------------------
+// 2. PROJECT STAGE EXPENSES REPORT HUB
+// ------------------------------------------------------------------------------------------------
+
+export const PROJECT_STAGES = [
+  'Foundation',
+  'Plinth',
+  'Superstructure',
+  'Brickwork',
+  'Plastering',
+  'Electrical',
+  'Plumbing',
+  'Flooring',
+  'Painting',
+  'Finishing',
+]
+
+export function calculateProjectStageReport({
+  selectedStage,
+  sites = [],
+  siteSupervisorEntries = [],
+  managerExpenses = [],
+  organizationEntries = [],
+  contractorEntries = [],
+}) {
+  const targetStage = selectedStage || PROJECT_STAGES[0]
+
+  // Filter sites currently in this stage
+  const sitesInStage = sites.filter((s) => {
+    const stage = String(s.projectStage || s.stage || '').trim().toLowerCase()
+    return stage === targetStage.toLowerCase()
+  })
+
+  // Filter all entries tagged with this stage across all sites
+  const stageEntries = siteSupervisorEntries.filter((e) => {
+    const stage = String(e.projectStage || e.stage || e.workStage || '').trim().toLowerCase()
+    return stage === targetStage.toLowerCase()
+  })
+
+  let stageTotalLabour = 0
+  let stageTotalMaterial = 0
+  let stageTotalFoodTransport = 0
+  let stageTotalBills = 0
+
+  stageEntries.forEach((e) => {
+    stageTotalLabour += parseAmount(e.totalLabourAmount || e.labourTotal || 0)
+    stageTotalMaterial += parseAmount(e.totalMaterialAmount || e.materialTotal || 0)
+    stageTotalFoodTransport += parseAmount(e.foodAllowance || 0) + parseAmount(e.transportAmount || 0)
+  })
+
+  const stageSiteSummary = sites.map((s) => {
+    const isCurrentlyInStage = String(s.projectStage || s.stage || '').toLowerCase() === targetStage.toLowerCase()
+    const entriesForSiteAndStage = siteSupervisorEntries.filter((e) => matchesSite(e, s) && String(e.projectStage || e.stage || '').toLowerCase() === targetStage.toLowerCase())
+    
+    let spentInStage = 0
+    entriesForSiteAndStage.forEach((e) => {
+      spentInStage += parseAmount(e.totalAmount || (parseAmount(e.totalLabourAmount || 0) + parseAmount(e.totalMaterialAmount || 0) + parseAmount(e.foodAllowance || 0) + parseAmount(e.transportAmount || 0)))
+    })
+
+    return {
+      siteId: s.id,
+      siteName: s.projectName || s.siteName || s.name || 'Site',
+      location: s.siteLocation || s.location || 'Location',
+      currentStage: s.projectStage || s.stage || 'Foundation',
+      isCurrentlyInStage,
+      entriesCount: entriesForSiteAndStage.length,
+      spentInStage,
+      siteBudget: parseAmount(s.projectBudget || s.budget || 0),
+    }
+  })
+
+  const grandStageSpend = stageTotalLabour + stageTotalMaterial + stageTotalFoodTransport + stageTotalBills
+
+  return {
+    selectedStage: targetStage,
+    sitesCountInStage: sitesInStage.length,
+    stageTotalLabour,
+    stageTotalMaterial,
+    stageTotalFoodTransport,
+    stageTotalBills,
+    grandStageSpend,
+    stageSiteSummary,
+    detailedEntries: stageEntries.slice(0, 50),
+  }
+}
+
+// ------------------------------------------------------------------------------------------------
+// 3. SITE STATUS & TIMELINE REPORT
+// ------------------------------------------------------------------------------------------------
+
+export function calculateSiteStatusReport(sites = []) {
+  const statusCounts = {
+    live: 0,
+    in_progress: 0,
+    planning: 0,
+    completed: 0,
+    on_hold: 0,
+    other: 0,
+  }
+
+  const today = new Date()
+
+  const siteList = sites.map((s) => {
+    const statusRaw = String(s.currentStatus || s.status || s.projectStatus || 'in_progress').toLowerCase().replace(/\s+/g, '_')
+    if (statusCounts[statusRaw] !== undefined) {
+      statusCounts[statusRaw] += 1
+    } else {
+      statusCounts.other += 1
+    }
+
+    const progress = parseAmount(s.percentageCompleted || s.progress || s.progressPercentage || 0)
+    const plannedStart = s.plannedStartDate || s.startDate || null
+    const plannedEnd = s.plannedEndDate || s.targetCompletionDate || s.endDate || null
+    const actualStart = s.actualStartDate || null
+    const actualEnd = s.actualEndDate || s.completionDate || null
+
+    let delayStatus = 'on_track' // 'on_track', 'approaching_deadline', 'delayed'
+    let delayDays = 0
+
+    if (plannedEnd) {
+      const targetDate = new Date(plannedEnd)
+      if (!isNaN(targetDate.getTime())) {
+        const diffMs = targetDate.getTime() - today.getTime()
+        const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24))
+        if (diffDays < 0 && progress < 100) {
+          delayStatus = 'delayed'
+          delayDays = Math.abs(diffDays)
+        } else if (diffDays <= 14 && progress < 80) {
+          delayStatus = 'approaching_deadline'
+          delayDays = diffDays
+        }
+      }
+    }
+
+    return {
+      siteId: s.id,
+      siteName: s.projectName || s.siteName || s.name || 'Site',
+      location: s.siteLocation || s.location || 'Site Location',
+      manager: s.managerName || s.manager || s.supervisor || 'Assigned Manager',
+      stage: s.projectStage || s.stage || 'Foundation',
+      status: s.currentStatus || s.status || 'In Progress',
+      progress,
+      plannedStart: formatDateDisplay(plannedStart),
+      plannedEnd: formatDateDisplay(plannedEnd),
+      actualStart: formatDateDisplay(actualStart),
+      actualEnd: formatDateDisplay(actualEnd),
+      delayStatus,
+      delayDays,
+    }
+  })
+
+  return {
+    totalSites: sites.length,
+    statusCounts,
+    siteList,
+  }
+}
+
+// ------------------------------------------------------------------------------------------------
+// 4. FINANCIAL STATUS & CASH FLOW REPORT
+// ------------------------------------------------------------------------------------------------
+
+export function calculateFinancialStatusReport({ sites = [], sitePayments = [], totalSiteExpensesPerDay = [] }) {
+  let totalContractBudget = 0
+  let totalClientReceived = 0
+  let totalActualSpent = 0
+
+  const statements = sites.map((s) => {
+    const budget = parseAmount(s.projectBudget || s.budget || s.estimatedBudget || 0)
+    
+    // Payments received for site
+    const matchingPayments = sitePayments.filter((p) => matchesSite(p, s))
+    const received = matchingPayments.reduce((acc, p) => acc + parseAmount(p.amountPaid || p.amount || p.totalAmount || 0), parseAmount(s.amountPaid || s.receivedAmount || 0))
+
+    // Real-time spent
+    const matchingDayRollups = totalSiteExpensesPerDay.filter((r) => matchesSite(r, s))
+    let spent = parseAmount(s.amountSpent || s.spentAmount || 0)
+    if (matchingDayRollups.length > 0) {
+      spent = matchingDayRollups.reduce((acc, r) => acc + parseAmount(r.totalAllExpenses || r.totalAmount || r.totalSpend || 0), 0)
+    }
+
+    const cashInHand = received - spent
+    const budgetRemaining = budget - spent
+    const utilizationRate = budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : 0
+
+    totalContractBudget += budget
+    totalClientReceived += received
+    totalActualSpent += spent
+
+    return {
+      siteId: s.id,
+      siteName: s.projectName || s.siteName || s.name || 'Site',
+      location: s.siteLocation || s.location || 'Location',
+      stage: s.projectStage || s.stage || 'Foundation',
+      budget,
+      received,
+      spent,
+      cashInHand,
+      budgetRemaining,
+      utilizationRate,
+      health: utilizationRate > 95 ? 'Critical' : utilizationRate > 80 ? 'Warning' : 'Healthy',
+    }
+  })
+
+  const totalCashInHand = totalClientReceived - totalActualSpent
+  const totalBudgetRemaining = totalContractBudget - totalActualSpent
+  const overallUtilization = totalContractBudget > 0 ? ((totalActualSpent / totalContractBudget) * 100).toFixed(1) : '0.0'
+
+  return {
+    kpis: {
+      totalContractBudget,
+      totalClientReceived,
+      totalActualSpent,
+      totalCashInHand,
+      totalBudgetRemaining,
+      overallUtilization,
+    },
+    statements,
+  }
+}
+
+// ------------------------------------------------------------------------------------------------
+// 5. PETTY CASH INSIGHTS & AUDIT REPORT
+// ------------------------------------------------------------------------------------------------
+
+export function calculatePettyCashInsights({
+  sites = [],
+  pettyCashAccounts = [],
+  pettyCashExpenses = [],
+  pettyCashRequests = [],
+}) {
+  let totalDisbursed = 0
+  let totalSpent = 0
+
+  // Site Audit List
+  const siteAuditList = sites.map((s) => {
+    const acc = pettyCashAccounts.find((a) => matchesSite(a, s))
+    const matchingExpenses = pettyCashExpenses.filter((e) => matchesSite(e, s))
+    
+    const disbursed = parseAmount(acc?.totalDisbursed || acc?.openingBalance || acc?.totalPettyCashReceived || 0)
+    const spent = matchingExpenses.reduce((sum, e) => sum + parseAmount(e.amount || e.totalAmount || 0), parseAmount(acc?.pettyCashSpent || acc?.totalSpent || 0))
+    const floatBalance = parseAmount(acc?.remainingPettyCash || acc?.balance || (disbursed - spent))
+
+    totalDisbursed += disbursed
+    totalSpent += spent
+
+    return {
+      siteId: s.id,
+      siteName: s.projectName || s.siteName || s.name || 'Site',
+      supervisor: s.supervisor || s.managerName || acc?.supervisorName || 'Site Supervisor',
+      disbursed,
+      spent,
+      balance: floatBalance,
+      isOverspent: spent > disbursed && disbursed > 0,
+      status: spent > disbursed ? 'Overspent' : 'Healthy',
+      expensesCount: matchingExpenses.length,
+    }
+  })
+
+  // If there are accounts without sites
+  pettyCashAccounts.forEach((acc) => {
+    const alreadyIncluded = siteAuditList.some((item) => item.siteId === acc.id || item.siteName === acc.projectName)
+    if (!alreadyIncluded) {
+      const disbursed = parseAmount(acc.totalDisbursed || acc.openingBalance || acc.totalPettyCashReceived || 0)
+      const spent = parseAmount(acc.pettyCashSpent || acc.totalSpent || 0)
+      const balance = parseAmount(acc.remainingPettyCash || acc.balance || (disbursed - spent))
+      totalDisbursed += disbursed
+      totalSpent += spent
+      siteAuditList.push({
+        siteId: acc.id,
+        siteName: acc.projectName || acc.siteName || acc.id,
+        supervisor: acc.supervisorName || 'Supervisor',
+        disbursed,
+        spent,
+        balance,
+        isOverspent: spent > disbursed,
+        status: spent > disbursed ? 'Overspent' : 'Healthy',
+        expensesCount: 0,
+      })
+    }
+  })
+
+  const netFloatInHand = totalDisbursed - totalSpent
+
+  // Itemized transactions list
+  const itemizedLedger = pettyCashExpenses.map((exp) => ({
+    id: exp.id,
+    date: formatDateDisplay(exp.date || exp.createdAt),
+    rawDate: exp.date || exp.createdAt,
+    siteName: exp.projectName || exp.siteName || exp.siteId || 'Site',
+    supervisor: exp.supervisorName || exp.supervisorUid || 'Supervisor',
+    vendor: exp.vendorName || exp.vendor || 'Local Vendor',
+    category: exp.category || 'General Site Expense',
+    description: exp.description || 'Petty cash purchase',
+    amount: parseAmount(exp.amount || exp.totalAmount || 0),
+    status: exp.status || 'Approved',
+  }))
+
+  return {
+    kpis: {
+      totalDisbursed,
+      totalSpent,
+      netFloatInHand,
+    },
+    siteAuditList,
+    itemizedLedger,
+  }
+}
+
+// ------------------------------------------------------------------------------------------------
+// 6. DOMAIN & INVENTORY REPORTS
+// ------------------------------------------------------------------------------------------------
+
+export function calculateDomainReports({
+  type,
+  contractors = [],
+  contractorBills = [],
+  contractorEntries = [],
+  materials = [],
+  tools = [],
+  workers = [],
+  workerAttendance = [],
+  vehicles = [],
+  siteSupervisorIncentives = [],
+}) {
+  switch (type) {
+    case 'contractors': {
+      const list = (contractorEntries.length > 0 ? contractorEntries : contractorBills).map((entry) => ({
+        contractorName: entry.contractorName || entry.name || 'Contractor',
+        siteName: entry.siteName || entry.projectName || entry.siteId || 'Site',
+        trade: entry.category || entry.trade || entry.workType || 'General Civil',
+        description: entry.workDescription || entry.description || entry.title || 'Subcontracted Work',
+        date: formatDateDisplay(entry.date || entry.createdAt),
+        amount: parseAmount(entry.totalAmount || entry.amount || entry.grossAmount || 0),
+        status: entry.status || 'Approved',
+      }))
+      const totalPayout = list.reduce((sum, item) => sum + item.amount, 0)
+      return { type: 'contractors', title: 'Contractor Payouts & Subcontractor MB Report', totalPayout, records: list }
+    }
+
+    case 'materials': {
+      const list = materials.map((m) => {
+        const currentStock = parseAmount(m.currentTotalStock || m.currentStock || m.quantity || 0)
+        const unitRate = parseAmount(m.standardRate || m.rate || m.price || 0)
+        const allocated = parseAmount(m.allocatedStock || m.allocated || 0)
+        const consumed = parseAmount(m.totalConsumed || m.consumed || 0)
+        const valuation = currentStock * unitRate
+        return {
+          materialName: m.name || m.materialName || 'Material',
+          category: m.category || 'Construction Materials',
+          unit: m.unit || 'Bags',
+          currentStock,
+          allocated,
+          consumed,
+          unitRate,
+          valuation,
+          status: currentStock <= (parseAmount(m.minReorderLevel) || 10) ? 'Reorder Warning' : 'Adequate',
+        }
+      })
+      const totalValuation = list.reduce((sum, item) => sum + item.valuation, 0)
+      return { type: 'materials', title: 'Material Stock, Allocation & Consumption Report', totalValuation, records: list }
+    }
+
+    case 'tools': {
+      const list = tools.map((t) => ({
+        toolName: t.name || t.toolName || 'Tool Asset',
+        assetTag: t.assetTag || t.serialNo || t.id,
+        category: t.category || 'Power Tools',
+        location: t.currentProjectName || t.currentProjectId || t.location || 'Central Yard',
+        custodian: t.assignedTo || t.custodian || 'Storekeeper',
+        condition: t.condition || 'Good',
+        status: t.status || t.currentStatus || 'Deployed',
+      }))
+      return { type: 'tools', title: 'Tools & Machinery Asset Allocation Register', totalTools: list.length, records: list }
+    }
+
+    case 'workers': {
+      const list = (workerAttendance.length > 0 ? workerAttendance : workers).map((w) => ({
+        workerName: w.name || w.workerName || 'Worker',
+        trade: w.roleCategory || w.trade || w.skillType || 'Mason',
+        siteName: w.projectName || w.siteName || w.siteId || 'Site',
+        date: formatDateDisplay(w.date || new Date()),
+        status: w.status || w.attendanceStatus || 'Present',
+        wageRate: parseAmount(w.dailyWageRate || w.dailyWage || w.rate || 0),
+        hours: parseAmount(w.shiftHours || w.hours || 8),
+        overtimeHours: parseAmount(w.otHours || w.overtime || 0),
+        totalPayable: parseAmount(w.totalWage || w.totalPayable || (parseAmount(w.dailyWageRate || 0))),
+      }))
+      const totalWageLiability = list.reduce((sum, item) => sum + item.totalPayable, 0)
+      return { type: 'workers', title: 'Workforce Attendance Muster Roll & Wage Sheet', totalWageLiability, records: list }
+    }
+
+    case 'vehicles': {
+      const list = vehicles.map((v) => ({
+        vehicleName: v.name || v.vehicleName || v.model || 'Commercial Vehicle',
+        regNumber: v.registrationNumber || v.regNo || v.plateNumber || 'Reg Pending',
+        assignedSite: v.assignedSite || v.projectName || 'Central Fleet',
+        driver: v.driverName || v.driver || 'Assigned Driver',
+        fuelType: v.fuelType || 'Diesel',
+        status: v.status || 'Active',
+      }))
+      return { type: 'vehicles', title: 'Fleet & Heavy Transport Inventory Report', totalVehicles: list.length, records: list }
+    }
+
+    case 'incentives': {
+      const list = siteSupervisorIncentives.map((inc) => ({
+        supervisorName: inc.supervisorName || inc.name || 'Supervisor',
+        siteName: inc.siteName || inc.projectName || inc.siteId || 'Site',
+        stage: inc.milestoneStage || inc.stage || 'Milestone Completed',
+        date: formatDateDisplay(inc.date || inc.createdAt),
+        incentiveAmount: parseAmount(inc.incentiveAmount || inc.amount || 0),
+        status: inc.status || 'Approved',
+      }))
+      const totalIncentives = list.reduce((sum, item) => sum + item.incentiveAmount, 0)
+      return { type: 'incentives', title: 'Supervisor Milestone & Performance Incentive Sheet', totalIncentives, records: list }
+    }
+
+    default:
+      return { type, records: [] }
+  }
+}
+
+// ------------------------------------------------------------------------------------------------
+// LEGACY & CROSS-MODULE COMPATIBILITY EXPORTS
+// ------------------------------------------------------------------------------------------------
+
+export const AVAILABLE_REPORTS = [
+  { id: 'budget_vs_actual', title: 'Project Budget vs Actual Expenditure Report', category: 'Financials' },
+  { id: 'material_consumption', title: 'Material Stock & Procurement Consumption Report', category: 'Procurement' },
+  { id: 'petty_cash_audit', title: 'Petty Cash Disbursements & Expense Audit Ledger', category: 'Financials' },
+  { id: 'contractor_mb', title: 'Contractor Measurement Sheet (MB) & Retention Statement', category: 'Contracts' },
+  { id: 'labour_muster_roll', title: 'Workforce Daily Muster Roll & Wage Liability Report', category: 'Workforce' },
+  { id: 'equipment_utilization', title: 'Tools & Heavy Machinery Asset Utilization Report', category: 'Assets' },
+  { id: 'quality_snags', title: 'QA/QC Inspection Pass Rate & Snag Resolution Audit', category: 'Quality' },
+  { id: 'safety_incidents', title: 'Site Safety Compliance & OSHA Incident Log', category: 'Safety' },
+  { id: 'customer_cashflow', title: 'Customer Milestone Invoicing & Receivables Statement', category: 'Financials' },
+  { id: 'daily_progress_digest', title: 'Consolidated Daily Site Progress Digest', category: 'Operations' },
+]
+
+export function generateReportData(reportId, rawData) {
+  const {
+    projects = [],
+    materials = [],
+    pettyCashExpenses = [],
+    contractorBills = [],
+    workerAttendance = [],
+    tools = [],
+    qualityChecklists = [],
+    safetyIncidents = [],
+    customerInvoices = [],
+    dailySiteLogs = [],
+  } = rawData || {}
+
+  switch (reportId) {
+    case 'budget_vs_actual':
+      return projects.map((p) => {
+        const budget = parseAmount(p.totalBudget || p.budget || p.estimatedBudget)
+        const spent = parseAmount(p.spentAmount || p.amountSpent)
+        const variance = budget - spent
+        const burnRate = budget > 0 ? ((spent / budget) * 100).toFixed(1) : '0.0'
+        return {
+          'Project Code': p.code || p.siteCode || p.id,
+          'Project Name': p.name || p.projectName || 'Site',
+          'Current Stage': p.currentStage || p.stage || 'Foundation',
+          'Total Budget (INR)': budget,
+          'Actual Spent (INR)': spent,
+          'Budget Variance (INR)': variance,
+          'Burn Rate (%)': `${burnRate}%`,
+          'Status': p.status || p.currentStatus || 'Active',
+        }
+      })
+
+    case 'material_consumption':
+      return materials.map((m) => {
+        const stock = parseAmount(m.currentTotalStock || m.currentStock || m.quantity)
+        const rate = parseAmount(m.standardRate || m.rate)
+        const valuation = stock * rate
+        return {
+          'Material Name': m.name || m.materialName || '',
+          'Category': m.category || 'General',
+          'Unit': m.unit || 'Bags',
+          'Current Stock': stock,
+          'Standard Unit Rate (INR)': rate,
+          'Stock Valuation (INR)': valuation,
+          'Min Safety Threshold': parseAmount(m.minReorderLevel) || 10,
+          'Stock Health': stock < (parseAmount(m.minReorderLevel) || 10) ? 'Reorder Needed' : 'Adequate',
+        }
+      })
+
+    case 'petty_cash_audit':
+      return pettyCashExpenses.map((exp) => ({
+        'Date': formatDateDisplay(exp.date || exp.createdAt),
+        'Supervisor': exp.supervisorName || exp.supervisorUid || 'Supervisor',
+        'Site': exp.projectName || exp.projectId || 'Site',
+        'Category': exp.category || 'Local Materials',
+        'Vendor': exp.vendorName || 'Local Supplier',
+        'Description': exp.description || 'Site purchase',
+        'Amount (INR)': parseAmount(exp.amount),
+        'Status': exp.status || 'Approved',
+        'Approved By': exp.approvedBy || 'Manager',
+      }))
+
+    case 'contractor_mb':
+      return contractorBills.map((b) => ({
+        'Bill Ref #': b.billNumber || b.id,
+        'Contractor Name': b.contractorName || 'Contractor',
+        'Site / Project': b.projectName || b.projectId || 'Site',
+        'Measured Quantity': parseAmount(b.measuredQty),
+        'Agreed Rate': parseAmount(b.rate),
+        'Gross Amount (INR)': parseAmount(b.grossAmount),
+        'TDS Deduction (INR)': parseAmount(b.tdsDeduction),
+        'Retention 5% (INR)': parseAmount(b.retentionDeduction),
+        'Net Payable (INR)': parseAmount(b.netPayable),
+        'Billing Status': b.status || 'submitted',
+      }))
+
+    case 'labour_muster_roll':
+      return workerAttendance.map((att) => ({
+        'Date': formatDateDisplay(att.date),
+        'Site Name': att.projectName || att.projectId || 'Site',
+        'Trade Category': att.roleCategory || att.skillType || 'Masons',
+        'Headcount': parseAmount(att.headcount || 1),
+        'Shift Hours': parseAmount(att.shiftHours || 8),
+        'Overtime (Hrs)': parseAmount(att.otHours),
+        'Daily Rate (INR)': parseAmount(att.dailyWageRate),
+        'Total Wage Liability (INR)': parseAmount(att.totalWage),
+        'Supervisor Recorded': att.supervisorName || 'Supervisor',
+      }))
+
+    case 'equipment_utilization':
+      return tools.map((t) => ({
+        'Asset Tag': t.assetTag || t.modelSerial || t.id,
+        'Equipment Name': t.name || t.toolName || '',
+        'Category': t.category || 'Power Tools',
+        'Ownership': t.ownershipType || 'owned',
+        'Current Location': t.currentProjectName || t.currentProjectId || 'Central Yard',
+        'Custodian': t.assignedTo || 'Storekeeper',
+        'Physical Condition': t.condition || 'Good',
+        'Asset Status': t.currentStatus || t.status || 'Active',
+      }))
+
+    case 'quality_snags':
+      return qualityChecklists.map((qc) => ({
+        'Date': formatDateDisplay(qc.inspectionDate),
+        'Site': qc.projectName || qc.projectId || 'Site',
+        'Inspection Type': qc.inspectionType || 'Reinforcement Inspection',
+        'Inspector': qc.inspectedBy || 'Quality Engineer',
+        'Checklist Status': qc.status || 'passed',
+        'Open Snags Count': Array.isArray(qc.snagList) ? qc.snagList.length : 0,
+        'Remarks': qc.remarks || 'No issues',
+      }))
+
+    case 'safety_incidents':
+      return safetyIncidents.map((s) => ({
+        'Incident Date': formatDateDisplay(s.date),
+        'Site': s.projectName || s.projectId || 'Site',
+        'Severity Level': (s.severity || 'minor').toUpperCase(),
+        'Description': s.description || 'Minor incident',
+        'Injuries': s.injuredPerson || 'None',
+        'Action Taken': s.actionTaken || 'First aid administered',
+        'Reported By': s.reportedBy || 'Safety Officer',
+      }))
+
+    case 'customer_cashflow':
+      return customerInvoices.map((inv) => ({
+        'Invoice #': inv.invoiceNumber || inv.id,
+        'Customer Name': inv.customerName || 'Client',
+        'Site': inv.projectName || inv.projectId || 'Site',
+        'Milestone Stage': inv.stageName || inv.stageId || 'Milestone',
+        'Base Amount (INR)': parseAmount(inv.baseAmount),
+        'GST Tax (INR)': parseAmount(inv.taxGstAmount),
+        'Total Demand (INR)': parseAmount(inv.totalPayable || inv.amount),
+        'Due Date': formatDateDisplay(inv.dueDate),
+        'Payment Status': inv.status || 'issued',
+      }))
+
+    case 'daily_progress_digest':
+      return dailySiteLogs.map((log) => ({
+        'Date': formatDateDisplay(log.date),
+        'Site Name': log.projectName || log.projectId || 'Site',
+        'Weather': log.weather || 'Sunny',
+        'Workforce Count': log.workforceCount?.total || 15,
+        'Work Progress Summary': log.workDoneSummary || 'Work ongoing',
+        'Bottlenecks / Hindrances': log.hindrances || 'None',
+        'Manager Reviewed': log.managerReviewed ? 'Reviewed ✓' : 'Pending Review',
+      }))
+
+    default:
+      return []
+  }
+}
+

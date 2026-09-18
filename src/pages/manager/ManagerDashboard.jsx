@@ -86,22 +86,22 @@ export default function ManagerDashboard() {
   const pendingVouchers = vouchers.filter((v) => ['submitted', 'pending'].includes(String(v.status || '').toLowerCase())).length
 
   const navigation = [
-    { label: 'Dashboard', href: '/manager/dashboard', icon: '⌂' },
+    { label: 'Command Center', href: '/manager/dashboard', icon: '⌂' },
     { label: 'Site Setup Wizard', href: '/manager/site-wizard', icon: '⚡' },
-    { label: 'Sites Register', href: '/manager/sites', icon: '▦' },
-    { label: 'Daily Workforce', href: '/manager/workforce', icon: '👷' },
-    { label: 'Materials & GRN', href: '/manager/materials', icon: '📦' },
-    { label: 'Tools Movement', href: '/manager/tools', icon: '🔧' },
+    { label: 'Sites Portfolio', href: '/manager/sites', icon: '▦' },
+    { label: 'Daily Progress Diaries', href: '/manager/daily-logs', icon: '📝' },
+    { label: 'Muster Roll & Wages', href: '/manager/workforce', icon: '👷' },
+    { label: 'Materials & Indents', href: '/manager/materials', icon: '📦' },
     { label: 'Payment Approvals', href: '/manager/approvals', icon: '✓', badge: pendingApprovals },
   ]
 
   const quickNav = [
     { label: 'Site Setup Wizard', href: '/manager/site-wizard', icon: '⚡', desc: 'Initialize new project in 5 steps' },
-    { label: 'Daily Workforce', href: '/manager/workforce', icon: '👷', desc: 'Attendance, wages & contractors' },
-    { label: 'Materials & GRN', href: '/manager/materials', icon: '📦', desc: 'Inward delivery & requisitions' },
-    { label: 'Tools & Movement', href: '/manager/tools', icon: '🔧', desc: 'Issue, track & maintain gear' },
-    { label: 'Payment Approvals', href: '/manager/approvals', icon: '✓', desc: 'Tier 1 & Tier 3 verification' },
-    { label: 'Sites Register', href: '/manager/sites', icon: '▦', desc: 'Overview of all active project sites' },
+    { label: 'Daily Progress Diaries', href: '/manager/daily-logs', icon: '📝', desc: 'Review supervisor site reports & photos' },
+    { label: 'Daily Workforce', href: '/manager/workforce', icon: '👷', desc: 'Attendance muster roll & wages' },
+    { label: 'Materials & Indents', href: '/manager/materials', icon: '📦', desc: 'Inward delivery, POs & stock' },
+    { label: 'Payment Approvals', href: '/manager/approvals', icon: '✓', desc: 'Tier 1 review & Tier 3 UTR clearance' },
+    { label: 'Sites Portfolio', href: '/manager/sites', icon: '▦', desc: 'Overview of all active project sites' },
   ]
 
   async function handleLogout() {
@@ -114,7 +114,7 @@ export default function ManagerDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 flex font-sans">
+    <div className="h-screen bg-[#F8FAFC] text-slate-900 flex font-sans overflow-hidden">
       {/* Mobile Drawer Backdrop */}
       {isMobileMenuOpen && (
         <div
@@ -123,9 +123,9 @@ export default function ManagerDashboard() {
         />
       )}
 
-      {/* Strict #0B3470 Sidebar (Desktop & Mobile Drawer) */}
+      {/* Strict #0B3470 Sidebar (Desktop Fixed & Mobile Drawer) */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#0B3470] p-4 flex flex-col justify-between shadow-2xl transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 lg:shadow-xl lg:z-20 ${
+        className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#0B3470] p-4 flex flex-col justify-between shadow-2xl transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 lg:shadow-xl lg:z-20 shrink-0 h-screen overflow-y-auto ${
           isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
@@ -186,10 +186,10 @@ export default function ManagerDashboard() {
         </div>
       </aside>
 
-      {/* Main Light Content Surface */}
-      <div className="flex-1 min-w-0 flex flex-col bg-[#F8FAFC]">
+      {/* Main Light Content Surface (Independently Scrollable) */}
+      <div className="flex-1 min-w-0 flex flex-col h-screen overflow-y-auto bg-[#F8FAFC]">
         {/* Topbar Header (Light Mode) */}
-        <header className="sticky top-0 z-30 flex items-center justify-between gap-4 px-4 sm:px-6 py-3.5 bg-white border-b border-slate-200/90 shadow-xs">
+        <header className="sticky top-0 z-30 flex items-center justify-between gap-4 px-4 sm:px-6 py-3.5 bg-white/95 backdrop-blur-md border-b border-slate-200/90 shadow-xs shrink-0">
           <div className="flex items-center gap-3 flex-1 max-w-md">
             <button
               type="button"
