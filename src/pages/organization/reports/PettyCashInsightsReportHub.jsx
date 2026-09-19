@@ -19,6 +19,7 @@ export default function PettyCashInsightsReportHub({
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
   })
   const [categoryFilter, setCategoryFilter] = useState('all')
+  const [searchQuery, setSearchQuery] = useState('')
 
   const reportData = useMemo(() => {
     return calculatePettyCashInsights({
@@ -34,9 +35,16 @@ export default function PettyCashInsightsReportHub({
     return reportData.itemizedLedger.filter((item) => {
       const matchesMonth = item.rawDate ? String(item.rawDate).startsWith(selectedMonth) : true
       const matchesCategory = categoryFilter === 'all' || item.category.toLowerCase().includes(categoryFilter.toLowerCase())
-      return matchesMonth && matchesCategory
+      const q = searchQuery.trim().toLowerCase()
+      const matchesSearch =
+        !q ||
+        item.siteName?.toLowerCase().includes(q) ||
+        item.supervisor?.toLowerCase().includes(q) ||
+        item.vendor?.toLowerCase().includes(q) ||
+        item.description?.toLowerCase().includes(q)
+      return matchesMonth && matchesCategory && matchesSearch
     })
-  }, [reportData, selectedMonth, categoryFilter])
+  }, [reportData, selectedMonth, categoryFilter, searchQuery])
 
   const handleExportCSV = () => {
     if (activeTab === 'audit') {
@@ -81,20 +89,19 @@ export default function PettyCashInsightsReportHub({
           <div style="font-size: 16px; font-weight: bold; color: #7c2d12;">${money(reportData.kpis.totalSpent)}</div>
         </div>
         <div style="flex: 1; background: #0B3470; color: white; padding: 10px; border-radius: 8px;">
-          <small style="color: #93c5fd; font-weight: bold;">NET FLOAT IN HAND</small>
-          <div style="font-size: 16px; font-weight: bold;">${money(reportData.kpis.netFloatInHand)}</div>
+          <small style="color: #93c5fd; font-weight: bold;">NET FLOAT BALANCE</small>
+          <div style="font-size: 16px; font-weight: bold;">${money(reportData.kpis.totalRemaining)}</div>
         </div>
       </div>
 
-      <h3>Site-by-Site Petty Cash Balances</h3>
       <table>
         <thead>
           <tr>
             <th>Site Name</th>
             <th>Supervisor</th>
-            <th>Disbursed</th>
-            <th>Spent</th>
-            <th>Remaining Float</th>
+            <th>Disbursed Float (₹)</th>
+            <th>Spent Amount (₹)</th>
+            <th>Remaining Balance (₹)</th>
             <th>Status</th>
           </tr>
         </thead>
@@ -106,7 +113,7 @@ export default function PettyCashInsightsReportHub({
               <td>${money(s.disbursed)}</td>
               <td>${money(s.spent)}</td>
               <td><strong>${money(s.balance)}</strong></td>
-              <td><span style="font-weight: bold; color: ${s.isOverspent ? '#b91c1c' : '#15803d'};">${s.status}</span></td>
+              <td>${s.status}</td>
             </tr>
           `).join('')}
         </tbody>
@@ -116,181 +123,216 @@ export default function PettyCashInsightsReportHub({
   }
 
   return (
-    <div className="space-y-6">
-      {/* Top Header & Export Controls */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div className="space-y-6 animate-fade-in">
+      {/* Top Header & Sub-Tab Switcher Card */}
+      <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <span className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">Module 5 · Imprest Governance</span>
-            <h2 className="text-xl font-extrabold text-slate-900">Petty Cash Insights & Audit Hub</h2>
+            <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
+              Module 5 · Imprest Governance
+            </span>
+            <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
+              Petty Cash Insights & Audit Hub
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Supervisor float balances, emergency disbursal top-ups, and itemized receipt vouchers.
+            </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
               onClick={handleExportCSV}
-              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
             >
               📥 Export CSV
             </button>
             <button
               type="button"
               onClick={handlePrintPDF}
-              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#0B3470] hover:bg-blue-900 text-white transition-colors shadow-xs"
+              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors shadow-2xs cursor-pointer"
             >
-              🖨️ Print Petty Cash PDF
+              🖨️ Print PDF Statement
             </button>
           </div>
         </div>
 
-        {/* Tab Switcher */}
-        <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-          <button
-            type="button"
-            onClick={() => setActiveTab('audit')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
-              activeTab === 'audit' ? 'bg-[#0B3470] text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            Site Imprest Float Audit
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('ledger')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
-              activeTab === 'ledger' ? 'bg-[#0B3470] text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            Monthly Itemized Receipt Ledger
-          </button>
-        </div>
-      </div>
-
-      {/* Overview KPIs */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-1">
-          <span className="text-[11px] font-bold text-blue-600 uppercase">Total Petty Cash Disbursed</span>
-          <strong className="text-2xl font-black text-slate-900 block">{money(reportData.kpis.totalDisbursed)}</strong>
-          <small className="text-[10px] text-slate-400">Approved top-up allocations</small>
-        </div>
-        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 shadow-xs space-y-1">
-          <span className="text-[11px] font-bold text-amber-700 uppercase">Total Spent by Supervisors</span>
-          <strong className="text-2xl font-black text-amber-900 block">{money(reportData.kpis.totalSpent)}</strong>
-          <small className="text-[10px] text-amber-600">Reconciled site receipts</small>
-        </div>
-        <div className="p-4 rounded-2xl bg-[#0B3470] text-white border border-blue-900 shadow-xs space-y-1">
-          <span className="text-[11px] font-bold text-blue-200 uppercase">Net Float in Hand</span>
-          <strong className="text-2xl font-black text-white block">{money(reportData.kpis.netFloatInHand)}</strong>
-          <small className="text-[10px] text-blue-200">Across all supervisors & sites</small>
-        </div>
-      </div>
-
-      {/* Site Imprest Float Audit View */}
-      {activeTab === 'audit' && (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-          <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-900">Site-by-Site Petty Cash Audit Matrix</h3>
-            <span className="text-xs text-slate-500">{reportData.siteAuditList.length} sites registered</span>
+        {/* Filters and Sub-Tab Switcher */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-100">
+          <div className="flex items-center gap-2 flex-wrap">
+            {activeTab === 'ledger' && (
+              <>
+                <input
+                  type="month"
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs cursor-pointer"
+                />
+                <select
+                  value={categoryFilter}
+                  onChange={(e) => setCategoryFilter(e.target.value)}
+                  className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs cursor-pointer"
+                >
+                  <option value="all">All Expense Categories</option>
+                  <option value="food">Food & Refreshments</option>
+                  <option value="fuel">Fuel & Logistics</option>
+                  <option value="tools">Tools & Hardware</option>
+                  <option value="materials">Emergency Materials</option>
+                </select>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search receipt..."
+                  className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs"
+                />
+              </>
+            )}
           </div>
+
+          <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200/80 self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => setActiveTab('audit')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'audit' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              5A. Site Float Audit List
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('ledger')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'ledger' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              5B. Itemized Monthly Receipts
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 3 Overview KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+          <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider block">Total Disbursed Float</span>
+          <strong className="text-2xl font-extrabold text-slate-900 font-mono block">{money(reportData.kpis.totalDisbursed)}</strong>
+          <small className="text-slate-400 text-[11px]">Approved allocations across sites</small>
+        </div>
+        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+          <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wider block">Total Petty Cash Spent</span>
+          <strong className="text-2xl font-extrabold text-amber-700 font-mono block">{money(reportData.kpis.totalSpent)}</strong>
+          <small className="text-slate-400 text-[11px]">Voucher expenditures realized</small>
+        </div>
+        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1 border-l-4 border-l-emerald-600">
+          <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">Net Remaining Float</span>
+          <strong
+            className={`text-2xl font-extrabold font-mono block ${
+              reportData.kpis.totalRemaining >= 0 ? 'text-emerald-700' : 'text-rose-600'
+            }`}
+          >
+            {money(reportData.kpis.totalRemaining)}
+          </strong>
+          <small className="text-slate-400 text-[11px]">Current liquid balance with supervisors</small>
+        </div>
+      </div>
+
+      {/* 5A. Site-by-Site Audit Table */}
+      {activeTab === 'audit' && (
+        <div className="bg-white border border-slate-200/90 rounded-2xl shadow-xs overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
+            <table className="w-full text-left text-xs text-slate-700">
+              <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
                 <tr>
-                  <th className="p-3">Site / Project</th>
-                  <th className="p-3">Supervisor</th>
-                  <th className="p-3 text-right">Disbursed (₹)</th>
-                  <th className="p-3 text-right">Spent Outflows (₹)</th>
-                  <th className="p-3 text-right">Remaining Float (₹)</th>
-                  <th className="p-3 text-center">Status</th>
+                  <th className="p-3.5">Site / Project</th>
+                  <th className="p-3.5">Assigned Supervisor</th>
+                  <th className="p-3.5 text-right">Disbursed Float</th>
+                  <th className="p-3.5 text-right">Spent Outflow</th>
+                  <th className="p-3.5 text-right">Remaining Balance</th>
+                  <th className="p-3.5 text-center">Float Health</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {reportData.siteAuditList.map((s) => (
-                  <tr key={s.siteId} className="hover:bg-slate-50/70 transition-colors">
-                    <td className="p-3 font-bold text-slate-900">{s.siteName}</td>
-                    <td className="p-3 text-slate-700">{s.supervisor}</td>
-                    <td className="p-3 text-right font-medium text-slate-800">{money(s.disbursed)}</td>
-                    <td className="p-3 text-right font-semibold text-amber-700">{money(s.spent)}</td>
-                    <td className="p-3 text-right font-extrabold text-[#0B3470]">{money(s.balance)}</td>
-                    <td className="p-3 text-center">
-                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                        s.isOverspent ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'
-                      }`}>
-                        {s.status}
-                      </span>
+                {reportData.siteAuditList.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="p-12 text-center text-slate-400 text-xs">
+                      No petty cash records found for sites.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  reportData.siteAuditList.map((s, idx) => (
+                    <tr key={s.siteId || idx} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="p-3.5 font-bold text-slate-900">{s.siteName}</td>
+                      <td className="p-3.5 text-slate-600">{s.supervisor}</td>
+                      <td className="p-3.5 text-right font-mono text-slate-700">{money(s.disbursed)}</td>
+                      <td className="p-3.5 text-right font-mono text-rose-600 font-bold">-{money(s.spent)}</td>
+                      <td className="p-3.5 text-right font-mono font-extrabold text-sm">
+                        <span className={s.balance >= 0 ? 'text-emerald-700' : 'text-rose-600'}>
+                          {money(s.balance)}
+                        </span>
+                      </td>
+                      <td className="p-3.5 text-center whitespace-nowrap">
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                            s.balance < 0
+                              ? 'bg-rose-50 text-rose-700 border-rose-200'
+                              : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          }`}
+                        >
+                          {s.balance < 0 ? 'Overspent Float' : 'Active Float'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
         </div>
       )}
 
-      {/* Monthly Itemized Receipt Ledger View */}
+      {/* 5B. Monthly Itemized Ledger */}
       {activeTab === 'ledger' && (
-        <div className="space-y-4">
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">Select Month</label>
-                <input
-                  type="month"
-                  value={selectedMonth}
-                  onChange={(e) => setSelectedMonth(e.target.value)}
-                  className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">Category</label>
-                <select
-                  value={categoryFilter}
-                  onChange={(e) => setCategoryFilter(e.target.value)}
-                  className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600"
-                >
-                  <option value="all">All Categories</option>
-                  <option value="fuel">Fuel / Transport</option>
-                  <option value="food">Food Allowance</option>
-                  <option value="tools">Tools & Hardware</option>
-                  <option value="materials">Local Materials</option>
-                </select>
-              </div>
-            </div>
-            <span className="text-xs text-slate-500 font-semibold">{filteredLedger.length} items logged in {selectedMonth}</span>
-          </div>
-
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
+        <div className="bg-white border border-slate-200/90 rounded-2xl shadow-xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs text-slate-700">
+              <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
+                <tr>
+                  <th className="p-3.5">Date</th>
+                  <th className="p-3.5">Site</th>
+                  <th className="p-3.5">Category</th>
+                  <th className="p-3.5">Description</th>
+                  <th className="p-3.5">Vendor / Payee</th>
+                  <th className="p-3.5 text-right">Amount</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredLedger.length === 0 ? (
                   <tr>
-                    <th className="p-3">Date</th>
-                    <th className="p-3">Site / Project</th>
-                    <th className="p-3">Supervisor</th>
-                    <th className="p-3">Vendor / Shop</th>
-                    <th className="p-3">Category</th>
-                    <th className="p-3">Description</th>
-                    <th className="p-3 text-right">Amount (₹)</th>
+                    <td colSpan={6} className="p-12 text-center text-slate-400 text-xs">
+                      No petty cash receipts found for {selectedMonth}.
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredLedger.length === 0 ? (
-                    <tr><td colSpan="7" className="p-6 text-center text-slate-400 italic">No petty cash expense receipts for this month.</td></tr>
-                  ) : (
-                    filteredLedger.map((l) => (
-                      <tr key={l.id} className="hover:bg-slate-50/70 transition-colors">
-                        <td className="p-3 font-semibold text-slate-900">{l.date}</td>
-                        <td className="p-3 text-slate-800">{l.siteName}</td>
-                        <td className="p-3 text-slate-600">{l.supervisor}</td>
-                        <td className="p-3 text-slate-700">{l.vendor}</td>
-                        <td className="p-3"><span className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 font-semibold text-[10px]">{l.category}</span></td>
-                        <td className="p-3 text-slate-600 max-w-xs truncate">{l.description}</td>
-                        <td className="p-3 text-right font-bold text-slate-900">{money(l.amount)}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+                ) : (
+                  filteredLedger.map((l, idx) => (
+                    <tr key={l.id || idx} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="p-3.5 text-slate-500 whitespace-nowrap">{formatDateDisplay(l.date)}</td>
+                      <td className="p-3.5 font-bold text-slate-900">{l.siteName}</td>
+                      <td className="p-3.5">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                          {l.category}
+                        </span>
+                      </td>
+                      <td className="p-3.5 text-slate-700">{l.description}</td>
+                      <td className="p-3.5 text-slate-500">{l.vendor || 'Direct Cash'}</td>
+                      <td className="p-3.5 text-right font-mono font-bold text-rose-600">
+                        -{money(l.amount)}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

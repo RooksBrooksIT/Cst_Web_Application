@@ -26,7 +26,7 @@ export default function SiteExpensesReportHub({
   const [selectedSiteId, setSelectedSiteId] = useState(sites[0]?.id || '')
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10))
   const [selectedStage, setSelectedStage] = useState('all')
-  
+
   // Date Range state
   const defaultFrom = useMemo(() => {
     const d = new Date()
@@ -260,59 +260,71 @@ export default function SiteExpensesReportHub({
     printReport(`Range Report - ${rangeReport.siteName}`, content)
   }
 
+  const handleExportSummaryCSV = () => {
+    const rows = [
+      ['Total Approved Budget', lifetimeSummary.kpis.budget],
+      ['Total Milestone Inflow Received', lifetimeSummary.kpis.received],
+      ['Total Actual Spend to Date', lifetimeSummary.kpis.spent],
+      ['Net Working Cash in Hand', lifetimeSummary.kpis.cashInHand],
+      ['Contract Budget Remaining Cushion', lifetimeSummary.kpis.budgetRemaining],
+      ['Budget Utilization Rate', `${lifetimeSummary.kpis.usagePercent}%`],
+    ]
+    exportToCSV(`Site_Summary_${selectedSite?.projectName || 'Site'}`, ['Metric', 'Amount (INR)'], rows)
+  }
+
   return (
-    <div className="space-y-6">
-      {/* Top Filter & Sub-Report Switcher */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div className="space-y-6 animate-fade-in">
+      {/* Top Filter & Sub-Report Switcher Card */}
+      <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
-            <span className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">Module 1 · Site Outflows Hub</span>
-            <h2 className="text-xl font-extrabold text-slate-900">Site & Project Expenses Reports</h2>
+            <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
+              Module 1 · Site Outflows Hub
+            </span>
+            <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
+              Site & Project Expenses Reports
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Select site and audit period to generate itemized vouchers, wage sheets, and material consumption ledgers.
+            </p>
           </div>
+
           {/* Sub-report selector tabs */}
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl self-start">
-            <button
-              type="button"
-              onClick={() => setActiveSubTab('daily')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                activeSubTab === 'daily' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              1A. Daily Report
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveSubTab('range')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                activeSubTab === 'range' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              1B. Date Range Report
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveSubTab('summary')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                activeSubTab === 'summary' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              1C. Site Summary
-            </button>
+          <div className="flex items-center gap-1 bg-slate-100 p-1.5 rounded-xl self-start lg:self-auto border border-slate-200/80">
+            {[
+              { id: 'daily', label: '1A. Daily Site Report', icon: '📅' },
+              { id: 'range', label: '1B. Date Range Ledger', icon: '🗓️' },
+              { id: 'summary', label: '1C. Cumulative Summary', icon: '📈' },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveSubTab(tab.id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  activeSubTab === tab.id
+                    ? 'bg-[#0B3470] text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span>{tab.icon}</span>
+                {tab.label}
+              </button>
+            ))}
           </div>
         </div>
 
         {/* Dynamic Filters Form */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-2 border-t border-slate-100">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-3 border-t border-slate-100">
           <div>
             <label className="block text-[11px] font-bold text-slate-600 mb-1">Target Site</label>
             <select
               value={selectedSiteId}
               onChange={(e) => setSelectedSiteId(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600 focus:bg-white transition-all cursor-pointer shadow-2xs"
             >
               {sites.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.projectName || s.siteName || s.name || s.id}
+                  {s.projectName || s.siteName || s.name || s.id} ({s.id})
                 </option>
               ))}
             </select>
@@ -320,12 +332,12 @@ export default function SiteExpensesReportHub({
 
           {activeSubTab === 'daily' && (
             <div>
-              <label className="block text-[11px] font-bold text-slate-600 mb-1">Select Date</label>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">Audit Date</label>
               <input
                 type="date"
                 value={selectedDate}
                 onChange={(e) => setSelectedDate(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600 focus:bg-white transition-all cursor-pointer shadow-2xs"
               />
             </div>
           )}
@@ -338,7 +350,7 @@ export default function SiteExpensesReportHub({
                   type="date"
                   value={fromDate}
                   onChange={(e) => setFromDate(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600 focus:bg-white transition-all cursor-pointer shadow-2xs"
                 />
               </div>
               <div>
@@ -347,7 +359,7 @@ export default function SiteExpensesReportHub({
                   type="date"
                   value={toDate}
                   onChange={(e) => setToDate(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600 focus:bg-white transition-all cursor-pointer shadow-2xs"
                 />
               </div>
             </>
@@ -359,11 +371,13 @@ export default function SiteExpensesReportHub({
               <select
                 value={selectedStage}
                 onChange={(e) => setSelectedStage(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600 focus:bg-white transition-all cursor-pointer shadow-2xs"
               >
                 <option value="all">All Stages</option>
                 {PROJECT_STAGES.map((stg) => (
-                  <option key={stg} value={stg}>{stg}</option>
+                  <option key={stg} value={stg}>
+                    {stg}
+                  </option>
                 ))}
               </select>
             </div>
@@ -377,29 +391,40 @@ export default function SiteExpensesReportHub({
       {activeSubTab === 'daily' && (
         <div className="space-y-6">
           {/* Header Metadata Banner */}
-          <div className="bg-linear-to-r from-[#0B3470] via-[#0d3f85] to-[#164e96] text-white p-6 rounded-3xl shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <span className="text-[11px] font-bold text-blue-200 uppercase tracking-widest block">Daily Expense Statement</span>
-              <h3 className="text-2xl font-black">{dailyReport.siteName}</h3>
-              <p className="text-xs text-blue-100 mt-1">
-                📅 {formatDateDisplay(dailyReport.date)} · 🏗️ Stage: <span className="font-semibold text-white">{dailyReport.projectStage}</span> · 👤 Supervisor: <span className="font-semibold text-white">{dailyReport.supervisorName}</span>
-              </p>
+          <div className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
+                Daily Expense Statement
+              </span>
+              <h3 className="text-2xl font-extrabold text-slate-900 tracking-tight">
+                {dailyReport.siteName}
+              </h3>
+              <div className="flex items-center gap-3 text-xs text-slate-500 pt-1 flex-wrap">
+                <span>📅 {formatDateDisplay(dailyReport.date)}</span>
+                <span>·</span>
+                <span>🏗️ Stage: <strong className="text-slate-800">{dailyReport.projectStage}</strong></span>
+                <span>·</span>
+                <span>👤 Supervisor: <strong className="text-slate-800">{dailyReport.supervisorName}</strong></span>
+              </div>
             </div>
-            <div className="bg-white/10 backdrop-blur-md border border-white/20 p-4 rounded-2xl flex flex-col items-end">
-              <span className="text-[11px] text-blue-200 font-semibold uppercase tracking-wider">Grand Total Daily Expense</span>
-              <strong className="text-3xl font-black text-white">{money(dailyReport.grandTotal)}</strong>
-              <div className="flex items-center gap-2 mt-3">
+
+            <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 flex flex-col sm:items-end justify-center">
+              <span className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">Grand Total Daily Expense</span>
+              <strong className="text-2xl font-extrabold text-[#0B3470] font-mono mt-0.5">
+                {money(dailyReport.grandTotal)}
+              </strong>
+              <div className="flex items-center gap-2 mt-2.5">
                 <button
                   type="button"
                   onClick={handleExportDailyCSV}
-                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white text-[#0B3470] hover:bg-blue-50 transition-colors shadow-xs"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-colors shadow-2xs cursor-pointer"
                 >
                   📥 Export CSV
                 </button>
                 <button
                   type="button"
                   onClick={handlePrintDailyPDF}
-                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-sky-500 text-white hover:bg-sky-400 transition-colors shadow-xs"
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#0B3470] text-white hover:bg-[#082654] transition-colors shadow-2xs cursor-pointer"
                 >
                   🖨️ Print PDF
                 </button>
@@ -410,37 +435,37 @@ export default function SiteExpensesReportHub({
           {/* 5 Breakdown Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {/* Card 1: Labour Expenses */}
-            <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-3">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                <div className="flex items-center gap-2">
+            <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-3">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-2.5">
                   <span className="p-2 rounded-xl bg-blue-50 text-blue-700 font-bold text-sm">👷</span>
                   <div>
                     <h4 className="text-sm font-bold text-slate-900">1. Labour Expenses</h4>
                     <span className="text-[11px] text-slate-400">{dailyReport.labours.length} worker groups recorded</span>
                   </div>
                 </div>
-                <strong className="text-base font-extrabold text-[#0B3470]">{money(dailyReport.totalLabour)}</strong>
+                <strong className="text-base font-extrabold text-[#0B3470] font-mono">{money(dailyReport.totalLabour)}</strong>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
                     <tr>
-                      <th className="p-2">Role / Trade</th>
-                      <th className="p-2 text-center">Count</th>
-                      <th className="p-2 text-right">Daily Rate</th>
-                      <th className="p-2 text-right">Subtotal</th>
+                      <th className="p-2.5">Role / Trade</th>
+                      <th className="p-2.5 text-center">Count</th>
+                      <th className="p-2.5 text-right">Daily Rate</th>
+                      <th className="p-2.5 text-right">Subtotal</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {dailyReport.labours.length === 0 ? (
-                      <tr><td colSpan="4" className="p-4 text-center text-slate-400 italic">No labour entries for this date</td></tr>
+                      <tr><td colSpan="4" className="p-6 text-center text-slate-400 italic">No labour entries for this date</td></tr>
                     ) : (
                       dailyReport.labours.map((l, i) => (
-                        <tr key={i} className="hover:bg-slate-50/50">
-                          <td className="p-2 font-medium text-slate-800">{l.role}</td>
-                          <td className="p-2 text-center text-slate-600">{l.count}</td>
-                          <td className="p-2 text-right text-slate-600">{money(l.rate)}</td>
-                          <td className="p-2 text-right font-bold text-slate-900">{money(l.amount)}</td>
+                        <tr key={i} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="p-2.5 font-medium text-slate-800">{l.role}</td>
+                          <td className="p-2.5 text-center text-slate-600">{l.count}</td>
+                          <td className="p-2.5 text-right font-mono text-slate-600">{money(l.rate)}</td>
+                          <td className="p-2.5 text-right font-bold font-mono text-slate-900">{money(l.amount)}</td>
                         </tr>
                       ))
                     )}
@@ -450,37 +475,37 @@ export default function SiteExpensesReportHub({
             </div>
 
             {/* Card 2: Material Expenses */}
-            <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-3">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                <div className="flex items-center gap-2">
+            <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-3">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-2.5">
                   <span className="p-2 rounded-xl bg-emerald-50 text-emerald-700 font-bold text-sm">🧱</span>
                   <div>
                     <h4 className="text-sm font-bold text-slate-900">2. Material Expenses</h4>
                     <span className="text-[11px] text-slate-400">{dailyReport.materials.length} material logs</span>
                   </div>
                 </div>
-                <strong className="text-base font-extrabold text-emerald-700">{money(dailyReport.totalMaterial)}</strong>
+                <strong className="text-base font-extrabold text-emerald-700 font-mono">{money(dailyReport.totalMaterial)}</strong>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
                     <tr>
-                      <th className="p-2">Material</th>
-                      <th className="p-2 text-center">Quantity</th>
-                      <th className="p-2 text-right">Unit Price</th>
-                      <th className="p-2 text-right">Subtotal</th>
+                      <th className="p-2.5">Material</th>
+                      <th className="p-2.5 text-center">Quantity</th>
+                      <th className="p-2.5 text-right">Unit Price</th>
+                      <th className="p-2.5 text-right">Subtotal</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {dailyReport.materials.length === 0 ? (
-                      <tr><td colSpan="4" className="p-4 text-center text-slate-400 italic">No material purchases for this date</td></tr>
+                      <tr><td colSpan="4" className="p-6 text-center text-slate-400 italic">No material purchases for this date</td></tr>
                     ) : (
                       dailyReport.materials.map((m, i) => (
-                        <tr key={i} className="hover:bg-slate-50/50">
-                          <td className="p-2 font-medium text-slate-800">{m.name}</td>
-                          <td className="p-2 text-center text-slate-600">{m.quantity} {m.unit}</td>
-                          <td className="p-2 text-right text-slate-600">{money(m.unitPrice)}</td>
-                          <td className="p-2 text-right font-bold text-slate-900">{money(m.amount)}</td>
+                        <tr key={i} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="p-2.5 font-medium text-slate-800">{m.name}</td>
+                          <td className="p-2.5 text-center text-slate-600">{m.quantity} {m.unit}</td>
+                          <td className="p-2.5 text-right font-mono text-slate-600">{money(m.unitPrice)}</td>
+                          <td className="p-2.5 text-right font-bold font-mono text-slate-900">{money(m.amount)}</td>
                         </tr>
                       ))
                     )}
@@ -490,62 +515,63 @@ export default function SiteExpensesReportHub({
             </div>
 
             {/* Card 3 & 4: Food & Transport */}
-            <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                <div className="flex items-center gap-2">
+            <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-2.5">
                   <span className="p-2 rounded-xl bg-amber-50 text-amber-700 font-bold text-sm">🍱</span>
                   <div>
                     <h4 className="text-sm font-bold text-slate-900">3 & 4. Food & Transport Fuel</h4>
                     <span className="text-[11px] text-slate-400">Supervisor daily allowances & logistics</span>
                   </div>
                 </div>
-                <strong className="text-base font-extrabold text-amber-700">{money(dailyReport.foodAmount + dailyReport.transportAmount)}</strong>
+                <strong className="text-base font-extrabold text-amber-700 font-mono">
+                  {money(dailyReport.foodAmount + dailyReport.transportAmount)}
+                </strong>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-1">
-                  <span className="text-[11px] font-bold text-slate-500 block">Food Allowance</span>
-                  <strong className="text-lg font-bold text-slate-900">{money(dailyReport.foodAmount)}</strong>
+                  <span className="text-[11px] font-semibold text-slate-500 block">Supervisor Food Allowance</span>
+                  <strong className="text-sm font-bold text-slate-800 font-mono">{money(dailyReport.foodAmount)}</strong>
                 </div>
                 <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-1">
-                  <span className="text-[11px] font-bold text-slate-500 block">Transport & Fuel</span>
-                  <strong className="text-lg font-bold text-slate-900">{money(dailyReport.transportAmount)}</strong>
+                  <span className="text-[11px] font-semibold text-slate-500 block">Transport & Fuel Allowance</span>
+                  <strong className="text-sm font-bold text-slate-800 font-mono">{money(dailyReport.transportAmount)}</strong>
                 </div>
               </div>
             </div>
 
-            {/* Card 5: Manager & Org Bills */}
-            <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-3">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                <div className="flex items-center gap-2">
-                  <span className="p-2 rounded-xl bg-purple-50 text-purple-700 font-bold text-sm">🧾</span>
+            {/* Card 5: Manager & Direct Bills */}
+            <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-3">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-2.5">
+                  <span className="p-2 rounded-xl bg-purple-50 text-purple-700 font-bold text-sm">📑</span>
                   <div>
                     <h4 className="text-sm font-bold text-slate-900">5. Manager & Direct Org Bills</h4>
-                    <span className="text-[11px] text-slate-400">Vouchers, invoices & contractor payouts</span>
+                    <span className="text-[11px] text-slate-400">{dailyReport.bills.length} corporate vouchers</span>
                   </div>
                 </div>
-                <strong className="text-base font-extrabold text-purple-700">{money(dailyReport.totalBills)}</strong>
+                <strong className="text-base font-extrabold text-purple-700 font-mono">{money(dailyReport.totalBills)}</strong>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
                     <tr>
-                      <th className="p-2">Source / Title</th>
-                      <th className="p-2">Vendor / Party</th>
-                      <th className="p-2 text-right">Amount</th>
+                      <th className="p-2.5">Source</th>
+                      <th className="p-2.5">Description</th>
+                      <th className="p-2.5">Vendor / Payee</th>
+                      <th className="p-2.5 text-right">Amount</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {dailyReport.bills.length === 0 ? (
-                      <tr><td colSpan="3" className="p-4 text-center text-slate-400 italic">No vouchers or direct bills for this date</td></tr>
+                      <tr><td colSpan="4" className="p-6 text-center text-slate-400 italic">No manager/org bills recorded for this date</td></tr>
                     ) : (
                       dailyReport.bills.map((b, i) => (
-                        <tr key={i} className="hover:bg-slate-50/50">
-                          <td className="p-2 font-medium text-slate-800">
-                            <span className="text-[10px] uppercase font-bold text-purple-600 block">{b.source}</span>
-                            {b.description}
-                          </td>
-                          <td className="p-2 text-slate-600">{b.vendor}</td>
-                          <td className="p-2 text-right font-bold text-slate-900">{money(b.amount)}</td>
+                        <tr key={i} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="p-2.5 font-bold text-blue-700">{b.source}</td>
+                          <td className="p-2.5 text-slate-800">{b.description}</td>
+                          <td className="p-2.5 text-slate-500">{b.vendor}</td>
+                          <td className="p-2.5 text-right font-bold font-mono text-slate-900">{money(b.amount)}</td>
                         </tr>
                       ))
                     )}
@@ -562,111 +588,127 @@ export default function SiteExpensesReportHub({
       {/* ----------------------------------------------------------------------------------------- */}
       {activeSubTab === 'range' && (
         <div className="space-y-6">
-          {/* Range Summary KPIs */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-1">
-              <span className="text-[11px] font-bold text-blue-600 uppercase tracking-wide">Total Labour Outflow</span>
-              <strong className="text-xl font-black text-slate-900 block">{money(rangeReport.kpis.totalLabour)}</strong>
-              <small className="text-[10px] text-slate-400">{rangeReport.daysCount} active logged days</small>
+          {/* KPI Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+              <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider block">Total Labour Outflows</span>
+              <strong className="text-2xl font-extrabold text-slate-900 font-mono block">{money(rangeReport.kpis.totalLabour)}</strong>
+              <small className="text-slate-400 text-[11px]">Across {rangeReport.daysCount} active days</small>
             </div>
-            <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-1">
-              <span className="text-[11px] font-bold text-emerald-600 uppercase tracking-wide">Total Material Outflow</span>
-              <strong className="text-xl font-black text-slate-900 block">{money(rangeReport.kpis.totalMaterial)}</strong>
-              <small className="text-[10px] text-slate-400">Direct site deliveries</small>
+            <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+              <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">Total Material Outflows</span>
+              <strong className="text-2xl font-extrabold text-emerald-700 font-mono block">{money(rangeReport.kpis.totalMaterial)}</strong>
+              <small className="text-slate-400 text-[11px]">Procurement invoices</small>
             </div>
-            <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-1">
-              <span className="text-[11px] font-bold text-purple-600 uppercase tracking-wide">Bills & Vouchers</span>
-              <strong className="text-xl font-black text-slate-900 block">{money(rangeReport.kpis.totalBills)}</strong>
-              <small className="text-[10px] text-slate-400">Manager & direct payouts</small>
+            <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+              <span className="text-[11px] font-bold text-purple-700 uppercase tracking-wider block">Bills & Vouchers</span>
+              <strong className="text-2xl font-extrabold text-purple-700 font-mono block">{money(rangeReport.kpis.totalBills)}</strong>
+              <small className="text-slate-400 text-[11px]">Manager & organization bills</small>
             </div>
-            <div className="p-4 rounded-2xl bg-[#0B3470] text-white border border-blue-900 shadow-xs space-y-1">
-              <span className="text-[11px] font-bold text-blue-200 uppercase tracking-wide">Grand Total Outflow</span>
-              <strong className="text-2xl font-black text-white block">{money(rangeReport.kpis.grandTotal)}</strong>
-              <div className="flex gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={handleExportRangeCSV}
-                  className="text-[10px] font-bold bg-white text-[#0B3470] px-2 py-1 rounded-md"
-                >
-                  Export CSV
-                </button>
-                <button
-                  type="button"
-                  onClick={handlePrintRangePDF}
-                  className="text-[10px] font-bold bg-sky-400 text-white px-2 py-1 rounded-md"
-                >
-                  Print PDF
-                </button>
-              </div>
+            <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1 border-l-4 border-l-[#0B3470]">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Grand Total Period Outflow</span>
+              <strong className="text-2xl font-extrabold text-[#0B3470] font-mono block">{money(rangeReport.kpis.grandTotal)}</strong>
+              <small className="text-slate-400 text-[11px]">{rangeReport.fromDate} to {rangeReport.toDate}</small>
             </div>
           </div>
 
-          {/* Day-by-Day Chronological Accordion Cards */}
+          {/* Action Toolbar */}
+          <div className="flex items-center justify-between text-xs text-slate-500 px-1">
+            <span>Showing <strong>{rangeReport.dayCards.length}</strong> active days with logged expenditures</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleExportRangeCSV}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-colors shadow-2xs cursor-pointer"
+              >
+                📥 Export CSV
+              </button>
+              <button
+                type="button"
+                onClick={handlePrintRangePDF}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#0B3470] text-white hover:bg-[#082654] transition-colors shadow-2xs cursor-pointer"
+              >
+                🖨️ Print PDF
+              </button>
+            </div>
+          </div>
+
+          {/* Day-by-Day Accordion Cards */}
           <div className="space-y-3">
-            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-              Chronological Daily Breakdown ({rangeReport.dayCards.length} days with expense records)
-            </h3>
             {rangeReport.dayCards.length === 0 ? (
-              <div className="p-8 text-center bg-white rounded-2xl border border-slate-200 text-slate-400 text-xs">
-                No expense records logged between {rangeReport.fromDate} and {rangeReport.toDate} for this site.
+              <div className="p-12 text-center bg-white border border-slate-200 rounded-2xl text-slate-400 text-xs">
+                No expense entries logged for this site during the selected date range.
               </div>
             ) : (
               rangeReport.dayCards.map((day) => {
-                const isExpanded = !!expandedDates[day.date]
+                const isOpen = !!expandedDates[day.date]
                 return (
-                  <div key={day.date} className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-                    <button
-                      type="button"
+                  <div
+                    key={day.date}
+                    className="bg-white border border-slate-200/90 rounded-2xl shadow-xs overflow-hidden transition-all"
+                  >
+                    <div
                       onClick={() => toggleDateAccordion(day.date)}
-                      className="w-full p-4 flex items-center justify-between text-left hover:bg-slate-50 transition-colors"
+                      className="p-4 flex items-center justify-between gap-4 cursor-pointer hover:bg-slate-50/80 transition-colors select-none"
                     >
                       <div className="flex items-center gap-3">
-                        <span className="w-9 h-9 rounded-xl bg-blue-50 text-[#0B3470] font-bold text-xs flex items-center justify-center">
-                          {day.dayName}
+                        <span className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center font-bold text-xs text-slate-600">
+                          {isOpen ? '▲' : '▼'}
                         </span>
                         <div>
-                          <strong className="text-sm font-bold text-slate-900 block">{formatDateDisplay(day.date)}</strong>
-                          <span className="text-[11px] text-slate-500">
-                            Labour: {money(day.totalLabour)} · Materials: {money(day.totalMaterial)} · Bills: {money(day.totalBills)}
-                          </span>
+                          <strong className="text-sm font-bold text-slate-900 block">
+                            {formatDateDisplay(day.date)}
+                          </strong>
+                          <span className="text-[11px] text-slate-400">{day.dayName}</span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <strong className="text-base font-extrabold text-slate-900">{money(day.grandTotal)}</strong>
-                        <span className="text-xs text-slate-400 font-bold">{isExpanded ? '▲' : '▼'}</span>
-                      </div>
-                    </button>
 
-                    {isExpanded && (
-                      <div className="p-4 pt-0 border-t border-slate-100 bg-slate-50/50 space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
-                          {/* Labour details */}
-                          <div className="bg-white p-3 rounded-xl border border-slate-200 text-xs">
-                            <span className="font-bold text-blue-700 block mb-1">Labour Outflow ({money(day.totalLabour)})</span>
+                      <div className="flex items-center gap-4">
+                        <div className="hidden sm:flex items-center gap-3 text-xs">
+                          <span className="text-slate-500">Labour: <strong className="font-mono text-slate-700">{money(day.totalLabour)}</strong></span>
+                          <span className="text-slate-500">Material: <strong className="font-mono text-emerald-700">{money(day.totalMaterial)}</strong></span>
+                          <span className="text-slate-500">Bills: <strong className="font-mono text-purple-700">{money(day.totalBills)}</strong></span>
+                        </div>
+                        <strong className="text-base font-extrabold text-[#0B3470] font-mono whitespace-nowrap">
+                          {money(day.grandTotal)}
+                        </strong>
+                      </div>
+                    </div>
+
+                    {isOpen && (
+                      <div className="p-5 border-t border-slate-100 bg-slate-50/50 space-y-4 text-xs animate-fade-in">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {/* Labour Breakdown */}
+                          <div className="p-3 bg-white rounded-xl border border-slate-100 space-y-2">
+                            <strong className="text-slate-900 block text-xs">Labour Breakdown</strong>
                             {day.labours.length === 0 ? (
-                              <p className="text-slate-400 italic">None recorded</p>
+                              <span className="text-slate-400 italic">No labour logged</span>
                             ) : (
-                              day.labours.map((l, idx) => (
-                                <div key={idx} className="flex justify-between py-1 border-b border-slate-50">
-                                  <span>{l.role} ({l.count} count)</span>
-                                  <span className="font-semibold">{money(l.amount)}</span>
-                                </div>
-                              ))
+                              <div className="space-y-1">
+                                {day.labours.map((l, i) => (
+                                  <div key={i} className="flex justify-between text-[11px]">
+                                    <span>{l.role} ({l.count})</span>
+                                    <strong className="font-mono">{money(l.amount)}</strong>
+                                  </div>
+                                ))}
+                              </div>
                             )}
                           </div>
 
-                          {/* Material details */}
-                          <div className="bg-white p-3 rounded-xl border border-slate-200 text-xs">
-                            <span className="font-bold text-emerald-700 block mb-1">Material Outflow ({money(day.totalMaterial)})</span>
+                          {/* Material Breakdown */}
+                          <div className="p-3 bg-white rounded-xl border border-slate-100 space-y-2">
+                            <strong className="text-slate-900 block text-xs">Materials Breakdown</strong>
                             {day.materials.length === 0 ? (
-                              <p className="text-slate-400 italic">None recorded</p>
+                              <span className="text-slate-400 italic">No materials logged</span>
                             ) : (
-                              day.materials.map((m, idx) => (
-                                <div key={idx} className="flex justify-between py-1 border-b border-slate-50">
-                                  <span>{m.name} ({m.quantity} {m.unit})</span>
-                                  <span className="font-semibold">{money(m.amount)}</span>
-                                </div>
-                              ))
+                              <div className="space-y-1">
+                                {day.materials.map((m, i) => (
+                                  <div key={i} className="flex justify-between text-[11px]">
+                                    <span>{m.name} ({m.quantity} {m.unit})</span>
+                                    <strong className="font-mono text-emerald-700">{money(m.amount)}</strong>
+                                  </div>
+                                ))}
+                              </div>
                             )}
                           </div>
                         </div>
@@ -681,90 +723,64 @@ export default function SiteExpensesReportHub({
       )}
 
       {/* ----------------------------------------------------------------------------------------- */}
-      {/* 1C. LIFETIME SITE SUMMARY REPORT VIEW */}
+      {/* 1C. LIFETIME SITE SUMMARY VIEW */}
       {/* ----------------------------------------------------------------------------------------- */}
-      {activeSubTab === 'summary' && lifetimeSummary && (
+      {activeSubTab === 'summary' && (
         <div className="space-y-6">
-          <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+          {/* Executive 4-Metric Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-2">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Contract Budget</span>
+              <strong className="text-2xl font-extrabold text-slate-900 font-mono block">{money(lifetimeSummary.kpis.budget)}</strong>
+              <small className="text-slate-400 text-[11px]">Total contractual baseline</small>
+            </div>
+            <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-2">
+              <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">Invoiced Inflow</span>
+              <strong className="text-2xl font-extrabold text-emerald-700 font-mono block">{money(lifetimeSummary.kpis.received)}</strong>
+              <small className="text-slate-400 text-[11px]">Customer payments deposited</small>
+            </div>
+            <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-2">
+              <span className="text-[11px] font-bold text-rose-700 uppercase tracking-wider block">Consolidated Outflows</span>
+              <strong className="text-2xl font-extrabold text-rose-600 font-mono block">{money(lifetimeSummary.kpis.spent)}</strong>
+              <small className="text-slate-400 text-[11px]">All project expenses to date</small>
+            </div>
+            <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-2">
+              <span className="text-[11px] font-bold text-purple-700 uppercase tracking-wider block">Operating Cash in Hand</span>
+              <strong className={`text-2xl font-extrabold font-mono block ${lifetimeSummary.kpis.cashInHand >= 0 ? 'text-purple-700' : 'text-rose-600'}`}>
+                {money(lifetimeSummary.kpis.cashInHand)}
+              </strong>
+              <small className="text-slate-400 text-[11px]">Received minus spent</small>
+            </div>
+          </div>
+
+          {/* Budget Utilization Progress Bar Card */}
+          <div className="p-6 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
-                <span className="text-[11px] font-bold text-blue-600 uppercase tracking-widest block">Lifetime Rollup</span>
-                <h3 className="text-2xl font-black text-slate-900">{lifetimeSummary.siteName}</h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  📍 {lifetimeSummary.siteLocation} · 🏗️ Stage: <span className="font-bold text-slate-800">{lifetimeSummary.currentStage}</span> · 👤 Supervisor: <span className="font-bold text-slate-800">{lifetimeSummary.supervisorName}</span>
-                </p>
+                <strong className="text-sm font-bold text-slate-900 block">Overall Budget Utilization</strong>
+                <span className="text-xs text-slate-500">Remaining Budget Cushion: <strong>{money(lifetimeSummary.kpis.budgetRemaining)}</strong></span>
               </div>
-              <div className="text-right">
-                <span className="text-xs font-bold text-slate-500 uppercase">Budget Burn Rate</span>
-                <div className="text-2xl font-black text-blue-700">{lifetimeSummary.utilizationRate}%</div>
-              </div>
+              <span className={`px-3 py-1 rounded-full text-xs font-bold border ${lifetimeSummary.kpis.usagePercent >= 85 ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
+                {lifetimeSummary.kpis.usagePercent}% Consumed
+              </span>
             </div>
-
-            {/* Lifetime Financial Performance Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
-                <span className="text-[11px] font-bold text-slate-500 uppercase">Contract Budget</span>
-                <strong className="text-xl font-bold text-slate-900 block mt-1">{money(lifetimeSummary.budget)}</strong>
-              </div>
-              <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200">
-                <span className="text-[11px] font-bold text-emerald-700 uppercase">Client Received</span>
-                <strong className="text-xl font-bold text-emerald-900 block mt-1">{money(lifetimeSummary.totalReceived)}</strong>
-              </div>
-              <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200">
-                <span className="text-[11px] font-bold text-amber-700 uppercase">Total Outflow Spent</span>
-                <strong className="text-xl font-bold text-amber-900 block mt-1">{money(lifetimeSummary.totalSpent)}</strong>
-              </div>
-              <div className="p-4 rounded-2xl bg-blue-50 border border-blue-200">
-                <span className="text-[11px] font-bold text-blue-700 uppercase">Cash in Hand</span>
-                <strong className="text-xl font-bold text-blue-900 block mt-1">{money(lifetimeSummary.cashInHand)}</strong>
-              </div>
+            <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden border border-slate-200">
+              <div
+                className={`h-3 rounded-full transition-all duration-500 ${lifetimeSummary.kpis.usagePercent >= 85 ? 'bg-rose-500' : 'bg-[#0B3470]'}`}
+                style={{ width: `${Math.min(100, lifetimeSummary.kpis.usagePercent)}%` }}
+              />
             </div>
+          </div>
 
-            {/* Category Distribution Visual Bars */}
-            <div className="space-y-4 pt-2">
-              <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Lifetime Expenditure Category Distribution</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-2">
-                  <div className="flex justify-between text-xs font-bold">
-                    <span>Labour Total</span>
-                    <span>{money(lifetimeSummary.breakdown.labour)}</span>
-                  </div>
-                  <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
-                    <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${lifetimeSummary.totalSpent ? Math.min(100, (lifetimeSummary.breakdown.labour / lifetimeSummary.totalSpent) * 100) : 0}%` }} />
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-2">
-                  <div className="flex justify-between text-xs font-bold">
-                    <span>Material Total</span>
-                    <span>{money(lifetimeSummary.breakdown.material)}</span>
-                  </div>
-                  <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
-                    <div className="bg-emerald-600 h-2 rounded-full" style={{ width: `${lifetimeSummary.totalSpent ? Math.min(100, (lifetimeSummary.breakdown.material / lifetimeSummary.totalSpent) * 100) : 0}%` }} />
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-2">
-                  <div className="flex justify-between text-xs font-bold">
-                    <span>Food & Logistics</span>
-                    <span>{money(lifetimeSummary.breakdown.foodTransport)}</span>
-                  </div>
-                  <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
-                    <div className="bg-amber-500 h-2 rounded-full" style={{ width: `${lifetimeSummary.totalSpent ? Math.min(100, (lifetimeSummary.breakdown.foodTransport / lifetimeSummary.totalSpent) * 100) : 0}%` }} />
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-2">
-                  <div className="flex justify-between text-xs font-bold">
-                    <span>Bills, Vouchers & Incentives</span>
-                    <span>{money(lifetimeSummary.breakdown.bills + lifetimeSummary.breakdown.incentives)}</span>
-                  </div>
-                  <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
-                    <div className="bg-purple-600 h-2 rounded-full" style={{ width: `${lifetimeSummary.totalSpent ? Math.min(100, ((lifetimeSummary.breakdown.bills + lifetimeSummary.breakdown.incentives) / lifetimeSummary.totalSpent) * 100) : 0}%` }} />
-                  </div>
-                </div>
-              </div>
-            </div>
+          {/* Action Toolbar */}
+          <div className="flex items-center justify-end">
+            <button
+              type="button"
+              onClick={handleExportSummaryCSV}
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-[#0B3470] text-white hover:bg-[#082654] transition-colors shadow-2xs cursor-pointer"
+            >
+              📥 Export Lifetime Summary Statement
+            </button>
           </div>
         </div>
       )}

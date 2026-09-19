@@ -80,13 +80,7 @@ export default function DomainInventoryReportsHub({
         <tbody>
           ${filteredRecords.map((r) => `
             <tr>
-              ${headers.map((h) => {
-                const val = r[h]
-                if (typeof val === 'number' && (h.toLowerCase().includes('amount') || h.toLowerCase().includes('payable') || h.toLowerCase().includes('payout') || h.toLowerCase().includes('valuation') || h.toLowerCase().includes('rate'))) {
-                  return `<td><strong>${money(val)}</strong></td>`
-                }
-                return `<td>${val ?? 'N/A'}</td>`
-              }).join('')}
+              ${headers.map((h) => `<td>${r[h] ?? ''}</td>`).join('')}
             </tr>
           `).join('')}
         </tbody>
@@ -95,166 +89,103 @@ export default function DomainInventoryReportsHub({
     printReport(reportData.title, content)
   }
 
+  const domainTabs = [
+    { id: 'contractors', label: 'Contractors', icon: '👷' },
+    { id: 'materials', label: 'Materials & Stock', icon: '🧱' },
+    { id: 'tools', label: 'Tools & Equipment', icon: '🔧' },
+    { id: 'workers', label: 'Workforce Muster', icon: '👥' },
+    { id: 'vehicles', label: 'Fleet & Vehicles', icon: '🚛' },
+    { id: 'incentives', label: 'Supervisor Incentives', icon: '🏆' },
+  ]
+
   return (
-    <div className="space-y-6">
-      {/* Top Header & Export Controls */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div className="space-y-6 animate-fade-in">
+      {/* Top Header & Domain Switcher Card */}
+      <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <span className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">Module 6 · Domain Registers</span>
-            <h2 className="text-xl font-extrabold text-slate-900">{reportData.title}</h2>
+            <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
+              Module 6 · Operations & Assets
+            </span>
+            <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
+              Domain Inventory, Workforce & Fleet Reports
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Auditing logs across trade contractors, material consumption, heavy equipment logs, and workforce muster rolls.
+            </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
               onClick={handleExportCSV}
-              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
             >
               📥 Export CSV
             </button>
             <button
               type="button"
               onClick={handlePrintPDF}
-              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#0B3470] hover:bg-blue-900 text-white transition-colors shadow-xs"
+              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors shadow-2xs cursor-pointer"
             >
               🖨️ Print Domain PDF
             </button>
           </div>
         </div>
 
-        {/* Domain Navigation Pills */}
-        <div className="flex gap-2 overflow-x-auto pb-1 pt-2 border-t border-slate-100">
-          <button
-            type="button"
-            onClick={() => { setActiveDomain('contractors'); setSearchQuery('') }}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-              activeDomain === 'contractors' ? 'bg-[#0B3470] text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            👷 Contractor Payouts
-          </button>
-          <button
-            type="button"
-            onClick={() => { setActiveDomain('materials'); setSearchQuery('') }}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-              activeDomain === 'materials' ? 'bg-[#0B3470] text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            🧱 Material Stock & Valuation
-          </button>
-          <button
-            type="button"
-            onClick={() => { setActiveDomain('tools'); setSearchQuery('') }}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-              activeDomain === 'tools' ? 'bg-[#0B3470] text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            🔧 Tools & Machinery Register
-          </button>
-          <button
-            type="button"
-            onClick={() => { setActiveDomain('workers'); setSearchQuery('') }}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-              activeDomain === 'workers' ? 'bg-[#0B3470] text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            📋 Worker Muster Roll & Wages
-          </button>
-          <button
-            type="button"
-            onClick={() => { setActiveDomain('vehicles'); setSearchQuery('') }}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-              activeDomain === 'vehicles' ? 'bg-[#0B3470] text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            🚛 Fleet & Vehicles Inventory
-          </button>
-          <button
-            type="button"
-            onClick={() => { setActiveDomain('incentives'); setSearchQuery('') }}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-              activeDomain === 'incentives' ? 'bg-[#0B3470] text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            🏆 Supervisor Incentives
-          </button>
+        {/* Domain Navigation Tabs */}
+        <div className="flex gap-1.5 overflow-x-auto pt-3 border-t border-slate-100 pb-1">
+          {domainTabs.map((tab) => {
+            const isActive = activeDomain === tab.id
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => {
+                  setActiveDomain(tab.id)
+                  setSearchQuery('')
+                }}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 ${
+                  isActive
+                    ? 'bg-[#0B3470] text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
+                }`}
+              >
+                <span>{tab.icon}</span>
+                {tab.label}
+              </button>
+            )
+          })}
         </div>
+      </div>
 
-        {/* Search Bar */}
-        <div>
+      {/* Filter Toolbar & Count */}
+      <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="relative flex-1 max-w-sm">
+          <span className="absolute inset-y-0 left-3 flex items-center text-slate-400 text-xs">⌕</span>
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={`Filter ${reportData.title}...`}
-            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 placeholder:text-slate-400 outline-none focus:border-blue-600 focus:bg-white transition-all"
+            placeholder={`Search ${reportData.title.toLowerCase()}...`}
+            className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs"
           />
         </div>
+
+        <span className="text-xs text-slate-500 font-medium">
+          Showing <strong>{filteredRecords.length}</strong> {reportData.title} records
+        </span>
       </div>
 
-      {/* Summary KPI Highlights */}
-      {activeDomain === 'contractors' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-1">
-            <span className="text-[11px] font-bold text-slate-500 uppercase">Subcontractor Entries</span>
-            <strong className="text-2xl font-black text-slate-900 block">{filteredRecords.length}</strong>
-          </div>
-          <div className="p-4 rounded-2xl bg-[#0B3470] text-white border border-blue-900 shadow-xs space-y-1">
-            <span className="text-[11px] font-bold text-blue-200 uppercase">Total Contractor Expenditure</span>
-            <strong className="text-2xl font-black text-white block">{money(reportData.totalPayout)}</strong>
-          </div>
-        </div>
-      )}
-
-      {activeDomain === 'materials' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-1">
-            <span className="text-[11px] font-bold text-slate-500 uppercase">Catalog Items</span>
-            <strong className="text-2xl font-black text-slate-900 block">{filteredRecords.length}</strong>
-          </div>
-          <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 shadow-xs space-y-1">
-            <span className="text-[11px] font-bold text-emerald-700 uppercase">Total Material Stock Valuation</span>
-            <strong className="text-2xl font-black text-emerald-900 block">{money(reportData.totalValuation)}</strong>
-          </div>
-        </div>
-      )}
-
-      {activeDomain === 'workers' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-1">
-            <span className="text-[11px] font-bold text-slate-500 uppercase">Muster Roll Headcount</span>
-            <strong className="text-2xl font-black text-slate-900 block">{filteredRecords.length}</strong>
-          </div>
-          <div className="p-4 rounded-2xl bg-blue-50 border border-blue-200 shadow-xs space-y-1">
-            <span className="text-[11px] font-bold text-blue-700 uppercase">Total Wage Liability</span>
-            <strong className="text-2xl font-black text-blue-900 block">{money(reportData.totalWageLiability)}</strong>
-          </div>
-        </div>
-      )}
-
-      {activeDomain === 'incentives' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-1">
-            <span className="text-[11px] font-bold text-slate-500 uppercase">Milestone Incentive Claims</span>
-            <strong className="text-2xl font-black text-slate-900 block">{filteredRecords.length}</strong>
-          </div>
-          <div className="p-4 rounded-2xl bg-purple-50 border border-purple-200 shadow-xs space-y-1">
-            <span className="text-[11px] font-bold text-purple-700 uppercase">Net Incentive Outflow</span>
-            <strong className="text-2xl font-black text-purple-900 block">{money(reportData.totalIncentives)}</strong>
-          </div>
-        </div>
-      )}
-
-      {/* Dynamic Data Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+      {/* Standard Dynamic Table */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
+          <table className="w-full text-left text-xs text-slate-700">
+            <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
               <tr>
                 {filteredRecords.length > 0 &&
                   Object.keys(filteredRecords[0]).map((h) => (
-                    <th key={h} className="p-3 whitespace-nowrap">
-                      {h.replace(/([A-Z])/g, ' $1').toUpperCase()}
+                    <th key={h} className="p-3.5 whitespace-nowrap capitalize">
+                      {h.replace(/([A-Z])/g, ' $1')}
                     </th>
                   ))}
               </tr>
@@ -262,27 +193,24 @@ export default function DomainInventoryReportsHub({
             <tbody className="divide-y divide-slate-100">
               {filteredRecords.length === 0 ? (
                 <tr>
-                  <td colSpan="10" className="p-8 text-center text-slate-400 italic">
-                    No records found for {reportData.title}.
+                  <td colSpan={10} className="p-12 text-center text-slate-400 text-xs">
+                    No records found in {reportData.title}.
                   </td>
                 </tr>
               ) : (
                 filteredRecords.map((r, rowIdx) => (
-                  <tr key={rowIdx} className="hover:bg-slate-50/70 transition-colors">
-                    {Object.entries(r).map(([k, v], cellIdx) => {
-                      if (typeof v === 'number' && (k.toLowerCase().includes('amount') || k.toLowerCase().includes('payable') || k.toLowerCase().includes('payout') || k.toLowerCase().includes('valuation') || k.toLowerCase().includes('rate'))) {
-                        return (
-                          <td key={cellIdx} className="p-3 font-bold text-slate-900 whitespace-nowrap">
-                            {money(v)}
-                          </td>
-                        )
-                      }
-                      return (
-                        <td key={cellIdx} className="p-3 text-slate-700 whitespace-nowrap">
-                          {v ?? '—'}
-                        </td>
-                      )
-                    })}
+                  <tr key={rowIdx} className="hover:bg-slate-50/80 transition-colors">
+                    {Object.entries(r).map(([key, val], colIdx) => (
+                      <td key={colIdx} className="p-3.5 whitespace-nowrap">
+                        {typeof val === 'number' && key.toLowerCase().includes('amount') ? (
+                          <strong className="font-mono font-bold text-slate-900">{money(val)}</strong>
+                        ) : typeof val === 'number' && key.toLowerCase().includes('rate') ? (
+                          <span className="font-mono text-slate-700">{money(val)}</span>
+                        ) : (
+                          <span className="text-slate-800">{val !== null && val !== undefined && val !== '' ? String(val) : '-'}</span>
+                        )}
+                      </td>
+                    ))}
                   </tr>
                 ))
               )}

@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react'
 import { calculateSiteStatusReport } from '../../../services/reportService'
 import { exportToCSV, printReport } from '../../../services/exportService'
+import StatusBadge from '../../../components/common/StatusBadge'
 
 export default function SiteStatusReportHub({ sites = [] }) {
   const [statusFilter, setStatusFilter] = useState('all')
@@ -25,6 +26,23 @@ export default function SiteStatusReportHub({ sites = [] }) {
       return matchesStatus && matchesSearch
     })
   }, [reportData, statusFilter, searchQuery])
+
+  // Count timeline health
+  const healthCounts = useMemo(() => {
+    let onTrack = 0
+    let delayed = 0
+    let approaching = 0
+    let completed = 0
+
+    reportData.siteList.forEach((s) => {
+      if (s.status.toLowerCase() === 'completed') completed += 1
+      else if (s.delayStatus === 'delayed') delayed += 1
+      else if (s.delayStatus === 'approaching_deadline') approaching += 1
+      else onTrack += 1
+    })
+
+    return { onTrack, delayed, approaching, completed }
+  }, [reportData])
 
   const handleExportCSV = () => {
     const rows = filteredSites.map((s) => [
@@ -85,169 +103,167 @@ export default function SiteStatusReportHub({ sites = [] }) {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Top Header & Export Controls */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div className="space-y-6 animate-fade-in">
+      {/* Top Header & Search Controls */}
+      <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <span className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">Module 3 · Execution Tracking</span>
-            <h2 className="text-xl font-extrabold text-slate-900">Site Status & Timeline Report</h2>
+            <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
+              Module 3 · Timeline & Milestones
+            </span>
+            <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
+              Site Status, Execution & Progress Audit
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Live schedule tracking, percentage completion meters, deadline forecasts, and delay alerts.
+            </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
               onClick={handleExportCSV}
-              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
             >
               📥 Export CSV
             </button>
             <button
               type="button"
               onClick={handlePrintPDF}
-              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#0B3470] hover:bg-blue-900 text-white transition-colors shadow-xs"
+              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors shadow-2xs cursor-pointer"
             >
-              🖨️ Print Status PDF
+              🖨️ Print PDF
             </button>
           </div>
         </div>
 
-        {/* Status Filter Cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 pt-2 border-t border-slate-100">
-          <button
-            type="button"
-            onClick={() => setStatusFilter('all')}
-            className={`p-3 rounded-xl border text-left transition-all ${
-              statusFilter === 'all' ? 'bg-[#0B3470] text-white border-[#0B3470]' : 'bg-slate-50 border-slate-200 text-slate-700'
-            }`}
-          >
-            <span className="text-[10px] font-bold uppercase opacity-80 block">All Sites</span>
-            <strong className="text-xl font-black">{reportData.totalSites}</strong>
-          </button>
-          <button
-            type="button"
-            onClick={() => setStatusFilter('live')}
-            className={`p-3 rounded-xl border text-left transition-all ${
-              statusFilter === 'live' ? 'bg-emerald-700 text-white border-emerald-700' : 'bg-emerald-50 border-emerald-200 text-emerald-800'
-            }`}
-          >
-            <span className="text-[10px] font-bold uppercase opacity-80 block">Live Sites</span>
-            <strong className="text-xl font-black">{reportData.statusCounts.live}</strong>
-          </button>
-          <button
-            type="button"
-            onClick={() => setStatusFilter('in_progress')}
-            className={`p-3 rounded-xl border text-left transition-all ${
-              statusFilter === 'in_progress' ? 'bg-blue-700 text-white border-blue-700' : 'bg-blue-50 border-blue-200 text-blue-800'
-            }`}
-          >
-            <span className="text-[10px] font-bold uppercase opacity-80 block">In Progress</span>
-            <strong className="text-xl font-black">{reportData.statusCounts.in_progress}</strong>
-          </button>
-          <button
-            type="button"
-            onClick={() => setStatusFilter('planning')}
-            className={`p-3 rounded-xl border text-left transition-all ${
-              statusFilter === 'planning' ? 'bg-amber-700 text-white border-amber-700' : 'bg-amber-50 border-amber-200 text-amber-800'
-            }`}
-          >
-            <span className="text-[10px] font-bold uppercase opacity-80 block">Planning</span>
-            <strong className="text-xl font-black">{reportData.statusCounts.planning}</strong>
-          </button>
-          <button
-            type="button"
-            onClick={() => setStatusFilter('completed')}
-            className={`p-3 rounded-xl border text-left transition-all ${
-              statusFilter === 'completed' ? 'bg-purple-700 text-white border-purple-700' : 'bg-purple-50 border-purple-200 text-purple-800'
-            }`}
-          >
-            <span className="text-[10px] font-bold uppercase opacity-80 block">Completed</span>
-            <strong className="text-xl font-black">{reportData.statusCounts.completed}</strong>
-          </button>
-          <button
-            type="button"
-            onClick={() => setStatusFilter('on_hold')}
-            className={`p-3 rounded-xl border text-left transition-all ${
-              statusFilter === 'on_hold' ? 'bg-rose-700 text-white border-rose-700' : 'bg-rose-50 border-rose-200 text-rose-800'
-            }`}
-          >
-            <span className="text-[10px] font-bold uppercase opacity-80 block">On Hold</span>
-            <strong className="text-xl font-black">{reportData.statusCounts.on_hold}</strong>
-          </button>
-        </div>
+        {/* Search & Filter Toolbar */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-3 border-t border-slate-100">
+          <div className="relative">
+            <span className="absolute inset-y-0 left-3 flex items-center text-slate-400 text-xs">⌕</span>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search site, manager, stage, or location..."
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-2 text-xs text-slate-800 placeholder:text-slate-400 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs"
+            />
+          </div>
 
-        {/* Search Bar */}
-        <div>
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by site name, manager, location, or stage..."
-            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 placeholder:text-slate-400 outline-none focus:border-blue-600 focus:bg-white transition-all"
-          />
+          <div>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs cursor-pointer"
+            >
+              <option value="all">All Project Statuses</option>
+              <option value="live">Live / In Progress</option>
+              <option value="planning">Planning / Draft</option>
+              <option value="completed">Completed</option>
+              <option value="on_hold">On Hold</option>
+            </select>
+          </div>
         </div>
       </div>
 
-      {/* Sites Matrix Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-900">Project Milestone & Delay Analysis</h3>
-          <span className="text-xs text-slate-500">{filteredSites.length} sites displayed</span>
+      {/* Timeline Health KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Total Sites</span>
+          <strong className="text-2xl font-extrabold text-slate-900 block font-mono">{reportData.totalSites}</strong>
+          <small className="text-slate-400 text-[11px]">Across organization</small>
         </div>
+        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+          <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">On Track</span>
+          <strong className="text-2xl font-extrabold text-emerald-700 block font-mono">{healthCounts.onTrack} Sites</strong>
+          <small className="text-slate-400 text-[11px]">Progressing on schedule</small>
+        </div>
+        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+          <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wider block">Approaching Deadline</span>
+          <strong className="text-2xl font-extrabold text-amber-700 block font-mono">{healthCounts.approaching} Sites</strong>
+          <small className="text-slate-400 text-[11px]">Within 14 days of end date</small>
+        </div>
+        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1 border-l-4 border-l-rose-500">
+          <span className="text-[11px] font-bold text-rose-700 uppercase tracking-wider block">Delayed / Overdue</span>
+          <strong className="text-2xl font-extrabold text-rose-600 block font-mono">{healthCounts.delayed} Sites</strong>
+          <small className="text-slate-400 text-[11px]">Immediate intervention required</small>
+        </div>
+      </div>
+
+      {/* Standard Desktop Data Table */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
+          <table className="w-full text-left text-xs text-slate-700">
+            <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
               <tr>
-                <th className="p-3">Site / Location</th>
-                <th className="p-3">Manager / Supervisor</th>
-                <th className="p-3">Stage</th>
-                <th className="p-3">Progress</th>
-                <th className="p-3">Planned Schedule</th>
-                <th className="p-3">Actual Schedule</th>
-                <th className="p-3 text-center">Timeline Health</th>
+                <th className="p-3.5">Site / Location</th>
+                <th className="p-3.5">Supervisor / Manager</th>
+                <th className="p-3.5">Current Stage</th>
+                <th className="p-3.5 text-center">Status</th>
+                <th className="p-3.5 text-center min-w-[140px]">Progress</th>
+                <th className="p-3.5">Contract Timeline</th>
+                <th className="p-3.5 text-center">Schedule Health</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredSites.length === 0 ? (
-                <tr><td colSpan="7" className="p-6 text-center text-slate-400 italic">No sites match the selected status or query.</td></tr>
+                <tr>
+                  <td colSpan={7} className="p-12 text-center text-slate-400 text-xs">
+                    No sites found matching your filter criteria.
+                  </td>
+                </tr>
               ) : (
-                filteredSites.map((s) => (
-                  <tr key={s.siteId} className="hover:bg-slate-50/70 transition-colors">
-                    <td className="p-3">
-                      <strong className="text-slate-900 block">{s.siteName}</strong>
-                      <span className="text-[11px] text-slate-400">{s.location}</span>
+                filteredSites.map((s, idx) => (
+                  <tr key={s.siteId || idx} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="p-3.5">
+                      <strong className="text-slate-900 block text-xs font-bold">{s.siteName}</strong>
+                      <span className="text-[11px] text-slate-400 truncate block">{s.location}</span>
                     </td>
-                    <td className="p-3 font-medium text-slate-700">{s.manager}</td>
-                    <td className="p-3 font-semibold text-[#0B3470]">{s.stage}</td>
-                    <td className="p-3 min-w-[140px]">
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden">
-                          <div className="bg-linear-to-r from-blue-600 to-indigo-600 h-2 rounded-full" style={{ width: `${s.progress}%` }} />
+                    <td className="p-3.5 text-slate-700 font-medium">{s.manager}</td>
+                    <td className="p-3.5 font-semibold text-blue-700">{s.stage}</td>
+                    <td className="p-3.5 text-center whitespace-nowrap">
+                      <StatusBadge status={s.status} />
+                    </td>
+                    <td className="p-3.5 text-center">
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[11px] font-bold text-slate-700">
+                          <span>Progress</span>
+                          <span>{s.progress}%</span>
                         </div>
-                        <span className="font-bold text-slate-700 min-w-8 text-right">{s.progress}%</span>
+                        <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden border border-slate-200">
+                          <div
+                            className={`h-1.5 rounded-full ${
+                              s.progress >= 100
+                                ? 'bg-emerald-500'
+                                : s.delayStatus === 'delayed'
+                                ? 'bg-rose-500'
+                                : 'bg-[#0B3470]'
+                            }`}
+                            style={{ width: `${Math.min(100, s.progress)}%` }}
+                          />
+                        </div>
                       </div>
                     </td>
-                    <td className="p-3 text-slate-600">
-                      <div><span className="text-[10px] text-slate-400">Start:</span> {s.plannedStart}</div>
-                      <div><span className="text-[10px] text-slate-400">Target:</span> {s.plannedEnd}</div>
+                    <td className="p-3.5 text-slate-600 whitespace-nowrap text-[11px]">
+                      <div>{s.plannedStart}</div>
+                      <div className="text-slate-400">→ {s.plannedEnd}</div>
                     </td>
-                    <td className="p-3 text-slate-600">
-                      <div><span className="text-[10px] text-slate-400">Started:</span> {s.actualStart}</div>
-                      <div><span className="text-[10px] text-slate-400">End:</span> {s.actualEnd}</div>
-                    </td>
-                    <td className="p-3 text-center">
-                      {s.delayStatus === 'delayed' ? (
-                        <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
-                          ⚠️ Delayed ({s.delayDays}d)
-                        </span>
-                      ) : s.delayStatus === 'approaching_deadline' ? (
-                        <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
-                          ⏳ Due in {s.delayDays}d
-                        </span>
-                      ) : (
-                        <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                          ✓ On Track
-                        </span>
-                      )}
+                    <td className="p-3.5 text-center whitespace-nowrap">
+                      <span
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                          s.delayStatus === 'delayed'
+                            ? 'bg-rose-50 text-rose-700 border-rose-200'
+                            : s.delayStatus === 'approaching_deadline'
+                            ? 'bg-amber-50 text-amber-700 border-amber-200'
+                            : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        }`}
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                        {s.delayStatus === 'delayed'
+                          ? `Delayed (${s.delayDays}d)`
+                          : s.delayStatus === 'approaching_deadline'
+                          ? `Due in ${s.delayDays}d`
+                          : 'On Track'}
+                      </span>
                     </td>
                   </tr>
                 ))
