@@ -237,7 +237,7 @@ export default function VehicleFleetHub({ orgId, sites = [], currentUser, onNoti
               Fleet Logistics
             </span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Vehicle Fleet & Fuel Telemetry</h1>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Vehicle Fleet</h1>
           <p className="text-sm text-slate-500 mt-1">
             Manage heavy vehicles, tippers, transit mixers, licensed drivers, and diesel consumption trip logs.
           </p>

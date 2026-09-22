@@ -149,7 +149,7 @@ export default function SiteSupervisorMap({ orgId, sites = [], currentUser, onNo
               Field Deployments
             </span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Site Supervisor Assignments</h1>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Site-Supervisor Map</h1>
           <p className="text-sm text-slate-500 mt-1">
             Map qualified field supervisors to specific construction sites and milestones for daily entry delegation.
           </p>

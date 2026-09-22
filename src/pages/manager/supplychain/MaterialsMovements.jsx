@@ -14,31 +14,58 @@ import {
   X,
   ShieldCheck,
   Boxes,
+  ArrowRightLeft,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Warehouse,
+  Trash2,
+  AlertCircle,
 } from 'lucide-react'
 import {
-  fetchMaterialMovements,
-  createMaterialMovement,
-  confirmMaterialMovementReceipt,
+  fetchMaterialTransactions,
+  subscribeMaterialTransactions,
   fetchMaterials,
+  fetchMaterialsAvailability,
+  fetchSiteMaterialPool,
+  dispatchMaterialsToSite,
+  transferMaterialSiteToSite,
+  returnMaterialSiteToCompany,
+  confirmMaterialMovementReceipt,
 } from '../../../services/materialService.js'
 
 export default function MaterialsMovements({ orgId, sites = [], currentUser, onNotify }) {
   const [movements, setMovements] = useState([])
   const [materials, setMaterials] = useState([])
+  const [warehouseStock, setWarehouseStock] = useState([])
+  const [sitePools, setSitePools] = useState([])
   const [loading, setLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [statusFilter, setStatusFilter] = useState('ALL') // 'ALL' | 'In Transit' | 'Received'
+  const [typeFilter, setTypeFilter] = useState('ALL') // 'ALL' | 'CompanyToSite' | 'SiteToSite' | 'SiteToCompany'
 
-  // Gate Pass Form Modal
-  const [showModal, setShowModal] = useState(false)
-  const [formFromSite, setFormFromSite] = useState('Central Yard / Main Godown')
-  const [formToSite, setFormToSite] = useState('')
-  const [formMaterialId, setFormMaterialId] = useState('')
-  const [formQty, setFormQty] = useState('')
-  const [formTransporter, setFormTransporter] = useState('')
-  const [formVehicle, setFormVehicle] = useState('')
-  const [formPhone, setFormPhone] = useState('')
-  const [submitting, setSubmitting] = useState(false)
+  // Dispatch Engine Modal State
+  const [showDispatchModal, setShowDispatchModal] = useState(false)
+  // Mode: 0 = Company to Site | 1 = Site to Site | 2 = Site to Company
+  const [dispatchMode, setDispatchMode] = useState(0)
+
+  // Mode 0 & Mode 1 / 2 Form Fields
+  const [selectedSiteId, setSelectedSiteId] = useState('')
+  const [fromSiteId, setFromSiteId] = useState('')
+  const [toSiteId, setToSiteId] = useState('')
+  const [challanNumber, setChallanNumber] = useState('')
+  const [vehicleNumber, setVehicleNumber] = useState('')
+  const [transporterName, setTransporterName] = useState('')
+  const [driverPhone, setDriverPhone] = useState('')
+  const [supervisorName, setSupervisorName] = useState('')
+
+  // Multi-Item Queue for Mode 0
+  const [queueItems, setQueueItems] = useState([])
+  const [queueMatId, setQueueMatId] = useState('')
+  const [queueQty, setQueueQty] = useState('')
+  const [submittingDispatch, setSubmittingDispatch] = useState(false)
+
+  // Single Item for Mode 1 & Mode 2
+  const [singleMatName, setSingleMatName] = useState('')
+  const [singleQty, setSingleQty] = useState('')
 
   // Gate Pass Preview / Print Modal
   const [printPassDoc, setPrintPassDoc] = useState(null)
@@ -47,15 +74,19 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
     if (!orgId) return
     setLoading(true)
     try {
-      const [moves, mats] = await Promise.all([
-        fetchMaterialMovements(orgId),
+      const [moves, mats, avail, pools] = await Promise.all([
+        fetchMaterialTransactions(orgId),
         fetchMaterials(orgId),
+        fetchMaterialsAvailability(orgId),
+        fetchSiteMaterialPool(orgId),
       ])
       setMovements(moves || [])
       setMaterials(mats || [])
+      setWarehouseStock(avail || [])
+      setSitePools(pools || [])
     } catch (err) {
       console.error(err)
-      onNotify?.('Failed to load material dispatches', 'error')
+      onNotify?.('Failed to load material movements', 'error')
     } finally {
       setLoading(false)
     }
@@ -63,47 +94,227 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
 
   useEffect(() => {
     loadData()
+
+    if (!orgId) return
+    const unsub = subscribeMaterialTransactions(orgId, (data) => {
+      if (data) setMovements(data)
+    })
+    return () => {
+      if (typeof unsub === 'function') unsub()
+    }
   }, [orgId])
 
-  const handleCreateMovement = async (e) => {
-    e.preventDefault()
-    if (!orgId) return
-    if (!formToSite || !formMaterialId || !formQty) {
-      onNotify?.('Please complete required dispatch parameters', 'error')
+  // Central warehouse availability lookup map
+  const warehouseAvailMap = useMemo(() => {
+    const map = {}
+    warehouseStock.forEach((w) => {
+      const name = (w.materialName || '').toLowerCase()
+      map[name] = Number(w.availableCount) || 0
+    })
+    return map
+  }, [warehouseStock])
+
+  // Currently selected item stock in warehouse (for Mode 0 queue addition)
+  const currentSelectedMatAvailable = useMemo(() => {
+    if (!queueMatId) return 0
+    const mat = materials.find((m) => (m.id || m.materialId) === queueMatId)
+    if (!mat) return 0
+    const name = (mat.materialName || mat.name || '').toLowerCase()
+    return warehouseAvailMap[name] ?? Number(mat.currentTotalStock ?? 0)
+  }, [queueMatId, materials, warehouseAvailMap])
+
+  // Site pool stock lookup (for Mode 1 & 2)
+  const fromSiteAvailableStock = useMemo(() => {
+    if (!fromSiteId || !singleMatName) return 0
+    const pool = sitePools.find(
+      (p) =>
+        (p.siteId === fromSiteId || p.id?.startsWith(fromSiteId.toLowerCase())) &&
+        (p.materialName || '').toLowerCase() === singleMatName.toLowerCase()
+    )
+    return Number(pool?.currentBalance) || 0
+  }, [fromSiteId, singleMatName, sitePools])
+
+  const handleOpenDispatchModal = () => {
+    if (sites.length > 0) {
+      setSelectedSiteId(sites[0].id)
+      setFromSiteId(sites[0].id)
+      if (sites.length > 1) setToSiteId(sites[1].id)
+    }
+    if (materials.length > 0) {
+      setQueueMatId(materials[0].id || materials[0].materialId)
+      setSingleMatName(materials[0].materialName || materials[0].name)
+    }
+    setQueueItems([])
+    setQueueQty('')
+    setSingleQty('')
+    setChallanNumber(`DC-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`)
+    setVehicleNumber('')
+    setTransporterName('')
+    setDriverPhone('')
+    setShowDispatchModal(true)
+  }
+
+  // Add Item to Mode 0 Queue
+  const handleAddToQueue = () => {
+    if (!queueMatId || !queueQty) return
+    const mat = materials.find((m) => (m.id || m.materialId) === queueMatId)
+    if (!mat) return
+
+    const qty = Number(queueQty)
+    if (qty <= 0) {
+      onNotify?.('Quantity must be greater than 0', 'error')
       return
     }
 
-    setSubmitting(true)
-    try {
-      const mat = materials.find((m) => (m.id || m.materialId) === formMaterialId)
-      await createMaterialMovement(
-        orgId,
-        {
-          fromSite: formFromSite,
-          toSite: formToSite,
-          materialId: formMaterialId,
-          materialName: mat?.materialName || mat?.name || 'Construction Material',
-          quantity: Number(formQty) || 1,
-          unit: mat?.unitName || mat?.unit || 'Units',
-          transporterName: formTransporter,
-          vehicleNumber: formVehicle,
-          driverPhone: formPhone,
-        },
-        currentUser
+    if (qty > currentSelectedMatAvailable) {
+      onNotify?.(
+        `Cannot dispatch ${qty} units. Central Warehouse only has ${currentSelectedMatAvailable} available.`,
+        'error'
       )
+      return
+    }
 
-      onNotify?.('Inter-site Gate Pass issued and material dispatched!', 'success')
-      setShowModal(false)
-      setFormQty('')
-      setFormTransporter('')
-      setFormVehicle('')
-      setFormPhone('')
+    // Check if already in queue
+    const existingIndex = queueItems.findIndex((item) => item.materialId === (mat.id || mat.materialId))
+    if (existingIndex >= 0) {
+      const updated = [...queueItems]
+      updated[existingIndex].quantity += qty
+      setQueueItems(updated)
+    } else {
+      setQueueItems([
+        ...queueItems,
+        {
+          materialId: mat.id || mat.materialId,
+          materialName: mat.materialName || mat.name,
+          quantity: qty,
+          unit: mat.materialUnit || mat.unitName || mat.unit || 'Units',
+          unitPrice: Number(mat.unitPrice || mat.standardRate || 0),
+        },
+      ])
+    }
+
+    setQueueQty('')
+  }
+
+  const handleRemoveFromQueue = (index) => {
+    setQueueItems(queueItems.filter((_, i) => i !== index))
+  }
+
+  // Submit Dispatch Engine Actions
+  const handleExecuteDispatch = async (e) => {
+    e.preventDefault()
+    if (!orgId) return
+
+    setSubmittingDispatch(true)
+    try {
+      const managerName = currentUser?.name || currentUser?.fullName || 'Operations Manager'
+
+      if (dispatchMode === 0) {
+        // Mode 0: Central Warehouse -> Site
+        if (queueItems.length === 0) {
+          onNotify?.('Add at least one material to the dispatch queue', 'error')
+          setSubmittingDispatch(false)
+          return
+        }
+
+        const targetSite = sites.find((s) => s.id === selectedSiteId)
+        await dispatchMaterialsToSite(orgId, {
+          toSiteId: selectedSiteId,
+          toSiteName: targetSite?.siteName || targetSite?.projectName || selectedSiteId,
+          projectName: targetSite?.projectName || targetSite?.siteName || '',
+          managerName,
+          supervisorName: supervisorName || 'Site Supervisor',
+          vehicleNumber,
+          transporterName,
+          driverPhone,
+          challanNumber,
+          items: queueItems,
+        })
+
+        onNotify?.('Material dispatch successfully executed and stock updated!', 'success')
+      } else if (dispatchMode === 1) {
+        // Mode 1: Site -> Site Inter-Site Transfer
+        if (!fromSiteId || !toSiteId) {
+          onNotify?.('Select both source and target sites', 'error')
+          setSubmittingDispatch(false)
+          return
+        }
+        if (fromSiteId === toSiteId) {
+          onNotify?.('Source and Destination sites must be different', 'error')
+          setSubmittingDispatch(false)
+          return
+        }
+
+        const qty = Number(singleQty)
+        if (qty <= 0) {
+          onNotify?.('Quantity must be greater than 0', 'error')
+          setSubmittingDispatch(false)
+          return
+        }
+        if (qty > fromSiteAvailableStock) {
+          onNotify?.(`Source site only has ${fromSiteAvailableStock} units available.`, 'error')
+          setSubmittingDispatch(false)
+          return
+        }
+
+        const fromSite = sites.find((s) => s.id === fromSiteId)
+        const toSite = sites.find((s) => s.id === toSiteId)
+        const mat = materials.find((m) => (m.materialName || m.name) === singleMatName)
+
+        await transferMaterialSiteToSite(orgId, {
+          fromSiteId,
+          fromSiteName: fromSite?.siteName || fromSite?.projectName || fromSiteId,
+          toSiteId,
+          toSiteName: toSite?.siteName || toSite?.projectName || toSiteId,
+          materialName: singleMatName,
+          quantity: qty,
+          unit: mat?.materialUnit || mat?.unitName || mat?.unit || 'Bags',
+          unitPrice: Number(mat?.unitPrice || mat?.standardRate || 0),
+          managerName,
+          vehicleNumber,
+          challanNumber,
+        })
+
+        onNotify?.('Inter-site material transfer completed successfully!', 'success')
+      } else if (dispatchMode === 2) {
+        // Mode 2: Site -> Company Warehouse Return
+        const qty = Number(singleQty)
+        if (qty <= 0) {
+          onNotify?.('Quantity must be greater than 0', 'error')
+          setSubmittingDispatch(false)
+          return
+        }
+        if (qty > fromSiteAvailableStock) {
+          onNotify?.(`Site only has ${fromSiteAvailableStock} units available to return.`, 'error')
+          setSubmittingDispatch(false)
+          return
+        }
+
+        const fromSite = sites.find((s) => s.id === fromSiteId)
+        const mat = materials.find((m) => (m.materialName || m.name) === singleMatName)
+
+        await returnMaterialSiteToCompany(orgId, {
+          fromSiteId,
+          fromSiteName: fromSite?.siteName || fromSite?.projectName || fromSiteId,
+          materialName: singleMatName,
+          quantity: qty,
+          unit: mat?.materialUnit || mat?.unitName || mat?.unit || 'Bags',
+          unitPrice: Number(mat?.unitPrice || mat?.standardRate || 0),
+          managerName,
+          vehicleNumber,
+          challanNumber,
+        })
+
+        onNotify?.('Surplus material returned to Central Warehouse stock!', 'success')
+      }
+
+      setShowDispatchModal(false)
       await loadData()
     } catch (err) {
       console.error(err)
-      onNotify?.(err.message || 'Failed to issue gate pass', 'error')
+      onNotify?.(err.message || 'Dispatch execution failed', 'error')
     } finally {
-      setSubmitting(false)
+      setSubmittingDispatch(false)
     }
   }
 
@@ -111,7 +322,7 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
     if (!orgId || !movementId) return
     try {
       await confirmMaterialMovementReceipt(orgId, movementId, currentUser)
-      onNotify?.('Material shipment marked as safely received at destination site', 'success')
+      onNotify?.('Delivery challan acknowledged and marked as received!', 'success')
       await loadData()
     } catch (err) {
       console.error(err)
@@ -119,16 +330,24 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
     }
   }
 
+  // Filtered transactions
   const filteredMovements = useMemo(() => {
     return movements.filter((m) => {
       const matName = (m.materialName || '').toLowerCase()
-      const gp = (m.gatePassNumber || '').toLowerCase()
-      const toSite = (m.toSite || '').toLowerCase()
-      const matchesSearch = matName.includes(searchQuery.toLowerCase()) || gp.includes(searchQuery.toLowerCase()) || toSite.includes(searchQuery.toLowerCase())
-      const matchesStatus = statusFilter === 'ALL' || m.receivedStatus === statusFilter
-      return matchesSearch && matchesStatus
+      const gp = (m.gatePassNumber || m.challanNumber || m.transactionId || '').toLowerCase()
+      const toSite = (m.toSiteName || m.toSite || '').toLowerCase()
+      const fromSite = (m.fromSite || m.from || '').toLowerCase()
+
+      const matchesSearch =
+        matName.includes(searchQuery.toLowerCase()) ||
+        gp.includes(searchQuery.toLowerCase()) ||
+        toSite.includes(searchQuery.toLowerCase()) ||
+        fromSite.includes(searchQuery.toLowerCase())
+
+      const matchesType = typeFilter === 'ALL' || m.transactionType === typeFilter
+      return matchesSearch && matchesType
     })
-  }, [movements, searchQuery, statusFilter])
+  }, [movements, searchQuery, typeFilter])
 
   return (
     <div className="space-y-6">
@@ -136,26 +355,22 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs font-semibold uppercase tracking-wider text-blue-600 bg-blue-50 px-2.5 py-0.5 rounded-full">
-              Logistics & Transit
+            <span className="text-xs font-semibold uppercase tracking-wider text-[#0B3470] bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-100">
+              Logistics & Movements Engine
             </span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Inter-Site Material Gate Passes</h1>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Material Information</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Track material transfers across warehouses and sites with delivery challans and destination receipt sign-offs.
+            Multi-mode dispatch engine for Warehouse-to-Site transfers, Inter-Site transfers, and Central Depot returns.
           </p>
         </div>
 
         <button
-          onClick={() => {
-            if (sites.length > 0 && !formToSite) setFormToSite(sites[0].siteName || sites[0].projectName)
-            if (materials.length > 0 && !formMaterialId) setFormMaterialId(materials[0].id || materials[0].materialId)
-            setShowModal(true)
-          }}
+          onClick={handleOpenDispatchModal}
           className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-[#0B3470] hover:bg-[#082855] text-white text-sm font-semibold rounded-xl transition-all shadow-xs cursor-pointer"
         >
           <Plus className="w-4 h-4" />
-          <span>Issue Dispatch Gate Pass</span>
+          <span>Launch Dispatch Engine</span>
         </button>
       </div>
 
@@ -167,21 +382,22 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by gate pass #, material, site..."
+            placeholder="Search by challan #, material, site..."
             className="w-full pl-9 pr-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20"
           />
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-xs text-slate-500 font-medium">Status:</span>
+          <span className="text-xs text-slate-500 font-medium">Transfer Mode:</span>
           <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
             className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20"
           >
             <option value="ALL">All Dispatches ({movements.length})</option>
-            <option value="In Transit">In Transit</option>
-            <option value="Received">Received / Delivered</option>
+            <option value="CompanyToSite">Company → Site Dispatch</option>
+            <option value="SiteToSite">Site → Site Transfer</option>
+            <option value="SiteToCompany">Site → Company Return</option>
           </select>
         </div>
       </div>
@@ -192,9 +408,9 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
       ) : filteredMovements.length === 0 ? (
         <div className="bg-white p-12 text-center rounded-2xl border border-dashed border-slate-200">
           <Truck className="w-12 h-12 text-slate-300 mx-auto mb-2" />
-          <p className="text-sm font-semibold text-slate-700">No material movements recorded</p>
+          <p className="text-sm font-semibold text-slate-700">No material transactions recorded</p>
           <p className="text-xs text-slate-400 mt-1">
-            Click "Issue Dispatch Gate Pass" to authorize shipment between central godowns and project sites.
+            Click "Launch Dispatch Engine" to authorize shipment between central godowns and project sites.
           </p>
         </div>
       ) : (
@@ -203,10 +419,10 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50/75 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
-                  <th className="py-3.5 px-4">Gate Pass #</th>
+                  <th className="py-3.5 px-4">Challan / GP #</th>
                   <th className="py-3.5 px-4">Dispatched Material</th>
-                  <th className="py-3.5 px-4">Route (From → To)</th>
-                  <th className="py-3.5 px-4">Vehicle & Driver</th>
+                  <th className="py-3.5 px-4">Route & Mode</th>
+                  <th className="py-3.5 px-4">Transit Logistics</th>
                   <th className="py-3.5 px-4">Status</th>
                   <th className="py-3.5 px-4 text-right">Actions</th>
                 </tr>
@@ -214,14 +430,15 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
               <tbody className="divide-y divide-slate-100 text-sm">
                 {filteredMovements.map((item) => {
                   const isInTransit = item.receivedStatus === 'In Transit'
-                  const dispatchDate = item.dispatchDate?.seconds
-                    ? new Date(item.dispatchDate.seconds * 1000).toLocaleDateString()
-                    : 'Today'
+                  const modeType = item.transactionType || 'CompanyToSite'
 
                   return (
-                    <tr key={item.id || item.movementId} className="hover:bg-slate-50/60 transition-colors">
-                      <td className="py-3.5 px-4 font-mono font-bold text-blue-900 text-xs">
-                        {item.gatePassNumber || item.movementId}
+                    <tr key={item.id || item.transactionId || item.movementId} className="hover:bg-slate-50/60 transition-colors">
+                      <td className="py-3.5 px-4">
+                        <span className="font-mono font-bold text-blue-900 text-xs bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
+                          {item.gatePassNumber || item.challanNumber || item.transactionId}
+                        </span>
+                        <p className="text-[11px] text-slate-400 mt-0.5">{item.date || 'Today'}</p>
                       </td>
 
                       <td className="py-3.5 px-4">
@@ -229,23 +446,45 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
                           <Boxes className="w-4 h-4 text-teal-600" />
                           <div>
                             <p className="font-semibold text-slate-900 leading-snug">{item.materialName}</p>
-                            <p className="text-xs text-slate-500 font-bold">
-                              {item.quantity} {item.unit || 'Units'}
+                            <p className="text-xs text-slate-600 font-bold">
+                              {item.quantity} {item.unit || 'Units'}{' '}
+                              {item.totalValue ? (
+                                <span className="text-slate-400 font-normal">
+                                  (₹{Number(item.totalValue).toLocaleString('en-IN')})
+                                </span>
+                              ) : null}
                             </p>
                           </div>
                         </div>
                       </td>
 
                       <td className="py-3.5 px-4 text-xs">
-                        <p className="text-slate-500 font-medium">From: {item.fromSite}</p>
-                        <p className="font-bold text-slate-900 mt-0.5">To: {item.toSite}</p>
+                        <div className="space-y-0.5">
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                              modeType === 'CompanyToSite'
+                                ? 'bg-blue-100 text-blue-800'
+                                : modeType === 'SiteToSite'
+                                ? 'bg-purple-100 text-purple-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {modeType === 'CompanyToSite'
+                              ? 'Warehouse → Site'
+                              : modeType === 'SiteToSite'
+                              ? 'Site → Site'
+                              : 'Site → Warehouse'}
+                          </span>
+                          <p className="text-slate-500 font-medium mt-0.5">From: {item.from || item.fromSite}</p>
+                          <p className="font-bold text-slate-900">To: {item.toSiteName || item.toSite}</p>
+                        </div>
                       </td>
 
                       <td className="py-3.5 px-4 text-xs">
                         <div className="space-y-0.5">
-                          <p className="font-semibold text-slate-800">{item.vehicleNumber || 'Site Truck'}</p>
+                          <p className="font-semibold text-slate-800">{item.vehicleNumber || 'Site Fleet'}</p>
                           <p className="text-slate-400">
-                            {item.transporterName || 'Fleet'} {item.driverPhone && `• ${item.driverPhone}`}
+                            {item.transporterName || 'Internal Fleet'} {item.driverPhone && `• ${item.driverPhone}`}
                           </p>
                         </div>
                       </td>
@@ -254,8 +493,8 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
                         <span
                           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
                             isInTransit
-                              ? 'bg-amber-50 text-amber-700'
-                              : 'bg-emerald-50 text-emerald-700'
+                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                              : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                           }`}
                         >
                           <span
@@ -263,7 +502,7 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
                               isInTransit ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'
                             }`}
                           />
-                          {item.receivedStatus || 'In Transit'}
+                          {item.receivedStatus || 'Delivered'}
                         </span>
                       </td>
 
@@ -272,15 +511,15 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
                           <button
                             onClick={() => setPrintPassDoc(item)}
                             className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
-                            title="Print / View Gate Pass"
+                            title="Print / View Delivery Challan"
                           >
                             <Printer className="w-4 h-4" />
                           </button>
                           {isInTransit && (
                             <button
-                              onClick={() => handleConfirmReceipt(item.id || item.movementId)}
+                              onClick={() => handleConfirmReceipt(item.id || item.transactionId || item.movementId)}
                               className="px-2.5 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors cursor-pointer"
-                              title="Acknowledge Delivery"
+                              title="Acknowledge Delivery Receipt"
                             >
                               Confirm Receipt
                             </button>
@@ -296,148 +535,393 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
         </div>
       )}
 
-      {/* Issue Gate Pass Modal */}
-      {showModal && (
+      {/* ======================================================================================= */}
+      {/* MULTI-MODE DISPATCH ENGINE MODAL */}
+      {/* ======================================================================================= */}
+      {showDispatchModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 my-8">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 my-8">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
               <div>
-                <h3 className="text-base font-bold text-slate-900">Issue Inter-Site Gate Pass</h3>
-                <p className="text-xs text-slate-500">Authorize transport dispatch from warehouse to site.</p>
+                <h3 className="text-base font-bold text-slate-900">Material Dispatch & Logistics Engine</h3>
+                <p className="text-xs text-slate-500">
+                  Select transfer pathway, allocate stock, and issue delivery challan.
+                </p>
               </div>
-              <button onClick={() => setShowModal(false)} className="p-1 text-slate-400 hover:text-slate-600">
+              <button
+                onClick={() => setShowDispatchModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleCreateMovement} className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+            {/* Mode Switcher Tabs (Mode 0 / 1 / 2) */}
+            <div className="grid grid-cols-3 gap-2 bg-slate-100 p-1.5 rounded-xl mb-4 text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setDispatchMode(0)}
+                className={`py-2 rounded-lg transition-all cursor-pointer ${
+                  dispatchMode === 0 ? 'bg-white text-[#0B3470] shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Mode 0: Depot → Site
+              </button>
+              <button
+                type="button"
+                onClick={() => setDispatchMode(1)}
+                className={`py-2 rounded-lg transition-all cursor-pointer ${
+                  dispatchMode === 1 ? 'bg-white text-[#0B3470] shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Mode 1: Site → Site
+              </button>
+              <button
+                type="button"
+                onClick={() => setDispatchMode(2)}
+                className={`py-2 rounded-lg transition-all cursor-pointer ${
+                  dispatchMode === 2 ? 'bg-white text-[#0B3470] shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Mode 2: Site → Depot
+              </button>
+            </div>
+
+            <form onSubmit={handleExecuteDispatch} className="space-y-4">
+              {/* MODE 0: COMPANY WAREHOUSE -> SITE (Multi-Item Queue) */}
+              {dispatchMode === 0 && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                        Dispatch Origin
+                      </label>
+                      <input
+                        type="text"
+                        disabled
+                        value="Central Warehouse / Main Depot"
+                        className="w-full px-3 py-2 text-sm bg-slate-100 border border-slate-200 rounded-xl text-slate-700 font-semibold"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                        Destination Site *
+                      </label>
+                      <select
+                        required
+                        value={selectedSiteId}
+                        onChange={(e) => setSelectedSiteId(e.target.value)}
+                        className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-semibold"
+                      >
+                        {sites.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.siteName || s.projectName || s.id}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Multi-Item Queue Adder */}
+                  <div className="p-4 bg-slate-50/80 rounded-xl border border-slate-200 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                        Add Materials to Dispatch Queue
+                      </span>
+                      <span className="text-xs text-blue-900 font-medium">
+                        Depot Available:{' '}
+                        <strong className="text-blue-900">{currentSelectedMatAvailable} units</strong>
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-12 gap-2">
+                      <div className="col-span-7">
+                        <select
+                          value={queueMatId}
+                          onChange={(e) => setQueueMatId(e.target.value)}
+                          className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"
+                        >
+                          {materials.map((m) => (
+                            <option key={m.id || m.materialId} value={m.id || m.materialId}>
+                              {m.materialName || m.name} ({m.materialUnit || m.unit || 'Units'})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="col-span-3">
+                        <input
+                          type="number"
+                          min="1"
+                          value={queueQty}
+                          onChange={(e) => setQueueQty(e.target.value)}
+                          placeholder="Qty"
+                          className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl font-bold"
+                        />
+                      </div>
+
+                      <div className="col-span-2">
+                        <button
+                          type="button"
+                          onClick={handleAddToQueue}
+                          className="w-full py-2 bg-[#0B3470] hover:bg-[#082855] text-white text-xs font-bold rounded-xl shadow-xs cursor-pointer"
+                        >
+                          + Queue
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Active Queue Table */}
+                    {queueItems.length > 0 && (
+                      <div className="border border-slate-200 rounded-xl overflow-hidden bg-white mt-2">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-slate-100 border-b border-slate-200 font-bold text-slate-600">
+                            <tr>
+                              <th className="py-2 px-3">Item</th>
+                              <th className="py-2 px-3">Quantity</th>
+                              <th className="py-2 px-3">Est. Value</th>
+                              <th className="py-2 px-3 text-right">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {queueItems.map((item, idx) => (
+                              <tr key={idx}>
+                                <td className="py-2 px-3 font-semibold text-slate-900">{item.materialName}</td>
+                                <td className="py-2 px-3 font-bold text-slate-900">
+                                  {item.quantity} {item.unit}
+                                </td>
+                                <td className="py-2 px-3 text-slate-600">
+                                  ₹{(item.quantity * item.unitPrice).toLocaleString('en-IN')}
+                                </td>
+                                <td className="py-2 px-3 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveFromQueue(idx)}
+                                    className="text-rose-600 hover:text-rose-800 p-1 cursor-pointer"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* MODE 1: SITE TO SITE TRANSFER */}
+              {dispatchMode === 1 && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                        Source Site (From) *
+                      </label>
+                      <select
+                        required
+                        value={fromSiteId}
+                        onChange={(e) => setFromSiteId(e.target.value)}
+                        className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
+                      >
+                        {sites.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.siteName || s.projectName || s.id}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                        Destination Site (To) *
+                      </label>
+                      <select
+                        required
+                        value={toSiteId}
+                        onChange={(e) => setToSiteId(e.target.value)}
+                        className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
+                      >
+                        {sites.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.siteName || s.projectName || s.id}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="col-span-2">
+                      <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                        Material Item *
+                      </label>
+                      <select
+                        value={singleMatName}
+                        onChange={(e) => setSingleMatName(e.target.value)}
+                        className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
+                      >
+                        {materials.map((m) => (
+                          <option key={m.id || m.materialId} value={m.materialName || m.name}>
+                            {m.materialName || m.name}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Available at Source Site: <strong>{fromSiteAvailableStock} units</strong>
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                        Transfer Quantity *
+                      </label>
+                      <input
+                        type="number"
+                        required
+                        min="1"
+                        value={singleQty}
+                        onChange={(e) => setSingleQty(e.target.value)}
+                        placeholder="e.g. 50"
+                        className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl font-bold"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* MODE 2: SITE TO COMPANY RETURN */}
+              {dispatchMode === 2 && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                        Surplus Source Site *
+                      </label>
+                      <select
+                        required
+                        value={fromSiteId}
+                        onChange={(e) => setFromSiteId(e.target.value)}
+                        className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
+                      >
+                        {sites.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.siteName || s.projectName || s.id}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                        Return Destination
+                      </label>
+                      <input
+                        type="text"
+                        disabled
+                        value="Central Warehouse / Main Godown"
+                        className="w-full px-3 py-2 text-sm bg-slate-100 border border-slate-200 rounded-xl text-slate-700 font-semibold"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="col-span-2">
+                      <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                        Material Item *
+                      </label>
+                      <select
+                        value={singleMatName}
+                        onChange={(e) => setSingleMatName(e.target.value)}
+                        className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
+                      >
+                        {materials.map((m) => (
+                          <option key={m.id || m.materialId} value={m.materialName || m.name}>
+                            {m.materialName || m.name}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Available at Site: <strong>{fromSiteAvailableStock} units</strong>
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                        Return Quantity *
+                      </label>
+                      <input
+                        type="number"
+                        required
+                        min="1"
+                        value={singleQty}
+                        onChange={(e) => setSingleQty(e.target.value)}
+                        placeholder="e.g. 20"
+                        className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl font-bold"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Common Logistics Details */}
+              <div className="grid grid-cols-3 gap-3 pt-2 border-t border-slate-100">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                    Dispatch From *
+                    Challan / Gate Pass #
                   </label>
                   <input
                     type="text"
-                    value={formFromSite}
-                    onChange={(e) => setFormFromSite(e.target.value)}
-                    className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
+                    value={challanNumber}
+                    onChange={(e) => setChallanNumber(e.target.value)}
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl font-mono"
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                    Destination Site *
-                  </label>
-                  <select
-                    required
-                    value={formToSite}
-                    onChange={(e) => setFormToSite(e.target.value)}
-                    className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
-                  >
-                    <option value="">Select Destination Site...</option>
-                    {sites.map((s) => {
-                      const name = s.siteName || s.projectName
-                      return (
-                        <option key={s.id} value={name}>
-                          {name}
-                        </option>
-                      )
-                    })}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2">
-                <div className="col-span-2">
-                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                    Select Material *
-                  </label>
-                  <select
-                    required
-                    value={formMaterialId}
-                    onChange={(e) => setFormMaterialId(e.target.value)}
-                    className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
-                  >
-                    <option value="">Select Material...</option>
-                    {materials.map((m) => (
-                      <option key={m.id || m.materialId} value={m.id || m.materialId}>
-                        {m.materialName || m.name} ({m.unitName || m.unit})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                    Quantity *
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    min="1"
-                    value={formQty}
-                    onChange={(e) => setFormQty(e.target.value)}
-                    placeholder="e.g. 50"
-                    className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
                     Vehicle Number
                   </label>
                   <input
                     type="text"
-                    value={formVehicle}
-                    onChange={(e) => setFormVehicle(e.target.value)}
-                    placeholder="e.g. KA-01-EA-5542"
-                    className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl uppercase"
+                    value={vehicleNumber}
+                    onChange={(e) => setVehicleNumber(e.target.value)}
+                    placeholder="KA-04-AB-1234"
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl uppercase font-semibold"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                    Driver Phone
+                    Driver Contact
                   </label>
                   <input
                     type="tel"
-                    value={formPhone}
-                    onChange={(e) => setFormPhone(e.target.value)}
+                    value={driverPhone}
+                    onChange={(e) => setDriverPhone(e.target.value)}
                     placeholder="+91 98450 XXXXX"
-                    className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                  Transporter / Logistics Carrier
-                </label>
-                <input
-                  type="text"
-                  value={formTransporter}
-                  onChange={(e) => setFormTransporter(e.target.value)}
-                  placeholder="e.g. Navata Road Transport / Internal Fleet"
-                  className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setShowModal(false)}
-                  className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl"
+                  onClick={() => setShowDispatchModal(false)}
+                  className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting}
-                  className="px-5 py-2 text-xs font-semibold text-white bg-[#0B3470] hover:bg-[#082855] rounded-xl shadow-xs disabled:opacity-50"
+                  disabled={submittingDispatch}
+                  className="px-5 py-2 text-xs font-semibold text-white bg-[#0B3470] hover:bg-[#082855] rounded-xl shadow-xs disabled:opacity-50 cursor-pointer"
                 >
-                  {submitting ? 'Issuing...' : 'Issue Gate Pass & Dispatch'}
+                  {submittingDispatch ? 'Authorizing & Updating Stock...' : 'Authorize Dispatch & Print Challan'}
                 </button>
               </div>
             </form>
@@ -445,7 +929,9 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
         </div>
       )}
 
-      {/* Printable Delivery Gate Pass View */}
+      {/* ======================================================================================= */}
+      {/* PRINTABLE DELIVERY GATE PASS / CHALLAN MODAL */}
+      {/* ======================================================================================= */}
       {printPassDoc && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
           <div className="bg-white rounded-2xl max-w-lg w-full p-8 shadow-2xl border border-slate-300 print:m-0 print:border-none">
@@ -456,14 +942,14 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
                   <ShieldCheck className="w-4 h-4" />
                   <span>CST Enterprise Logistics</span>
                 </div>
-                <h2 className="text-xl font-black text-slate-900 mt-1">MATERIAL DELIVERY GATE PASS</h2>
+                <h2 className="text-xl font-black text-slate-900 mt-1">MATERIAL DELIVERY CHALLAN</h2>
                 <p className="text-xs text-slate-500 font-mono">
-                  Pass No: {printPassDoc.gatePassNumber || printPassDoc.movementId}
+                  Pass No: {printPassDoc.gatePassNumber || printPassDoc.challanNumber || printPassDoc.transactionId}
                 </p>
               </div>
               <button
                 onClick={() => setPrintPassDoc(null)}
-                className="p-1 text-slate-400 hover:text-slate-600 print:hidden"
+                className="p-1 text-slate-400 hover:text-slate-600 print:hidden cursor-pointer"
               >
                 ✕
               </button>
@@ -474,11 +960,11 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
               <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
                 <div>
                   <p className="font-semibold text-slate-400 uppercase tracking-wider text-[10px]">Dispatch Origin</p>
-                  <p className="font-bold text-slate-900 mt-0.5">{printPassDoc.fromSite}</p>
+                  <p className="font-bold text-slate-900 mt-0.5">{printPassDoc.from || printPassDoc.fromSite}</p>
                 </div>
                 <div>
                   <p className="font-semibold text-slate-400 uppercase tracking-wider text-[10px]">Destination Site</p>
-                  <p className="font-bold text-slate-900 mt-0.5">{printPassDoc.toSite}</p>
+                  <p className="font-bold text-slate-900 mt-0.5">{printPassDoc.toSiteName || printPassDoc.toSite}</p>
                 </div>
               </div>
 
@@ -487,7 +973,7 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
                   <thead className="bg-slate-100 text-[11px] font-bold text-slate-600">
                     <tr>
                       <th className="py-2 px-3">Item Description</th>
-                      <th className="py-2 px-3 text-right">Quantity Dispatched</th>
+                      <th className="py-2 px-3 text-right">Quantity</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -516,7 +1002,7 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
               <div className="grid grid-cols-2 gap-8 pt-8 border-t border-slate-200">
                 <div className="text-center border-t border-dashed border-slate-300 pt-2">
                   <p className="font-semibold text-slate-800">Dispatched By</p>
-                  <p className="text-[10px] text-slate-400">{printPassDoc.dispatchedBy || 'Store Incharge'}</p>
+                  <p className="text-[10px] text-slate-400">{printPassDoc.managerName || 'Store Incharge'}</p>
                 </div>
                 <div className="text-center border-t border-dashed border-slate-300 pt-2">
                   <p className="font-semibold text-slate-800">Receiver Site Sign</p>
@@ -528,10 +1014,10 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
             <div className="mt-6 flex justify-end gap-2 print:hidden">
               <button
                 onClick={() => window.print()}
-                className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-semibold cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0B3470] text-white rounded-xl text-xs font-semibold cursor-pointer shadow-xs"
               >
                 <Printer className="w-3.5 h-3.5" />
-                <span>Print Gate Pass</span>
+                <span>Print Delivery Challan</span>
               </button>
             </div>
           </div>

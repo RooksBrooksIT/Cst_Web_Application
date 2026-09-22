@@ -205,7 +205,7 @@ export default function ManagerDashboard() {
     {
       title: 'COMMAND & CONTROL',
       items: [
-        { id: 'dashboard', label: 'Executive Dashboard', path: '/manager/dashboard', icon: Sparkles },
+        { id: 'dashboard', label: 'Manager Dashboard', path: '/manager/dashboard', icon: Sparkles },
         {
           id: 'approvals',
           label: 'Approvals Center',
@@ -218,45 +218,45 @@ export default function ManagerDashboard() {
     {
       title: 'PROJECT & SITE MANAGEMENT',
       items: [
-        { id: 'site-wizard', label: 'Project Setup Wizard', path: '/manager/site-wizard', icon: Building2 },
-        { id: 'sites', label: 'Sites Portfolio', path: '/manager/sites', icon: Building2 },
-        { id: 'project-configs', label: 'Master Configurations', path: '/manager/project-configs', icon: FolderTree },
-        { id: 'drawings', label: 'Blueprints & CAD', path: '/manager/drawings', icon: Compass },
+        { id: 'project-site-setup', label: 'Project & Site Setup', path: '/manager/project-site-setup', icon: Building2 },
+        { id: 'sites', label: 'Sites Directory', path: '/manager/sites', icon: Building2 },
+        { id: 'project-configs', label: 'Project Configuration', path: '/manager/project-configs', icon: FolderTree },
+        { id: 'drawings', label: 'Layout and Drawings', path: '/manager/drawings', icon: Compass },
       ],
     },
     {
       title: 'SUPERVISOR & FIELD OPS',
       items: [
-        { id: 'supervisors', label: 'Supervisor Profiles', path: '/manager/supervisors', icon: Users },
+        { id: 'supervisors', label: 'Supervisor Configuration', path: '/manager/supervisors', icon: Users },
         { id: 'supervisor-map', label: 'Site-Supervisor Map', path: '/manager/supervisor-map', icon: Link2 },
-        { id: 'daily-logs', label: 'Daily Progress Diary', path: '/manager/daily-logs', icon: FileText },
-        { id: 'manager-expenses', label: 'Manager Site Expenses', path: '/manager/manager-expenses', icon: Receipt },
+        { id: 'daily-logs', label: 'Manager Daily Site Entry', path: '/manager/daily-logs', icon: FileText },
+        { id: 'manager-expenses', label: 'Manager Expenses', path: '/manager/manager-expenses', icon: Receipt },
       ],
     },
     {
       title: 'MATERIALS & SUPPLY CHAIN',
       items: [
-        { id: 'materials-catalog', label: 'Materials Catalog', path: '/manager/materials-catalog', icon: Boxes },
-        { id: 'materials-stock', label: 'Stock & Low Alerts', path: '/manager/materials-stock', icon: Boxes, badge: lowStockAlertCount },
-        { id: 'materials-movements', label: 'Delivery Gate Passes', path: '/manager/materials-movements', icon: Truck },
-        { id: 'tools-catalog', label: 'Tools & Plant Machinery', path: '/manager/tools-catalog', icon: Wrench },
-        { id: 'tools-movements', label: 'Equipment Custody', path: '/manager/tools-movements', icon: Wrench },
+        { id: 'materials-catalog', label: 'Material Master', path: '/manager/materials-catalog', icon: Boxes },
+        { id: 'materials-stock', label: 'Material Availability', path: '/manager/materials-stock', icon: Boxes, badge: lowStockAlertCount },
+        { id: 'materials-movements', label: 'Material Information', path: '/manager/materials-movements', icon: Truck },
+        { id: 'tools-catalog', label: 'Tools Master', path: '/manager/tools-catalog', icon: Wrench },
+        { id: 'tools-movements', label: 'Tools Inventory Details', path: '/manager/tools-movements', icon: Wrench },
       ],
     },
     {
       title: 'WORKFORCE & CONTRACTORS',
       items: [
-        { id: 'contractors', label: 'Contractors & Entries', path: '/manager/contractors', icon: Briefcase },
-        { id: 'labour-scales', label: 'Labour Wage Scales', path: '/manager/labour-scales', icon: Coins },
-        { id: 'workers', label: 'Workers Roster', path: '/manager/workers', icon: Users },
-        { id: 'worker-mapping', label: 'Site Allocations', path: '/manager/worker-mapping', icon: Link2 },
-        { id: 'attendance', label: 'Daily Muster Roll', path: '/manager/attendance', icon: CalendarCheck },
+        { id: 'contractors', label: 'Contractors Directory', path: '/manager/contractors', icon: Briefcase },
+        { id: 'labour-scales', label: 'Labour Category Config', path: '/manager/labour-scales', icon: Coins },
+        { id: 'workers', label: 'Workers Configuration', path: '/manager/workers', icon: Users },
+        { id: 'worker-mapping', label: 'Workers Site Mapping', path: '/manager/worker-mapping', icon: Link2 },
+        { id: 'attendance', label: 'Worker Attendance', path: '/manager/attendance', icon: CalendarCheck },
       ],
     },
     {
       title: 'FLEET & LOGISTICS',
       items: [
-        { id: 'fleet', label: 'Vehicles, Drivers & Fuel', path: '/manager/fleet', icon: Truck },
+        { id: 'fleet', label: 'Vehicle Fleet', path: '/manager/fleet', icon: Truck },
       ],
     },
     {
@@ -264,18 +264,18 @@ export default function ManagerDashboard() {
       items: [
         {
           id: 'petty-cash',
-          label: 'Petty Cash Hub',
+          label: 'Petty Cash Management',
           path: '/manager/petty-cash',
           icon: DollarSign,
           badge: pendingPettyCashCount,
         },
-        { id: 'notifications', label: 'Priority Alerts Stream', path: '/manager/notifications', icon: Bell },
-        { id: 'support', label: 'Helpdesk & Support', path: '/manager/support', icon: HelpCircle },
+        { id: 'notifications', label: 'Notifications', path: '/manager/notifications', icon: Bell },
+        { id: 'support', label: 'Manager Support', path: '/manager/support', icon: HelpCircle },
       ],
     },
   ]
 
-  // 8 Operation Bento Cards
+  // 8 Operation Bento Cards (Matching Mobile Screen Names)
   const bentoCards = [
     {
       title: 'Approvals Center',
@@ -288,17 +288,17 @@ export default function ManagerDashboard() {
       link: '/manager/approvals',
     },
     {
-      title: 'Project Portfolio',
+      title: 'Sites Directory',
       count: `${sites.length} Projects`,
       badge: `${activeSites} Active`,
       badgeColor: 'bg-blue-100 text-blue-800',
-      desc: 'Launch new construction sites via wizard, configure categories and inspect architectural schematics.',
+      desc: 'Launch and update construction sites, configure project categories and inspect architectural schematics.',
       icon: Building2,
       iconColor: 'text-blue-600 bg-blue-50',
       link: '/manager/sites',
     },
     {
-      title: 'Field Operations',
+      title: 'Supervisor Configuration',
       count: `${supervisors.length} Staff`,
       badge: 'Live Feed',
       badgeColor: 'bg-emerald-100 text-emerald-800',
@@ -308,7 +308,7 @@ export default function ManagerDashboard() {
       link: '/manager/daily-logs',
     },
     {
-      title: 'Supply Chain & Stock',
+      title: 'Material Master',
       count: `${materials.length} SKUs`,
       badge: lowStockAlertCount > 0 ? `${lowStockAlertCount} Low Stock` : 'Stock Optimal',
       badgeColor: lowStockAlertCount > 0 ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800',
@@ -318,7 +318,7 @@ export default function ManagerDashboard() {
       link: '/manager/materials-catalog',
     },
     {
-      title: 'Workforce & Contractors',
+      title: 'Workers Configuration',
       count: `${contractors.length} Contractors`,
       badge: `${totalHeadcount || '120+'} Labourers`,
       badgeColor: 'bg-purple-100 text-purple-800',
@@ -328,7 +328,7 @@ export default function ManagerDashboard() {
       link: '/manager/contractors',
     },
     {
-      title: 'Fleet & Fuel Telemetry',
+      title: 'Vehicle Fleet',
       count: `${vehicles.length} Vehicles`,
       badge: `${activeVehicles} on Duty`,
       badgeColor: 'bg-amber-100 text-amber-800',
@@ -338,7 +338,7 @@ export default function ManagerDashboard() {
       link: '/manager/fleet',
     },
     {
-      title: 'Petty Cash Hub',
+      title: 'Petty Cash Management',
       count: `${pendingPettyCashCount} Vouchers`,
       badge: 'Dual-Control',
       badgeColor: 'bg-emerald-100 text-emerald-800',
@@ -348,7 +348,7 @@ export default function ManagerDashboard() {
       link: '/manager/petty-cash',
     },
     {
-      title: 'Alerts & Support',
+      title: 'Notifications',
       count: `${totalApprovalsPending + lowStockAlertCount} Alerts`,
       badge: 'Operational',
       badgeColor: 'bg-slate-100 text-slate-800',
@@ -615,11 +615,11 @@ export default function ManagerDashboard() {
               {/* Quick Floating Action Triggers */}
               <div className="flex flex-wrap items-center gap-2.5">
                 <Link
-                  to="/manager/site-wizard"
+                  to="/manager/project-site-setup"
                   className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-white text-[#0B3470] shadow-sm hover:bg-blue-50 transition-all cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
-                  <span>Launch Site Wizard</span>
+                  <span>Project & Site Setup</span>
                 </Link>
                 <Link
                   to="/manager/daily-logs"
@@ -787,10 +787,10 @@ export default function ManagerDashboard() {
               <div className="p-8 text-center bg-white border border-slate-200 rounded-2xl text-slate-500 space-y-3 shadow-xs">
                 <p className="text-sm font-medium">No active sites registered yet.</p>
                 <Link
-                  to="/manager/site-wizard"
+                  to="/manager/project-site-setup"
                   className="inline-flex px-4 py-2 rounded-xl text-xs font-bold bg-[#0B3470] text-white shadow-xs"
                 >
-                  Launch Project Setup Wizard
+                  Project & Site Setup
                 </Link>
               </div>
             ) : (

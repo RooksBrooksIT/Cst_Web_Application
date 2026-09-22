@@ -9,8 +9,7 @@ import logo from '../../assets/logo/FinalLogo.jpg'
 // Group 2: Approvals
 import ApprovalsCenter from './approvals/ApprovalsCenter'
 
-// Group 3: Projects
-import ProjectSetupWizard from './projects/ProjectSetupWizard'
+import ProjectAndSiteSetup from './projects/ProjectAndSiteSetup'
 import SitesPortfolio from './projects/SitesPortfolio'
 import MasterConfigurations from './projects/MasterConfigurations'
 import BlueprintsDrawings from './projects/BlueprintsDrawings'
@@ -196,12 +195,12 @@ export default function ManagerModule() {
     (pettyCashRequests?.filter((r) => r.status === 'PENDING_MANAGER_REVIEW')?.length || 0) +
     (pettyCashExpenses?.filter((e) => e.status === 'PENDING_EXPENSE_REVIEW')?.length || 0)
 
-  // 8 Categorized Sidebar Groups
+  // 8 Categorized Sidebar Groups (Matching Mobile Screen Registry)
   const sidebarGroups = [
     {
       title: 'COMMAND & CONTROL',
       items: [
-        { id: 'dashboard', label: 'Executive Dashboard', path: '/manager/dashboard', icon: Sparkles },
+        { id: 'dashboard', label: 'Manager Dashboard', path: '/manager/dashboard', icon: Sparkles },
         {
           id: 'approvals',
           label: 'Approvals Center',
@@ -214,45 +213,45 @@ export default function ManagerModule() {
     {
       title: 'PROJECT & SITE MANAGEMENT',
       items: [
-        { id: 'site-wizard', label: 'Project Setup Wizard', path: '/manager/site-wizard', icon: Building2 },
-        { id: 'sites', label: 'Sites Portfolio', path: '/manager/sites', icon: Building2 },
-        { id: 'project-configs', label: 'Master Configurations', path: '/manager/project-configs', icon: FolderTree },
-        { id: 'drawings', label: 'Blueprints & CAD', path: '/manager/drawings', icon: Compass },
+        { id: 'project-site-setup', label: 'Project & Site Setup', path: '/manager/project-site-setup', icon: Building2 },
+        { id: 'sites', label: 'Sites Directory', path: '/manager/sites', icon: Building2 },
+        { id: 'project-configs', label: 'Project Configuration', path: '/manager/project-configs', icon: FolderTree },
+        { id: 'drawings', label: 'Layout and Drawings', path: '/manager/drawings', icon: Compass },
       ],
     },
     {
       title: 'SUPERVISOR & FIELD OPS',
       items: [
-        { id: 'supervisors', label: 'Supervisor Profiles', path: '/manager/supervisors', icon: Users },
+        { id: 'supervisors', label: 'Supervisor Configuration', path: '/manager/supervisors', icon: Users },
         { id: 'supervisor-map', label: 'Site-Supervisor Map', path: '/manager/supervisor-map', icon: Link2 },
-        { id: 'daily-logs', label: 'Daily Progress Diary', path: '/manager/daily-logs', icon: FileText },
-        { id: 'manager-expenses', label: 'Manager Site Expenses', path: '/manager/manager-expenses', icon: Receipt },
+        { id: 'daily-logs', label: 'Manager Daily Site Entry', path: '/manager/daily-logs', icon: FileText },
+        { id: 'manager-expenses', label: 'Manager Expenses', path: '/manager/manager-expenses', icon: Receipt },
       ],
     },
     {
       title: 'MATERIALS & SUPPLY CHAIN',
       items: [
-        { id: 'materials-catalog', label: 'Materials Catalog', path: '/manager/materials-catalog', icon: Boxes },
-        { id: 'materials-stock', label: 'Stock & Low Alerts', path: '/manager/materials-stock', icon: Boxes },
-        { id: 'materials-movements', label: 'Delivery Gate Passes', path: '/manager/materials-movements', icon: Truck },
-        { id: 'tools-catalog', label: 'Tools & Plant Machinery', path: '/manager/tools-catalog', icon: Wrench },
-        { id: 'tools-movements', label: 'Equipment Custody', path: '/manager/tools-movements', icon: Wrench },
+        { id: 'materials-catalog', label: 'Material Master', path: '/manager/materials-catalog', icon: Boxes },
+        { id: 'materials-stock', label: 'Material Availability', path: '/manager/materials-stock', icon: Boxes },
+        { id: 'materials-movements', label: 'Material Information', path: '/manager/materials-movements', icon: Truck },
+        { id: 'tools-catalog', label: 'Tools Master', path: '/manager/tools-catalog', icon: Wrench },
+        { id: 'tools-movements', label: 'Tools Inventory Details', path: '/manager/tools-movements', icon: Wrench },
       ],
     },
     {
       title: 'WORKFORCE & CONTRACTORS',
       items: [
-        { id: 'contractors', label: 'Contractors & Entries', path: '/manager/contractors', icon: Briefcase },
-        { id: 'labour-scales', label: 'Labour Wage Scales', path: '/manager/labour-scales', icon: Coins },
-        { id: 'workers', label: 'Workers Roster', path: '/manager/workers', icon: Users },
-        { id: 'worker-mapping', label: 'Site Allocations', path: '/manager/worker-mapping', icon: Link2 },
-        { id: 'attendance', label: 'Daily Muster Roll', path: '/manager/attendance', icon: CalendarCheck },
+        { id: 'contractors', label: 'Contractors Directory', path: '/manager/contractors', icon: Briefcase },
+        { id: 'labour-scales', label: 'Labour Category Config', path: '/manager/labour-scales', icon: Coins },
+        { id: 'workers', label: 'Workers Configuration', path: '/manager/workers', icon: Users },
+        { id: 'worker-mapping', label: 'Workers Site Mapping', path: '/manager/worker-mapping', icon: Link2 },
+        { id: 'attendance', label: 'Worker Attendance', path: '/manager/attendance', icon: CalendarCheck },
       ],
     },
     {
       title: 'FLEET & LOGISTICS',
       items: [
-        { id: 'fleet', label: 'Vehicles, Drivers & Fuel', path: '/manager/fleet', icon: Truck },
+        { id: 'fleet', label: 'Vehicle Fleet', path: '/manager/fleet', icon: Truck },
       ],
     },
     {
@@ -260,13 +259,13 @@ export default function ManagerModule() {
       items: [
         {
           id: 'petty-cash',
-          label: 'Petty Cash Hub',
+          label: 'Petty Cash Management',
           path: '/manager/petty-cash',
           icon: DollarSign,
           badge: totalPettyCashPending,
         },
-        { id: 'notifications', label: 'Priority Alerts Stream', path: '/manager/notifications', icon: Bell },
-        { id: 'support', label: 'Helpdesk & Support', path: '/manager/support', icon: HelpCircle },
+        { id: 'notifications', label: 'Notifications', path: '/manager/notifications', icon: Bell },
+        { id: 'support', label: 'Manager Support', path: '/manager/support', icon: HelpCircle },
       ],
     },
   ]
@@ -284,6 +283,11 @@ export default function ManagerModule() {
           <ApprovalsCenter
             orgId={orgId}
             currentUser={currentUser}
+            sites={sites}
+            siteSupervisorEntries={dashboardData.siteSupervisorEntries || approvals || []}
+            siteMaterialsRequest={dashboardData.siteMaterialsRequest || []}
+            siteToolsRequest={dashboardData.siteToolsRequest || []}
+            siteSupervisorProjectStageSchedule={dashboardData.siteSupervisorProjectStageSchedule || []}
             pendingExpenses={pendingExpenses}
             pendingMaterialRequests={pendingMaterialRequests}
             pendingToolRequests={pendingToolRequests}
@@ -293,11 +297,14 @@ export default function ManagerModule() {
         )
 
       // Group 3: Projects
+      case 'project-site-setup':
+      case 'site-setup':
       case 'site-wizard':
-        return <ProjectSetupWizard orgId={orgId} currentUser={currentUser} onNotify={showToast} />
+        return <ProjectAndSiteSetup orgId={orgId} currentUser={currentUser} onNotify={showToast} />
       case 'sites':
         return <SitesPortfolio sites={sites} onNotify={showToast} />
       case 'project-configs':
+      case 'project-configuration':
         return <MasterConfigurations orgId={orgId} onNotify={showToast} />
       case 'drawings':
         return <BlueprintsDrawings orgId={orgId} sites={sites} currentUser={currentUser} onNotify={showToast} />

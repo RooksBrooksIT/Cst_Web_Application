@@ -582,7 +582,7 @@ export default function ManagerPettyCashHub({
             </span>
             <span className="text-xs text-slate-400 font-mono">/ Manager Hub</span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 mt-1">Petty Cash Operations Hub</h1>
+          <h1 className="text-2xl font-bold text-slate-900 mt-1">Petty Cash Management</h1>
           <p className="text-xs text-slate-500">
             Dual-Control Site Wallets, Request Life-Cycle, Voucher Approvals & Cash Reconciliations
           </p>

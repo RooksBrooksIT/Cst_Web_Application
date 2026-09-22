@@ -51,11 +51,10 @@ export default function SitesPortfolio({ sites = [], supervisors = [] }) {
         <div>
           <div className="flex items-center gap-2">
             <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-widest bg-blue-100 text-blue-800">
-              Portfolio Management
+              Projects & Sites
             </span>
-            <span className="text-xs text-slate-400 font-mono">/ Sites Directory</span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 mt-1">Construction Sites Portfolio</h1>
+          <h1 className="text-2xl font-bold text-slate-900 mt-1">Sites Directory</h1>
           <p className="text-xs text-slate-500">Live monitoring of active project sites, sanctioned budget utilization, and field geofences</p>
         </div>
 
@@ -76,10 +75,10 @@ export default function SitesPortfolio({ sites = [], supervisors = [] }) {
             filename="sites_portfolio.csv"
           />
           <Link
-            to="/manager/site-wizard"
+            to="/manager/project-site-setup"
             className="px-4 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white shadow-xs transition-colors"
           >
-            ＋ New Site Wizard
+            ＋ Project & Site Setup
           </Link>
         </div>
       </div>
@@ -188,13 +187,21 @@ export default function SitesPortfolio({ sites = [], supervisors = [] }) {
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => setSelectedSite(site)}
-                  className="w-full py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-800 transition-colors"
-                >
-                  View Financial Details & Drawings →
-                </button>
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSite(site)}
+                    className="py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-800 transition-colors"
+                  >
+                    View Details
+                  </button>
+                  <Link
+                    to={`/manager/project-site-setup?tab=update&siteId=${site.id || site.siteId || site.projectId}`}
+                    className="py-2 rounded-xl text-xs font-bold bg-blue-50 hover:bg-blue-100 text-[#0B3470] text-center border border-blue-200 transition-colors"
+                  >
+                    Edit Site ↗
+                  </Link>
+                </div>
               </div>
             )
           })
@@ -244,7 +251,13 @@ export default function SitesPortfolio({ sites = [], supervisors = [] }) {
               )}
             </div>
 
-            <div className="flex justify-end pt-4 border-t border-slate-100">
+            <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+              <Link
+                to={`/manager/project-site-setup?tab=update&siteId=${selectedSite.id || selectedSite.siteId || selectedSite.projectId}`}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-50 text-[#0B3470] hover:bg-blue-100 border border-blue-200 transition-colors"
+              >
+                Edit in Project & Site Setup ↗
+              </Link>
               <button
                 type="button"
                 onClick={() => setSelectedSite(null)}

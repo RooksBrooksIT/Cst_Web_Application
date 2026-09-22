@@ -178,7 +178,7 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
               Operations Expenditures
             </span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Manager Direct Site Expenses</h1>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Manager Expenses</h1>
           <p className="text-sm text-slate-500 mt-1">
             Log direct field disbursements, consultant fees, and emergency procurements directly into site ledgers.
           </p>

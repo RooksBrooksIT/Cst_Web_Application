@@ -241,7 +241,7 @@ export default function ApprovalsCenter({
             </span>
             <span className="text-xs text-slate-400 font-mono">/ Management Approvals</span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 mt-1">Approvals & Clearance Center</h1>
+          <h1 className="text-2xl font-bold text-slate-900 mt-1">Approvals Center</h1>
           <p className="text-xs text-slate-500">
             Multi-Tier technical review and sign-off gateway for site finances, raw materials, plant tools, and construction milestones
           </p>
@@ -674,7 +674,7 @@ export default function ApprovalsCenter({
                   {siteSupervisorProjectStageSchedule.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="py-8 text-center text-slate-400">
-                        No milestone schedule registered. Launch a new site in the Project Wizard to initialize milestones.
+                        No milestone schedule registered. Launch a new site in Project & Site Setup to initialize milestones.
                       </td>
                     </tr>
                   ) : (

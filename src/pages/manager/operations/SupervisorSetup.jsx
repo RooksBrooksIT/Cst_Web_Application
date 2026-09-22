@@ -225,7 +225,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
               Field Operations Staff
             </span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Supervisor Management</h1>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Supervisor Configuration</h1>
           <p className="text-sm text-slate-500 mt-1">
             Provision site supervisors with secure mobile credentials and manage their field active statuses.
           </p>

@@ -167,7 +167,7 @@ export default function BlueprintsDrawings({ orgId, sites = [], currentUser, onN
               CAD & Architectural Hub
             </span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Blueprints & Structural Layouts</h1>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Layout and Drawings</h1>
           <p className="text-sm text-slate-500 mt-1">
             Publish, revise, and inspect site drawings with version control and field supervisor access.
           </p>

@@ -142,7 +142,7 @@ export default function ManagerNotificationsHub({
               Operations Alert Feed
             </span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Priority Notifications Stream</h1>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Notifications</h1>
           <p className="text-sm text-slate-500 mt-1">
             Live operations alerts, pending milestone sign-offs, and critical material shortage alerts.
           </p>

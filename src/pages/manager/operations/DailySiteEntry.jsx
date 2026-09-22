@@ -223,7 +223,7 @@ export default function DailySiteEntry({ orgId, sites = [], currentUser, onNotif
               Field Operations Diary
             </span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Daily Site Progress & Expense Log</h1>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Manager Daily Site Entry</h1>
           <p className="text-sm text-slate-500 mt-1">
             Real-time feed of daily site diary entries, materials consumed, labour muster roll, and day expenses.
           </p>
