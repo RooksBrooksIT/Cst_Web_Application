@@ -21,11 +21,36 @@ export default function SiteExpensesReportHub({
   sitePayments = [],
   siteSupervisorIncentives = [],
   dailySiteLogs = [],
+  subReport = null,
+  initialSiteId = null,
+  initialDate = null,
+  initialFromDate = null,
+  initialToDate = null,
+  initialStage = null,
 }) {
-  const [activeSubTab, setActiveSubTab] = useState('daily') // 'daily' (1A), 'range' (1B), 'summary' (1C)
-  const [selectedSiteId, setSelectedSiteId] = useState(sites[0]?.id || '')
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10))
-  const [selectedStage, setSelectedStage] = useState('all')
+  const [activeSubTab, setActiveSubTab] = useState(subReport || 'daily') // 'daily', 'range', 'summary'
+  const [selectedSiteId, setSelectedSiteId] = useState(initialSiteId || sites[0]?.id || '')
+  const [selectedDate, setSelectedDate] = useState(initialDate || new Date().toISOString().slice(0, 10))
+  const [selectedStage, setSelectedStage] = useState(initialStage || 'all')
+
+  // Sync with prop changes if passed from parent
+  React.useEffect(() => {
+    if (subReport && (subReport === 'daily' || subReport === 'range' || subReport === 'summary')) {
+      setActiveSubTab(subReport)
+    }
+  }, [subReport])
+
+  React.useEffect(() => {
+    if (initialSiteId) setSelectedSiteId(initialSiteId)
+  }, [initialSiteId])
+
+  React.useEffect(() => {
+    if (initialDate) setSelectedDate(initialDate)
+  }, [initialDate])
+
+  React.useEffect(() => {
+    if (initialStage) setSelectedStage(initialStage)
+  }, [initialStage])
 
   // Date Range state
   const defaultFrom = useMemo(() => {
@@ -33,8 +58,8 @@ export default function SiteExpensesReportHub({
     d.setDate(1) // First day of current month
     return d.toISOString().slice(0, 10)
   }, [])
-  const [fromDate, setFromDate] = useState(defaultFrom)
-  const [toDate, setToDate] = useState(new Date().toISOString().slice(0, 10))
+  const [fromDate, setFromDate] = useState(initialFromDate || defaultFrom)
+  const [toDate, setToDate] = useState(initialToDate || new Date().toISOString().slice(0, 10))
   const [expandedDates, setExpandedDates] = useState({})
 
   // Selected site object
@@ -278,32 +303,32 @@ export default function SiteExpensesReportHub({
       <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
-            <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
-              Module 1 · Site Outflows Hub
+            <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider block">
+              Expense Operations
             </span>
             <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
-              Site & Project Expenses Reports
+              Site Expense Reports
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Select site and audit period to generate itemized vouchers, wage sheets, and material consumption ledgers.
+              Select site and audit period to view itemized vouchers, wage sheets, and material consumption ledgers.
             </p>
           </div>
 
           {/* Sub-report selector tabs */}
-          <div className="flex items-center gap-1 bg-slate-100 p-1.5 rounded-xl self-start lg:self-auto border border-slate-200/80">
+          <div className="flex items-center gap-1 bg-slate-100 p-1.5 rounded-xl self-start lg:self-auto border border-slate-200/80 flex-wrap">
             {[
-              { id: 'daily', label: '1A. Daily Site Report', icon: '📅' },
-              { id: 'range', label: '1B. Date Range Ledger', icon: '🗓️' },
-              { id: 'summary', label: '1C. Cumulative Summary', icon: '📈' },
+              { id: 'daily', label: 'Daily Expense Report', icon: '📅' },
+              { id: 'range', label: 'Date Range Report', icon: '🗓️' },
+              { id: 'summary', label: 'Cumulative Expense Summary', icon: '📈' },
             ].map((tab) => (
               <button
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveSubTab(tab.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                   activeSubTab === tab.id
                     ? 'bg-[#0B3470] text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                 }`}
               >
                 <span>{tab.icon}</span>
@@ -314,9 +339,9 @@ export default function SiteExpensesReportHub({
         </div>
 
         {/* Dynamic Filters Form */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-3 border-t border-slate-100">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-3 border-t border-slate-100 items-end">
           <div>
-            <label className="block text-[11px] font-bold text-slate-600 mb-1">Target Site</label>
+            <label className="block text-[11px] font-bold text-slate-600 mb-1">Select Site</label>
             <select
               value={selectedSiteId}
               onChange={(e) => setSelectedSiteId(e.target.value)}
@@ -324,7 +349,7 @@ export default function SiteExpensesReportHub({
             >
               {sites.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.projectName || s.siteName || s.name || s.id} ({s.id})
+                  {s.projectName || s.siteName || s.name || s.id}
                 </option>
               ))}
             </select>
@@ -332,7 +357,7 @@ export default function SiteExpensesReportHub({
 
           {activeSubTab === 'daily' && (
             <div>
-              <label className="block text-[11px] font-bold text-slate-600 mb-1">Audit Date</label>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">Select Date</label>
               <input
                 type="date"
                 value={selectedDate}
@@ -345,7 +370,7 @@ export default function SiteExpensesReportHub({
           {activeSubTab === 'range' && (
             <>
               <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">From Date</label>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Start Date</label>
                 <input
                   type="date"
                   value={fromDate}
@@ -354,7 +379,7 @@ export default function SiteExpensesReportHub({
                 />
               </div>
               <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">To Date</label>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">End Date</label>
                 <input
                   type="date"
                   value={toDate}
@@ -367,7 +392,7 @@ export default function SiteExpensesReportHub({
 
           {activeSubTab !== 'summary' && (
             <div>
-              <label className="block text-[11px] font-bold text-slate-600 mb-1">Project Stage Filter</label>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">Select Project Stage</label>
               <select
                 value={selectedStage}
                 onChange={(e) => setSelectedStage(e.target.value)}
@@ -382,19 +407,29 @@ export default function SiteExpensesReportHub({
               </select>
             </div>
           )}
+
+          <div>
+            <button
+              type="button"
+              className="w-full py-2 px-4 rounded-xl text-xs font-bold bg-[#0B3470] text-white hover:bg-[#082654] transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <span>⚡</span>
+              <span>Generate Report</span>
+            </button>
+          </div>
         </div>
       </div>
 
       {/* ----------------------------------------------------------------------------------------- */}
-      {/* 1A. DAILY SITE EXPENSES REPORT VIEW */}
+      {/* DAILY SITE EXPENSES REPORT VIEW */}
       {/* ----------------------------------------------------------------------------------------- */}
       {activeSubTab === 'daily' && (
         <div className="space-y-6">
           {/* Header Metadata Banner */}
           <div className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="space-y-1">
-              <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
-                Daily Expense Statement
+              <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider block">
+                Daily Expense Report
               </span>
               <h3 className="text-2xl font-extrabold text-slate-900 tracking-tight">
                 {dailyReport.siteName}
@@ -417,62 +452,85 @@ export default function SiteExpensesReportHub({
                 <button
                   type="button"
                   onClick={handleExportDailyCSV}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-colors shadow-2xs cursor-pointer"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-colors shadow-2xs cursor-pointer flex items-center gap-1"
                 >
-                  📥 Export CSV
+                  <span>📥</span> Export CSV
                 </button>
                 <button
                   type="button"
                   onClick={handlePrintDailyPDF}
-                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#0B3470] text-white hover:bg-[#082654] transition-colors shadow-2xs cursor-pointer"
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#0B3470] text-white hover:bg-[#082654] transition-colors shadow-2xs cursor-pointer flex items-center gap-1"
                 >
-                  🖨️ Print PDF
+                  <span>🖨️</span> Print PDF
                 </button>
               </div>
             </div>
           </div>
 
-          {/* 5 Breakdown Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {/* Card 1: Labour Expenses */}
-            <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-3">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                <div className="flex items-center gap-2.5">
-                  <span className="p-2 rounded-xl bg-blue-50 text-blue-700 font-bold text-sm">👷</span>
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-900">1. Labour Expenses</h4>
-                    <span className="text-[11px] text-slate-400">{dailyReport.labours.length} worker groups recorded</span>
-                  </div>
-                </div>
-                <strong className="text-base font-extrabold text-[#0B3470] font-mono">{money(dailyReport.totalLabour)}</strong>
+          {/* Empty State if no entries logged */}
+          {dailyReport.grandTotal === 0 &&
+          dailyReport.labours.length === 0 &&
+          dailyReport.materials.length === 0 &&
+          dailyReport.bills.length === 0 ? (
+            <div className="p-12 text-center bg-white border border-slate-200/90 rounded-2xl shadow-xs space-y-3">
+              <div className="w-12 h-12 mx-auto rounded-full bg-slate-100 text-slate-400 flex items-center justify-center text-xl">
+                📋
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
-                    <tr>
-                      <th className="p-2.5">Role / Trade</th>
-                      <th className="p-2.5 text-center">Count</th>
-                      <th className="p-2.5 text-right">Daily Rate</th>
-                      <th className="p-2.5 text-right">Subtotal</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {dailyReport.labours.length === 0 ? (
-                      <tr><td colSpan="4" className="p-6 text-center text-slate-400 italic">No labour entries for this date</td></tr>
-                    ) : (
-                      dailyReport.labours.map((l, i) => (
-                        <tr key={i} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="p-2.5 font-medium text-slate-800">{l.role}</td>
-                          <td className="p-2.5 text-center text-slate-600">{l.count}</td>
-                          <td className="p-2.5 text-right font-mono text-slate-600">{money(l.rate)}</td>
-                          <td className="p-2.5 text-right font-bold font-mono text-slate-900">{money(l.amount)}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+              <h4 className="text-base font-bold text-slate-800">No Expense Entries for This Date</h4>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                No labour, material, or voucher expenses were logged for <strong>{dailyReport.siteName}</strong> on <strong>{formatDateDisplay(dailyReport.date)}</strong>. Try selecting another date or check the Date Range Report.
+              </p>
+              <div className="flex justify-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveSubTab('range')}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-[#0B3470] text-white hover:bg-[#082654] transition-all cursor-pointer shadow-xs"
+                >
+                  View Date Range Report
+                </button>
               </div>
             </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              {/* Card 1: Labour Expenses */}
+              <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-3">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <div className="flex items-center gap-2.5">
+                    <span className="p-2 rounded-xl bg-blue-50 text-blue-700 font-bold text-sm">👷</span>
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-900">1. Labour Expenses</h4>
+                      <span className="text-[11px] text-slate-400">{dailyReport.labours.length} worker groups recorded</span>
+                    </div>
+                  </div>
+                  <strong className="text-base font-extrabold text-[#0B3470] font-mono">{money(dailyReport.totalLabour)}</strong>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
+                      <tr>
+                        <th className="p-2.5">Role / Trade</th>
+                        <th className="p-2.5 text-center">Count</th>
+                        <th className="p-2.5 text-right">Daily Rate</th>
+                        <th className="p-2.5 text-right">Subtotal</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {dailyReport.labours.length === 0 ? (
+                        <tr><td colSpan="4" className="p-6 text-center text-slate-400 italic">No labour entries for this date</td></tr>
+                      ) : (
+                        dailyReport.labours.map((l, i) => (
+                          <tr key={i} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="p-2.5 font-medium text-slate-800">{l.role}</td>
+                            <td className="p-2.5 text-center text-slate-600">{l.count}</td>
+                            <td className="p-2.5 text-right font-mono text-slate-600">{money(l.rate)}</td>
+                            <td className="p-2.5 text-right font-bold font-mono text-slate-900">{money(l.amount)}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
 
             {/* Card 2: Material Expenses */}
             <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-3">
@@ -580,8 +638,9 @@ export default function SiteExpensesReportHub({
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
+    )}
 
       {/* ----------------------------------------------------------------------------------------- */}
       {/* 1B. DATE RANGE EXPENSES REPORT VIEW */}

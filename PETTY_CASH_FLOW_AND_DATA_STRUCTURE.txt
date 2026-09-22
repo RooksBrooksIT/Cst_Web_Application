@@ -1,0 +1,1286 @@
+================================================================================
+CST WHITE LABEL - PETTY CASH SYSTEM: COMPLETE SPECIFICATION & DATA STRUCTURE
+================================================================================
+Generated for Web Application Integration
+Source: Mobile Application Reference (cst_white_label_app)
+Target: Web Application (React / Next.js / Vite / Node.js)
+================================================================================
+
+TABLE OF CONTENTS:
+1. ARCHITECTURAL OVERVIEW & FIRESTORE PATHS
+2. ROLES, ACTORS & SEPARATION OF DUTIES
+3. CANONICAL STATUS STATE MACHINES
+4. COMPLETE STEP-BY-STEP WORKFLOWS:
+   - Flow A: Petty Cash Request Lifecycle (Submission -> HQ -> Disburse -> Confirm)
+   - Flow B: Two-Stage Expense Lifecycle (Submit -> Manager Review -> Ledger Post)
+   - Flow C: Physical Cash Reconciliation Workflow
+   - Flow D: Cash Return Workflow (Surrender Cash)
+   - Flow E: Proactive Manager Allocation Workflow
+5. BALANCE ARITHMETIC & LOW-BALANCE ENGINE
+6. COMPLETE FIRESTORE DATA STRUCTURES (SCHEMAS & JSON EXAMPLES)
+   - 6.1 pettyCashAccounts
+   - 6.2 pettyCashRequests
+   - 6.3 pettyCashExpenses
+   - 6.4 pettyCashTransactions (Immutable Ledger)
+   - 6.5 pettyCashReconciliations
+   - 6.6 pettyCashReturns
+   - 6.7 pettyCashAuditLogs
+   - 6.8 SitePettyCashSummary (Frontend Computed Aggregate)
+7. WEB APPLICATION UI / COMPONENT BLUEPRINT
+8. ATOMICITY, TRANSACTIONS & IDEMPOTENCY RULES
+
+================================================================================
+1. ARCHITECTURAL OVERVIEW & FIRESTORE PATHS
+================================================================================
+All Petty Cash collections are scoped under the tenant organization root in Firestore:
+Base Path:
+  /organisation/{orgId}/{collectionName}/{documentId}
+
+Collections:
+  1. /organisation/{orgId}/pettyCashAccounts/{accountId}
+     - Account ID format for Site: {orgId}_{siteId} (e.g., "org123_site_alpha")
+     - Account ID format for Supervisor: {supervisorId} (legacy / personal)
+  2. /organisation/{orgId}/pettyCashRequests/{requestId}
+     - Request ID format: PCR_{timestamp}_{supervisorCleanId} (Request-based)
+     - Request ID format: PCM_{timestamp}_{supervisorCleanId} (Manager-initiated)
+  3. /organisation/{orgId}/pettyCashExpenses/{expenseId}
+     - Expense ID format: EXP_{timestamp}_{supervisorCleanId}
+  4. /organisation/{orgId}/pettyCashTransactions/{transactionId}
+     - Transaction ID format: TXN_{timestamp}_{TYPE}
+  5. /organisation/{orgId}/pettyCashReconciliations/{reconciliationId}
+     - Reconciliation ID format: REC_{timestamp}_{supervisorCleanId}
+  6. /organisation/{orgId}/pettyCashReturns/{returnId}
+     - Return ID format: RET_{timestamp}_{supervisorCleanId}
+  7. /organisation/{orgId}/pettyCashAuditLogs/{logId}
+     - Auto-generated document ID
+
+Related collections referenced:
+  - /organisation/{orgId}/projects (or 'sites')
+  - /organisation/{orgId}/siteSupervisorMap
+  - /organisation/{orgId}/siteSupervisorEntries
+  - /organisation/{orgId}/siteSupervisorPayments
+
+================================================================================
+2. ROLES, ACTORS & SEPARATION OF DUTIES
+================================================================================
+Three distinct roles participate in the system:
+
+1. SUPERVISOR (Site Custodian / Field Staff)
+   - Requests initial petty cash fund or replenishment for assigned sites.
+   - Confirms physical cash receipt from Manager.
+   - Spends from active funds and submits daily expenses (with photo receipts).
+   - Counts and submits physical cash reconciliation periodically.
+   - Surrenders unspent cash via Cash Return.
+
+2. MANAGER (Project / Operations Manager)
+   - Reviews supervisor petty cash requests and forwards them to HQ.
+   - Can proactively allocate petty cash directly to a site/supervisor.
+   - Disburses cash physically or electronically to the supervisor.
+   - Reviews each submitted expense (verifies receipts >= Rs 500).
+   - Approves expenses (deducts available balance, posts to ledger).
+   - Rejects invalid expenses (releases reserved balance without deduction).
+   - Confirms receipt of physical cash returns.
+   - Monitored by Separation of Duties: Cannot approve own requests/expenses!
+
+3. ORGANIZATION (HQ Admin / Finance Department / Executive)
+   - Highest approval authority.
+   - Authorizes or rejects petty cash requests forwarded by Manager.
+   - Can adjust approved amount during authorization.
+   - Views organization-wide master ledgers, site-by-site analytics, and audits.
+   - Generates monthly financial compliance reports and exports PDFs.
+
+================================================================================
+3. CANONICAL STATUS STATE MACHINES
+================================================================================
+All status strings are uppercase, normalized with underscores:
+
+A. REQUEST STATUSES:
+   - DRAFT
+   - SUBMITTED
+   - PENDING_MANAGER_REVIEW
+   - REJECTED_BY_MANAGER
+   - PENDING_ORGANIZATION_APPROVAL
+   - REJECTED_BY_ORGANIZATION
+   - APPROVED
+   - AWAITING_DISBURSEMENT
+   - DISBURSED
+   - AWAITING_RECEIPT_CONFIRMATION
+   - RECEIVED (Active in Field)
+   - ACTIVE
+   - CLOSED
+   - CANCELLED
+
+B. EXPENSE STATUSES:
+   - PENDING_EXPENSE_REVIEW (Initial state on submit, funds reserved)
+   - EXPENSE_APPROVED (Manager approved, balance deducted, posted to ledger)
+   - EXPENSE_REJECTED (Manager declined, funds released from reserve)
+
+C. RECONCILIATION STATUSES:
+   - RECONCILIATION_PENDING (Physical count matches expected balance)
+   - DISCREPANCY_REVIEW (Physical cash != expected cash, requires review)
+   - RECONCILIATION_APPROVED (Manager/HQ verified count)
+
+D. RETURN STATUSES:
+   - PENDING_RETURN_CONFIRMATION (Supervisor handed over physical cash)
+   - RETURN_CONFIRMED (Manager/HQ confirmed receipt, ledger updated)
+   - RETURN_REJECTED (Disputed return)
+
+ALLOWED TRANSITIONS MATRIX:
+   DRAFT                          -> SUBMITTED | PENDING_MANAGER_REVIEW | CANCELLED
+   SUBMITTED                      -> PENDING_MANAGER_REVIEW | PENDING_ORGANIZATION_APPROVAL | REJECTED_BY_MANAGER | CANCELLED
+   PENDING_MANAGER_REVIEW         -> PENDING_ORGANIZATION_APPROVAL | APPROVED | REJECTED_BY_MANAGER | CANCELLED
+   PENDING_ORGANIZATION_APPROVAL  -> APPROVED | AWAITING_DISBURSEMENT | DISBURSED | AWAITING_RECEIPT_CONFIRMATION | REJECTED_BY_ORGANIZATION | CANCELLED
+   APPROVED                       -> AWAITING_DISBURSEMENT | DISBURSED | AWAITING_RECEIPT_CONFIRMATION | CANCELLED
+   AWAITING_DISBURSEMENT          -> DISBURSED | AWAITING_RECEIPT_CONFIRMATION | CANCELLED
+   DISBURSED                      -> AWAITING_RECEIPT_CONFIRMATION | RECEIVED | ACTIVE
+   AWAITING_RECEIPT_CONFIRMATION  -> RECEIVED | ACTIVE
+   RECEIVED                       -> ACTIVE | CLOSED
+   ACTIVE                         -> REPLENISHMENT_REQUESTED | RECONCILIATION_PENDING | CLOSED
+   PENDING_EXPENSE_REVIEW         -> EXPENSE_APPROVED | EXPENSE_REJECTED
+   RECONCILIATION_PENDING         -> RECONCILIATION_APPROVED | DISCREPANCY_REVIEW
+   DISCREPANCY_REVIEW             -> RECONCILIATION_APPROVED | CLOSED
+
+================================================================================
+4. COMPLETE STEP-BY-STEP WORKFLOWS
+================================================================================
+
+--------------------------------------------------------------------------------
+FLOW A: PETTY CASH REQUEST LIFECYCLE (5-STEP STANDARD FLOW)
+--------------------------------------------------------------------------------
+Step 1: Supervisor Submits Request
+  - Input: siteId, siteName, requestedAmount, reason, requiredDate, documentUrl,
+           optional linkedSitePaymentId.
+  - Action: Creates document in `pettyCashRequests` with status: 'PENDING_MANAGER_REVIEW'.
+  - Current Step = 1.
+  - Notification sent to Manager.
+  - Balance Impact: 0.
+
+Step 2: Manager Reviews & Forwards
+  - Options:
+    a) Forward to HQ: Updates status to 'PENDING_ORGANIZATION_APPROVAL', currentStep = 2,
+       managerReviewRemarks = remarks. Notification sent to Org.
+    b) Reject: Updates status to 'REJECTED_BY_MANAGER', currentStep = -1,
+       rejectionReason = reason (mandatory!). Notification sent to Supervisor.
+
+Step 3: Organization (HQ) Authorizes
+  - Options:
+    a) Authorize: Enters approvedAmount, remarks. Updates status to
+       'AWAITING_RECEIPT_CONFIRMATION' (or 'AWAITING_DISBURSEMENT'),
+       currentStep = 4, orgApprovedBy, orgApprovedAt.
+    b) Reject: Status to 'REJECTED_BY_ORGANIZATION', currentStep = -1,
+       rejectionReason = reason.
+
+Step 4: Manager Disburses Funds (if separate disbursement step)
+  - Enters disbursementAmount, disburseMethod (Cash / Transfer).
+  - Status updated to 'AWAITING_RECEIPT_CONFIRMATION'.
+
+Step 5: Supervisor Confirms Receipt (CRITICAL ATOMIC STEP)
+  - The supervisor physically verifies money in hand.
+  - Clicks "Confirm Amount Received".
+  - Runs in a Firestore Atomic Transaction:
+    1. Reads Request: Checks if already confirmed (`receivedAt != null`). If yes, exits.
+    2. Reads Site Account: `/organisation/{orgId}/pettyCashAccounts/{orgId}_{siteId}`.
+    3. Calculates new balances:
+       newTotalAllocated = prevTotalAllocated + receivedAmount
+       newTotalReceived  = prevTotalReceived + receivedAmount
+       newAvailableBal   = prevAvailableBal + receivedAmount
+       newCycleAllocated = (isReplenishment ? prevCycleAllocated + receivedAmount : receivedAmount)
+    4. Updates Request Document:
+       status = 'RECEIVED'
+       receivedAmount = receivedAmount
+       receivedAt = serverTimestamp()
+       remainingBalance = receivedAmount
+       currentStep = 5
+    5. Updates Account Document:
+       totalAllocated = newTotalAllocated
+       totalReceived  = newTotalReceived
+       availableBalance = newAvailableBal
+       currentCycleAllocated = newCycleAllocated
+       status = 'ACTIVE'
+    6. Writes Immutable Ledger Transaction:
+       transactionType = isReplenishment ? 'REPLENISHMENT' : 'INITIAL_FUND'
+       amount = receivedAmount
+       previousBalance = prevAvailableBal
+       newBalance = newAvailableBal
+       status = 'POSTED'
+    7. Updates linked site supervisor payments/entries:
+       fundedViaPettyCash = true
+    8. Writes Audit Log:
+       action = 'CASH_RECEIPT_CONFIRMED'
+  - Post-transaction: Triggers notifications & project cost recalculation.
+
+--------------------------------------------------------------------------------
+FLOW B: TWO-STAGE EXPENSE LIFECYCLE (SUBMIT -> APPROVE -> POST)
+--------------------------------------------------------------------------------
+Stage 1: Supervisor Submits Expense
+  - Validation:
+    * amount > 0
+    * description is required
+    * if amount >= Rs 500 (threshold): receiptUrl is MANDATORY, OR supervisor
+      must provide written `noReceiptReason`.
+    * amount <= account.spendableBalance (where spendableBalance = availableBalance - reservedBalance)
+  - Execution (Atomic):
+    1. Creates document in `pettyCashExpenses`:
+       status = 'PENDING_EXPENSE_REVIEW'
+       postedToLedger = false
+    2. Updates Account:
+       reservedBalance += amount
+    3. Writes Audit Log: 'EXPENSE_SUBMITTED'
+  - Balance Impact:
+    * Available Balance: UNCHANGED
+    * Reserved Balance: INCREASED by amount
+    * Spendable Balance: DECREASED by amount (prevents double-spending!)
+
+Stage 2A: Manager Approves Expense (Atomic Transaction)
+  1. Validates: amount <= account.availableBalance.
+  2. Account Balance Updates:
+     newAvailableBalance = availableBalance - amount
+     newTotalSpent       = totalSpent + amount
+     newReservedBalance  = reservedBalance - amount
+  3. Low Balance Trigger Check:
+     threshold = currentCycleAllocated * 0.10 (10% threshold)
+     if newAvailableBalance <= threshold -> flag lowBalanceTriggered = true, send alert.
+  4. Creates Ledger Entry in `pettyCashTransactions`:
+     transactionType = 'EXPENSE_APPROVED'
+     amount = amount
+     previousBalance = availableBalance
+     newBalance = newAvailableBalance
+     status = 'POSTED'
+  5. Updates Expense Document:
+     status = 'EXPENSE_APPROVED'
+     postedToLedger = true
+     reviewedBy = managerName
+     transactionId = createdTxnId
+     receiptVerified = true
+  6. Writes Audit Log: 'EXPENSE_APPROVED'
+  7. Async: Recalculates Site/Project financials.
+
+Stage 2B: Manager Rejects Expense (Atomic Transaction)
+  1. Updates Expense Document:
+     status = 'EXPENSE_REJECTED'
+     rejectionReason = reason (mandatory!)
+     reviewedBy = managerName
+  2. Account Balance Updates:
+     reservedBalance = max(0, reservedBalance - amount)
+     (availableBalance is NOT touched!)
+  3. Writes Audit Log: 'EXPENSE_REJECTED'
+  4. Notifies Supervisor.
+
+--------------------------------------------------------------------------------
+FLOW C: PHYSICAL CASH RECONCILIATION WORKFLOW
+--------------------------------------------------------------------------------
+1. Expected Cash Calculation:
+   expectedCash = totalReceived - totalSpent - totalReturned
+2. Supervisor inputs actual counted cash: `physicalCash`.
+3. System calculates difference:
+   difference = physicalCash - expectedCash
+4. If |difference| > 0.01:
+   - differenceReason is MANDATORY.
+   - Status set to 'DISCREPANCY_REVIEW'.
+   Else:
+   - Status set to 'RECONCILIATION_PENDING'.
+5. Saved in `pettyCashReconciliations`.
+6. Manager / HQ reviews and approves or resolves discrepancy.
+
+--------------------------------------------------------------------------------
+FLOW D: CASH RETURN WORKFLOW (PHYSICAL CASH SURRENDER)
+--------------------------------------------------------------------------------
+1. Supervisor surrenders unspent cash:
+   - returnAmount <= account.availableBalance.
+   - Reason & optional handover proof document.
+   - Saved in `pettyCashReturns` with status: 'PENDING_RETURN_CONFIRMATION'.
+2. Manager / HQ confirms physical cash received (Atomic Transaction):
+   - Updates Account:
+     availableBalance -= returnAmount
+     totalReturned += returnAmount
+   - Creates Ledger Transaction:
+     transactionType = 'CASH_RETURN'
+     amount = returnAmount
+     status = 'POSTED'
+   - Updates Return Document:
+     status = 'RETURN_CONFIRMED'
+     receivedBy, receivedAt, transactionId
+   - Writes Audit Log: 'CASH_RETURN_CONFIRMED'.
+
+--------------------------------------------------------------------------------
+FLOW E: PROACTIVE MANAGER ALLOCATION WORKFLOW
+--------------------------------------------------------------------------------
+1. Manager can proactively fund a site directly from manager dashboard.
+2. Manager submits: siteId, supervisorId, amount, reason.
+3. System creates request in `pettyCashRequests` with:
+   requestType = 'MANUAL_MANAGER'
+   requestSource = 'MANUAL_MANAGER'
+   status = 'PENDING_ORGANIZATION_APPROVAL' (currentStep = 2)
+   managerReviewedBy = managerName
+4. Jumps straight to HQ Approval (Step 3).
+
+================================================================================
+5. BALANCE ARITHMETIC & LOW-BALANCE ENGINE
+================================================================================
+
+Account Balance Definitions:
+  1. TOTAL ALLOCATED (totalAllocated) = Cumulative total granted to site/account.
+  2. TOTAL RECEIVED (totalReceived)   = Cumulative total confirmed received by supervisor.
+  3. TOTAL SPENT (totalSpent)         = Cumulative sum of APPROVED expenses posted.
+  4. TOTAL RETURNED (totalReturned)   = Cumulative sum of confirmed cash returns.
+  5. AVAILABLE BALANCE (availableBalance) =
+     totalReceived - totalSpent - totalReturned
+  6. RESERVED BALANCE (reservedBalance) =
+     Sum of all submitted expenses currently in 'PENDING_EXPENSE_REVIEW'.
+  7. SPENDABLE BALANCE (spendableBalance) =
+     Math.max(0, availableBalance - reservedBalance)
+     * Supervisor CANNOT submit new expenses if expenseAmount > spendableBalance!
+  8. LOW BALANCE THRESHOLD AMOUNT =
+     if (configuredMinimumBalance > 0) return configuredMinimumBalance;
+     base = (fundLimit > 0) ? fundLimit : currentCycleAllocated;
+     return base * (lowBalanceThresholdPercent / 100.0); // Default is 10%
+  9. LOW BALANCE FLAG:
+     isLowBalance = (totalAllocated > 0) && (availableBalance <= lowBalanceThresholdAmount);
+
+================================================================================
+6. COMPLETE FIRESTORE DATA STRUCTURES (SCHEMAS & JSON EXAMPLES)
+================================================================================
+
+--------------------------------------------------------------------------------
+6.1 COLLECTION: pettyCashAccounts
+Path: /organisation/{orgId}/pettyCashAccounts/{accountId}
+Document ID: {orgId}_{siteId} (e.g. "org_demo_site_101")
+--------------------------------------------------------------------------------
+SCHEMA:
+  accountId:                  string (required)
+  orgId:                      string (required)
+  organizationId:             string (required, alias)
+  siteId:                     string (required)
+  siteName:                   string (required)
+  supervisorId:               string (required)
+  supervisorName:             string (required)
+  custodianSupervisorId:      string (required)
+  custodianSupervisorName:    string (required)
+  managerId:                  string
+  managerName:                string
+  totalAllocated:             number (float)
+  totalReceived:              number (float)
+  totalUsed:                  number (float, alias for totalSpent)
+  totalSpent:                 number (float)
+  totalReturned:              number (float)
+  availableBalance:           number (float)
+  reservedBalance:            number (float)
+  postedExpenseBalance:       number (float)
+  fundLimit:                  number (float)
+  configuredMinimumBalance:   number (float)
+  lowBalanceThresholdPercent: number (default: 10.0)
+  lowBalanceTriggered:        boolean
+  currentCycleAllocated:      number (float)
+  currentCycleId:             string (request ID of active funding cycle)
+  status:                     string ('ACTIVE', 'CLOSED', 'SUSPENDED')
+  lastTransactionAt:          Timestamp
+  createdAt:                  Timestamp
+  updatedAt:                  Timestamp
+
+EXAMPLE JSON:
+{
+  "accountId": "org_cst_site_401",
+  "orgId": "org_cst",
+  "organizationId": "org_cst",
+  "siteId": "site_401",
+  "siteName": "Tower Heights Phase 2",
+  "supervisorId": "sup_vikram_01",
+  "supervisorName": "Vikram Sharma",
+  "custodianSupervisorId": "sup_vikram_01",
+  "custodianSupervisorName": "Vikram Sharma",
+  "managerId": "mgr_arun_05",
+  "managerName": "Arun Kumar",
+  "totalAllocated": 50000.0,
+  "totalReceived": 50000.0,
+  "totalUsed": 18450.0,
+  "totalSpent": 18450.0,
+  "totalReturned": 0.0,
+  "availableBalance": 31550.0,
+  "reservedBalance": 2500.0,
+  "postedExpenseBalance": 18450.0,
+  "fundLimit": 50000.0,
+  "configuredMinimumBalance": 5000.0,
+  "lowBalanceThresholdPercent": 10.0,
+  "lowBalanceTriggered": false,
+  "currentCycleAllocated": 50000.0,
+  "currentCycleId": "PCR_1726910000_supvikram01",
+  "status": "ACTIVE",
+  "lastTransactionAt": "2026-09-21T16:45:00.000Z",
+  "createdAt": "2026-09-01T08:00:00.000Z",
+  "updatedAt": "2026-09-21T16:45:00.000Z"
+}
+
+--------------------------------------------------------------------------------
+6.2 COLLECTION: pettyCashRequests
+Path: /organisation/{orgId}/pettyCashRequests/{requestId}
+Document ID: PCR_{timestamp}_{cleanSupervisorId}
+--------------------------------------------------------------------------------
+SCHEMA:
+  requestId:               string (required)
+  orgId:                   string (required)
+  organizationId:          string (alias)
+  requestType:             string ('INITIAL_ALLOCATION', 'REPLENISHMENT', 'MANUAL_MANAGER', 'OTHER_EXPENSE')
+  requestSource:           string ('REQUEST_BASED', 'MANUAL_MANAGER')
+  supervisorId:            string (required)
+  supervisorName:          string (required)
+  managerId:               string
+  managerName:             string
+  projectId:               string
+  projectName:             string
+  siteId:                  string (required if isSiteExpense = true)
+  siteName:                string
+  siteCode:                string
+  isSiteExpense:           boolean
+  expenseType:             string ('site' or 'other')
+  expenseCategory:         string
+  requiredDate:            Timestamp
+  documentUrl:             string
+  requestedAmount:         number (float)
+  approvedAmount:          number (float)
+  disbursedAmount:         number (float)
+  allocatedAmount:         number (float)
+  receivedAmount:          number (float)
+  totalSpent:              number (float)
+  remainingBalance:        number (float)
+  reason:                  string (required)
+  remarks:                 string
+  status:                  string (PettyCashStatus enum)
+  statusDisplay:           string ('Pending Manager Review', etc.)
+  currentStep:             number (1: Sup Submit, 2: Mgr Review, 3: Org Auth, 4: Disbursed, 5: Confirmed, -1: Rejected)
+  currentBalanceAtRequest: number (snapshot)
+  totalAllocatedAtRequest: number (snapshot)
+  totalUsedAtRequest:      number (snapshot)
+  managerReviewRemarks:    string
+  managerReviewedBy:       string
+  managerReviewedAt:       Timestamp
+  orgApprovalRemarks:      string
+  orgApprovedBy:           string
+  orgApprovedAt:           Timestamp
+  orgRejectedBy:           string
+  rejectionReason:         string
+  allocatedBy:             string
+  allocatedAt:             Timestamp
+  disbursedBy:             string
+  disbursedAt:             Timestamp
+  receivedAt:              Timestamp
+  receivedBySupervisorId:   string
+  receivedBySupervisorName: string
+  linkedSitePaymentId:     string
+  linkedSitePaymentTitle:  string
+  approvalHistory:         array of objects:
+    - step:                string
+      action:              string
+      actorRole:           string
+      actorName:           string
+      actorId:             string
+      remarks:             string
+      timestamp:           string (ISO-8601)
+  createdAt:               Timestamp
+  updatedAt:               Timestamp
+
+EXAMPLE JSON:
+{
+  "requestId": "PCR_1726910000_supvikram01",
+  "orgId": "org_cst",
+  "organizationId": "org_cst",
+  "requestType": "INITIAL_ALLOCATION",
+  "requestSource": "REQUEST_BASED",
+  "supervisorId": "sup_vikram_01",
+  "supervisorName": "Vikram Sharma",
+  "managerId": "mgr_arun_05",
+  "managerName": "Arun Kumar",
+  "projectId": "proj_99",
+  "projectName": "Tower Heights Project",
+  "siteId": "site_401",
+  "siteName": "Tower Heights Phase 2",
+  "siteCode": "TH-P2",
+  "isSiteExpense": true,
+  "expenseType": "site",
+  "requestedAmount": 50000.0,
+  "approvedAmount": 50000.0,
+  "disbursedAmount": 50000.0,
+  "allocatedAmount": 50000.0,
+  "receivedAmount": 50000.0,
+  "totalSpent": 18450.0,
+  "remainingBalance": 31550.0,
+  "reason": "Initial petty cash fund for daily diesel, unloading labor and emergency hardware purchases.",
+  "remarks": "Approved as per site mobilization budget.",
+  "status": "RECEIVED",
+  "statusDisplay": "Funds Active in Field",
+  "currentStep": 5,
+  "currentBalanceAtRequest": 0.0,
+  "totalAllocatedAtRequest": 0.0,
+  "totalUsedAtRequest": 0.0,
+  "managerReviewRemarks": "Verified against site schedule.",
+  "managerReviewedBy": "Arun Kumar",
+  "managerReviewedAt": "2026-09-01T09:30:00.000Z",
+  "orgApprovalRemarks": "Approved full amount.",
+  "orgApprovedBy": "HQ Finance",
+  "orgApprovedAt": "2026-09-01T11:15:00.000Z",
+  "disbursedBy": "Arun Kumar",
+  "disbursedAt": "2026-09-01T14:00:00.000Z",
+  "receivedAt": "2026-09-01T14:30:00.000Z",
+  "receivedBySupervisorId": "sup_vikram_01",
+  "receivedBySupervisorName": "Vikram Sharma",
+  "approvalHistory": [
+    {
+      "step": "1. Supervisor Submission",
+      "action": "Petty Cash Requested",
+      "actorRole": "Supervisor",
+      "actorName": "Vikram Sharma",
+      "actorId": "sup_vikram_01",
+      "remarks": "Initial petty cash fund",
+      "timestamp": "2026-09-01T08:00:00.000Z"
+    },
+    {
+      "step": "2. Manager Review",
+      "action": "Verified & Forwarded to HQ",
+      "actorRole": "Manager",
+      "actorName": "Arun Kumar",
+      "actorId": "mgr_arun_05",
+      "remarks": "Verified against site schedule.",
+      "timestamp": "2026-09-01T09:30:00.000Z"
+    },
+    {
+      "step": "3. Organization Authorization",
+      "action": "Authorized by Organization",
+      "actorRole": "Organization",
+      "actorName": "HQ Finance",
+      "actorId": "org_admin",
+      "remarks": "Approved full amount.",
+      "timestamp": "2026-09-01T11:15:00.000Z"
+    },
+    {
+      "step": "4. Manager Fund Disbursement",
+      "action": "Cash Disbursed by Manager",
+      "actorRole": "Manager",
+      "actorName": "Arun Kumar",
+      "actorId": "mgr_arun_05",
+      "remarks": "Handed cash to Vikram on site.",
+      "timestamp": "2026-09-01T14:00:00.000Z"
+    },
+    {
+      "step": "5. Amount Received Confirmation",
+      "action": "Amount Received Confirmed",
+      "actorRole": "Supervisor",
+      "actorName": "Vikram Sharma",
+      "actorId": "sup_vikram_01",
+      "remarks": "Physically received Rs 50,000.00 cash.",
+      "timestamp": "2026-09-01T14:30:00.000Z"
+    }
+  ],
+  "createdAt": "2026-09-01T08:00:00.000Z",
+  "updatedAt": "2026-09-01T14:30:00.000Z"
+}
+
+--------------------------------------------------------------------------------
+6.3 COLLECTION: pettyCashExpenses
+Path: /organisation/{orgId}/pettyCashExpenses/{expenseId}
+Document ID: EXP_{timestamp}_{cleanSupervisorId}
+--------------------------------------------------------------------------------
+SCHEMA:
+  expenseId:             string (required)
+  idempotencyKey:        string (required, unique)
+  accountId:             string (required)
+  pettyCashAccountId:    string (alias)
+  orgId:                 string (required)
+  organizationId:        string (alias)
+  expenseType:           string ('site' | 'other')
+  isSiteExpense:         boolean
+  siteId:                string (null if non-site)
+  siteName:              string
+  siteCode:              string
+  pettyCashId:           string (linked request ID)
+  submittedBy:           string (supervisorId)
+  submittedByName:       string (supervisorName)
+  managerId:             string
+  managerName:           string
+  amount:                number (float, required)
+  category:              string (required: 'Diesel & Fuel', 'Site Hardware', 'Daily Labor', 'Refreshments', 'Office Supplies', etc.)
+  expenseCategory:       string (alias)
+  description:           string (required)
+  vendorName:            string (optional)
+  receiptUrl:            string (Cloud Storage URL)
+  receiptFileName:       string
+  receiptUploadedAt:     Timestamp
+  receiptRequired:       boolean (true if amount >= 500)
+  noReceiptReason:       string (required if amount >= 500 and no receiptUrl)
+  receiptVerified:       boolean
+  receiptVerifiedBy:     string
+  receiptVerifiedAt:     Timestamp
+  status:                string ('PENDING_EXPENSE_REVIEW', 'EXPENSE_APPROVED', 'EXPENSE_REJECTED')
+  reviewedBy:            string
+  reviewRemarks:         string
+  approvedAt:            Timestamp
+  rejectedAt:            Timestamp
+  rejectionReason:       string
+  postedToLedger:        boolean
+  transactionId:         string (ID in pettyCashTransactions)
+  transactionDate:       Timestamp (date of expense)
+  createdAt:             Timestamp
+  updatedAt:             Timestamp
+
+EXAMPLE JSON:
+{
+  "expenseId": "EXP_1726915000_supvikram01",
+  "idempotencyKey": "EXP_sup_vikram_01_1726915000_2500",
+  "accountId": "org_cst_site_401",
+  "pettyCashAccountId": "org_cst_site_401",
+  "orgId": "org_cst",
+  "organizationId": "org_cst",
+  "expenseType": "site",
+  "isSiteExpense": true,
+  "siteId": "site_401",
+  "siteName": "Tower Heights Phase 2",
+  "siteCode": "TH-P2",
+  "pettyCashId": "PCR_1726910000_supvikram01",
+  "submittedBy": "sup_vikram_01",
+  "submittedByName": "Vikram Sharma",
+  "managerId": "mgr_arun_05",
+  "managerName": "Arun Kumar",
+  "amount": 2500.0,
+  "category": "Diesel & Fuel",
+  "expenseCategory": "Diesel & Fuel",
+  "description": "Diesel for backup generator during concrete pour",
+  "vendorName": "HP Fuel Station Bypass",
+  "receiptUrl": "https://storage.googleapis.com/org_cst/petty_cash/receipts/rec_fuel_2500.jpg",
+  "receiptFileName": "rec_fuel_2500.jpg",
+  "receiptUploadedAt": "2026-09-21T10:00:00.000Z",
+  "receiptRequired": true,
+  "noReceiptReason": null,
+  "receiptVerified": true,
+  "receiptVerifiedBy": "Arun Kumar",
+  "receiptVerifiedAt": "2026-09-21T11:00:00.000Z",
+  "status": "EXPENSE_APPROVED",
+  "reviewedBy": "Arun Kumar",
+  "reviewRemarks": "Receipt verified with generator log.",
+  "approvedAt": "2026-09-21T11:00:00.000Z",
+  "rejectedAt": null,
+  "rejectionReason": null,
+  "postedToLedger": true,
+  "transactionId": "TXN_1726918800_EXP",
+  "transactionDate": "2026-09-21T09:30:00.000Z",
+  "createdAt": "2026-09-21T10:00:00.000Z",
+  "updatedAt": "2026-09-21T11:00:00.000Z"
+}
+
+--------------------------------------------------------------------------------
+6.4 COLLECTION: pettyCashTransactions (IMMUTABLE LEDGER)
+Path: /organisation/{orgId}/pettyCashTransactions/{transactionId}
+Document ID: TXN_{timestamp}_{TYPE}
+--------------------------------------------------------------------------------
+SCHEMA:
+  transactionId:       string (required)
+  idempotencyKey:      string (required, unique)
+  pettyCashId:         string (linked request ID)
+  referenceId:         string (expense ID, request ID, or return ID)
+  accountId:           string (required)
+  pettyCashAccountId:  string (alias)
+  orgId:               string (required)
+  organizationId:      string (alias)
+  supervisorId:        string (required)
+  supervisorName:      string (required)
+  managerId:           string
+  managerName:         string
+  projectId:           string
+  projectName:         string
+  siteId:              string
+  siteName:            string
+  siteCode:            string
+  expenseType:         string ('site' or 'other')
+  vendorName:          string
+  linkedSitePaymentId: string
+  isSiteExpense:       boolean
+  transactionType:     string ('INITIAL_FUND', 'CASH_DISBURSED', 'EXPENSE_APPROVED', 'REPLENISHMENT', 'CASH_RETURN', 'ADJUSTMENT')
+  expenseCategory:     string
+  category:            string (alias)
+  description:         string (required)
+  amount:              number (float, required)
+  previousBalance:     number (float, required)
+  newBalance:          number (float, required)
+  remarks:             string
+  attachmentUrl:       string
+  status:              string ('POSTED')
+  transactionDate:     Timestamp
+  createdBy:           string
+  createdRole:         string ('Supervisor', 'Manager', 'Organization', 'System')
+  createdAt:           Timestamp
+
+EXAMPLE JSON:
+{
+  "transactionId": "TXN_1726918800_EXP",
+  "idempotencyKey": "EXP_APPROVED_EXP_1726915000_supvikram01",
+  "pettyCashId": "PCR_1726910000_supvikram01",
+  "referenceId": "EXP_1726915000_supvikram01",
+  "accountId": "org_cst_site_401",
+  "pettyCashAccountId": "org_cst_site_401",
+  "orgId": "org_cst",
+  "organizationId": "org_cst",
+  "supervisorId": "sup_vikram_01",
+  "supervisorName": "Vikram Sharma",
+  "managerId": "mgr_arun_05",
+  "managerName": "Arun Kumar",
+  "siteId": "site_401",
+  "siteName": "Tower Heights Phase 2",
+  "siteCode": "TH-P2",
+  "expenseType": "site",
+  "vendorName": "HP Fuel Station Bypass",
+  "isSiteExpense": true,
+  "transactionType": "EXPENSE_APPROVED",
+  "expenseCategory": "Diesel & Fuel",
+  "category": "Diesel & Fuel",
+  "description": "Diesel for backup generator during concrete pour",
+  "amount": 2500.0,
+  "previousBalance": 34050.0,
+  "newBalance": 31550.0,
+  "remarks": "Receipt verified with generator log.",
+  "attachmentUrl": "https://storage.googleapis.com/org_cst/petty_cash/receipts/rec_fuel_2500.jpg",
+  "status": "POSTED",
+  "transactionDate": "2026-09-21T09:30:00.000Z",
+  "createdBy": "Arun Kumar",
+  "createdRole": "Manager",
+  "createdAt": "2026-09-21T11:00:00.000Z"
+}
+
+--------------------------------------------------------------------------------
+6.5 COLLECTION: pettyCashReconciliations
+Path: /organisation/{orgId}/pettyCashReconciliations/{reconciliationId}
+Document ID: REC_{timestamp}_{cleanSupervisorId}
+--------------------------------------------------------------------------------
+SCHEMA:
+  reconciliationId:     string (required)
+  accountId:            string (required)
+  orgId:                string (required)
+  organizationId:       string (alias)
+  siteId:               string
+  siteName:             string
+  expectedCash:         number (float)
+  physicalCash:         number (float)
+  difference:           number (float = physicalCash - expectedCash)
+  differenceReason:     string (mandatory if difference != 0)
+  supportingAttachment: string (cash count sheet photo URL)
+  submittedBy:          string (supervisorId)
+  submittedByName:      string (supervisorName)
+  reviewedBy:           string
+  reviewRemarks:        string
+  reviewedAt:           Timestamp
+  status:               string ('RECONCILIATION_PENDING', 'RECONCILIATION_APPROVED', 'DISCREPANCY_REVIEW')
+  createdAt:            Timestamp
+  updatedAt:            Timestamp
+
+EXAMPLE JSON:
+{
+  "reconciliationId": "REC_1726922000_supvikram01",
+  "accountId": "org_cst_site_401",
+  "orgId": "org_cst",
+  "organizationId": "org_cst",
+  "siteId": "site_401",
+  "siteName": "Tower Heights Phase 2",
+  "expectedCash": 31550.0,
+  "physicalCash": 31550.0,
+  "difference": 0.0,
+  "differenceReason": null,
+  "supportingAttachment": "https://storage.googleapis.com/org_cst/petty_cash/recon/sheet_sep21.jpg",
+  "submittedBy": "sup_vikram_01",
+  "submittedByName": "Vikram Sharma",
+  "reviewedBy": "Arun Kumar",
+  "reviewRemarks": "Physical cash tally matched denomination breakdown.",
+  "reviewedAt": "2026-09-21T18:00:00.000Z",
+  "status": "RECONCILIATION_APPROVED",
+  "createdAt": "2026-09-21T17:30:00.000Z",
+  "updatedAt": "2026-09-21T18:00:00.000Z"
+}
+
+--------------------------------------------------------------------------------
+6.6 COLLECTION: pettyCashReturns
+Path: /organisation/{orgId}/pettyCashReturns/{returnId}
+Document ID: RET_{timestamp}_{cleanSupervisorId}
+--------------------------------------------------------------------------------
+SCHEMA:
+  returnId:         string (required)
+  accountId:        string (required)
+  orgId:            string (required)
+  organizationId:   string (alias)
+  siteId:           string
+  siteName:         string
+  returnAmount:     number (float, required)
+  returnedBy:       string (supervisorId)
+  returnedByName:   string (supervisorName)
+  receivedBy:       string (manager or org user ID)
+  receivedByName:   string
+  returnDate:       Timestamp
+  proofUrl:         string (cash deposit receipt or acknowledgment photo)
+  reason:           string (required, e.g. "Site work completed")
+  status:           string ('PENDING_RETURN_CONFIRMATION', 'RETURN_CONFIRMED', 'RETURN_REJECTED')
+  transactionId:    string (ledger transaction ID once confirmed)
+  createdAt:        Timestamp
+
+EXAMPLE JSON:
+{
+  "returnId": "RET_1726930000_supvikram01",
+  "accountId": "org_cst_site_401",
+  "orgId": "org_cst",
+  "organizationId": "org_cst",
+  "siteId": "site_401",
+  "siteName": "Tower Heights Phase 2",
+  "returnAmount": 10000.0,
+  "returnedBy": "sup_vikram_01",
+  "returnedByName": "Vikram Sharma",
+  "receivedBy": "mgr_arun_05",
+  "receivedByName": "Arun Kumar",
+  "returnDate": "2026-09-21T19:00:00.000Z",
+  "proofUrl": "https://storage.googleapis.com/org_cst/petty_cash/returns/ack_10000.jpg",
+  "reason": "Surplus cash surrendered back to manager before site closure.",
+  "status": "RETURN_CONFIRMED",
+  "transactionId": "TXN_1726930500_RET",
+  "createdAt": "2026-09-21T19:00:00.000Z"
+}
+
+--------------------------------------------------------------------------------
+6.7 COLLECTION: pettyCashAuditLogs
+Path: /organisation/{orgId}/pettyCashAuditLogs/{logId}
+Document ID: Auto-generated
+--------------------------------------------------------------------------------
+SCHEMA:
+  logId:          string (required)
+  action:         string ('REQUEST_CREATED', 'REQUEST_FORWARDED', 'ORGANIZATION_APPROVED', 'CASH_DISBURSED', 'CASH_RECEIPT_CONFIRMED', 'EXPENSE_SUBMITTED', 'EXPENSE_APPROVED', 'EXPENSE_REJECTED', 'RECONCILIATION_SUBMITTED', 'CASH_RETURN_CONFIRMED', etc.)
+  entityType:     string ('ACCOUNT', 'REQUEST', 'EXPENSE', 'TRANSACTION', 'RECONCILIATION', 'RETURN')
+  entityId:       string (ID of target document)
+  actorId:        string (required)
+  actorName:      string (required)
+  actorRole:      string ('Supervisor', 'Manager', 'Organization', 'System')
+  organizationId: string
+  siteId:         string
+  previousState:  object (key-value map of prior values)
+  newState:       object (key-value map of updated values)
+  metadata:       object (extra context like IP, remarks, txnId)
+  timestamp:      Timestamp
+
+EXAMPLE JSON:
+{
+  "logId": "aud_log_98457201",
+  "action": "EXPENSE_APPROVED",
+  "entityType": "EXPENSE",
+  "entityId": "EXP_1726915000_supvikram01",
+  "actorId": "mgr_arun_05",
+  "actorName": "Arun Kumar",
+  "actorRole": "Manager",
+  "organizationId": "org_cst",
+  "siteId": "site_401",
+  "previousState": {
+    "status": "PENDING_EXPENSE_REVIEW",
+    "availableBalance": 34050.0
+  },
+  "newState": {
+    "status": "EXPENSE_APPROVED",
+    "availableBalance": 31550.0,
+    "txnId": "TXN_1726918800_EXP"
+  },
+  "metadata": {
+    "amount": 2500.0,
+    "category": "Diesel & Fuel"
+  },
+  "timestamp": "2026-09-21T11:00:00.000Z"
+}
+
+--------------------------------------------------------------------------------
+6.8 FRONTEND COMPUTED MODEL: SitePettyCashSummary
+(Computed aggregate dynamically built from requests and transactions)
+--------------------------------------------------------------------------------
+FIELDS:
+  siteId:             string
+  siteName:           string
+  projectId:          string
+  projectName:        string
+  supervisorId:       string
+  supervisorName:     string
+  managerId:          string
+  managerName:        string
+  totalReceived:      number (sum of confirmed received requests)
+  totalExpenses:      number (sum of approved/posted expenses)
+  otherExpenses:      number (sum of non-site / miscellaneous expenses)
+  remainingBalance:   number (totalReceived - totalExpenses)
+  utilizationPercent: number ((totalExpenses / totalReceived) * 100)
+  isLowBalance:       boolean (remainingBalance <= totalReceived * 0.10)
+  transactionCount:   number
+  allocationCount:    number
+  lastActivityAt:     ISO Date string
+  status:             string ('Active', 'Low Balance', 'Fully Utilized', 'Pending Receipt')
+
+================================================================================
+7. WEB APPLICATION UI / COMPONENT BLUEPRINT
+================================================================================
+
+A. SUPERVISOR WEB DASHBOARD:
+   Tabs:
+   1. Overview:
+      - KPI Cards: Total Received, Total Spent, Available Balance, Reserved Balance,
+        Spendable Balance, Low Balance Warning Banner.
+      - Quick Actions: "+ New Expense", "Request Fund Replenishment", "Reconcile Cash".
+      - Assigned Sites Card selector.
+      - Pending Confirmations Banner: Highlights approved requests awaiting physical receipt!
+   2. Expenses:
+      - Filter Bar: All / Pending Review / Approved / Declined.
+      - Category & Date Range Pickers.
+      - Table: Date, Site, Category, Description, Vendor, Amount, Receipt (preview modal), Status.
+   3. Requests:
+      - Table of petty cash requests with 5-Step Visual Stepper (Lifecycle Modal).
+   4. Reconcile & Return:
+      - Count Sheet Form: Denomination inputs (2000, 500, 200, 100, 50, 20, 10, Coins).
+      - Live calculation of Physical vs Expected.
+      - Cash Return modal.
+
+B. MANAGER WEB DASHBOARD:
+   Tabs:
+   1. Request Reviews:
+      - Badge counter of pending supervisor requests.
+      - Review Modal: View reason, balance snapshot -> "Verify & Forward to HQ" or "Reject".
+      - Proactive "Create Manual Allocation" button.
+   2. Expense Approvals:
+      - Two-Stage Expense Review Table.
+      - Receipt Image viewer modal with zoom/rotate.
+      - Actions: "Approve & Post to Ledger" (auto deducts balance), "Reject" (releases reserve).
+   3. Disbursements:
+      - Approved requests awaiting cash handover.
+      - "Disburse Cash" button.
+   4. Reconcile & Returns:
+      - Discrepancy flags review table.
+      - Confirm physical cash returns.
+   5. Site-Wise Analytics:
+      - Aggregated Site Cards: Total Received vs Spent progress bars, remaining balance.
+   6. Supervisors:
+      - Custodian balances list.
+   7. Ledger:
+      - Real-time immutable transaction history filterable by date, type, site, supervisor.
+   8. Reports:
+      - Category-wise pie chart, monthly trend line chart, CSV/PDF export.
+
+C. ORGANIZATION (HQ) WEB DASHBOARD:
+   Tabs:
+   1. HQ Approvals:
+      - Final approval queue for forwarded manager requests.
+      - Action: Enter authorized amount, approve or reject with reason.
+   2. Master Ledger:
+      - Comprehensive company-wide audit ledger.
+   3. Site Expenses:
+      - Breakdown per project site.
+   4. Other Expenses:
+      - Office / Non-site operational expenses.
+   5. Monthly Report:
+      - Month-by-month financial summary with download report button.
+   6. Audit Trail:
+      - Real-time stream of all user actions with before/after state diff.
+
+================================================================================
+8. ATOMICITY, TRANSACTIONS & IDEMPOTENCY RULES
+================================================================================
+1. ALL BALANCE MUTATIONS MUST RUN IN FIRESTORE TRANSACTIONS:
+   - Reading account doc -> calculating new balance -> writing account & ledger.
+   - Never write to account balances using client-side arithmetic without transactions!
+2. IDEMPOTENCY KEYS:
+   - For Cash Receipt: `RECV_{requestId}_{amount}`
+   - For Expense Submit: `EXP_{supervisorId}_{timestamp}_{amount}`
+   - For Expense Approval: `EXP_APPROVED_{expenseId}`
+   - For Cash Return: `RET_CONFIRMED_{returnId}`
+3. RECEIPT THRESHOLD:
+   - Expenses >= Rs 500 MUST either have `receiptUrl` OR `noReceiptReason`.
+4. SEPARATION OF DUTIES:
+   - A manager or org admin who created an allocation or request CANNOT approve it.
+   - `actorId.toLowerCase() != requesterId.toLowerCase()`.
+
+================================================================================
+9. TYPESCRIPT / JAVASCRIPT DEFINITIONS & WEB SERVICE BOILERPLATE
+================================================================================
+
+// --- TYPESCRIPT INTERFACES ---
+
+export interface PettyCashAccount {
+  accountId: string;
+  orgId: string;
+  organizationId: string;
+  siteId: string;
+  siteName: string;
+  supervisorId: string;
+  supervisorName: string;
+  custodianSupervisorId: string;
+  custodianSupervisorName: string;
+  managerId: string;
+  managerName: string;
+  totalAllocated: number;
+  totalReceived: number;
+  totalUsed: number;
+  totalSpent: number;
+  totalReturned: number;
+  availableBalance: number;
+  reservedBalance: number;
+  postedExpenseBalance: number;
+  fundLimit: number;
+  configuredMinimumBalance: number;
+  lowBalanceThresholdPercent: number; // default 10.0
+  lowBalanceTriggered: boolean;
+  currentCycleAllocated: number;
+  currentCycleId: string;
+  status: 'ACTIVE' | 'CLOSED' | 'SUSPENDED';
+  lastTransactionAt?: any;
+  createdAt?: any;
+  updatedAt?: any;
+}
+
+export interface ApprovalHistoryEntry {
+  step: string;
+  action: string;
+  actorRole: 'Supervisor' | 'Manager' | 'Organization' | 'System';
+  actorName: string;
+  actorId?: string;
+  remarks: string;
+  timestamp: string; // ISO string
+}
+
+export interface PettyCashRequest {
+  requestId: string;
+  orgId: string;
+  organizationId: string;
+  requestType: 'INITIAL_ALLOCATION' | 'REPLENISHMENT' | 'MANUAL_MANAGER' | 'OTHER_EXPENSE';
+  requestSource: 'REQUEST_BASED' | 'MANUAL_MANAGER';
+  supervisorId: string;
+  supervisorName: string;
+  managerId: string;
+  managerName: string;
+  projectId?: string;
+  projectName?: string;
+  siteId?: string;
+  siteName?: string;
+  siteCode?: string;
+  isSiteExpense: boolean;
+  expenseType: 'site' | 'other';
+  expenseCategory?: string;
+  requiredDate?: any;
+  documentUrl?: string;
+  requestedAmount: number;
+  approvedAmount: number;
+  disbursedAmount: number;
+  allocatedAmount: number;
+  receivedAmount: number;
+  totalSpent: number;
+  remainingBalance: number;
+  reason: string;
+  remarks: string;
+  status: string;
+  statusDisplay: string;
+  currentStep: number;
+  currentBalanceAtRequest: number;
+  totalAllocatedAtRequest: number;
+  totalUsedAtRequest: number;
+  managerReviewRemarks?: string;
+  managerReviewedBy?: string;
+  managerReviewedAt?: any;
+  orgApprovalRemarks?: string;
+  orgApprovedBy?: string;
+  orgApprovedAt?: any;
+  orgRejectedBy?: string;
+  rejectionReason?: string;
+  disbursedBy?: string;
+  disbursedAt?: any;
+  receivedAt?: any;
+  receivedBySupervisorId?: string;
+  receivedBySupervisorName?: string;
+  approvalHistory: ApprovalHistoryEntry[];
+  createdAt?: any;
+  updatedAt?: any;
+}
+
+export interface PettyCashExpense {
+  expenseId: string;
+  idempotencyKey: string;
+  accountId: string;
+  pettyCashAccountId: string;
+  orgId: string;
+  organizationId: string;
+  expenseType: 'site' | 'other';
+  isSiteExpense: boolean;
+  siteId?: string;
+  siteName?: string;
+  siteCode?: string;
+  pettyCashId?: string;
+  submittedBy: string;
+  submittedByName: string;
+  managerId: string;
+  managerName: string;
+  amount: number;
+  category: string;
+  expenseCategory: string;
+  description: string;
+  vendorName?: string;
+  receiptUrl?: string;
+  receiptFileName?: string;
+  receiptUploadedAt?: any;
+  receiptRequired: boolean;
+  noReceiptReason?: string;
+  receiptVerified: boolean;
+  receiptVerifiedBy?: string;
+  receiptVerifiedAt?: any;
+  status: 'PENDING_EXPENSE_REVIEW' | 'EXPENSE_APPROVED' | 'EXPENSE_REJECTED';
+  reviewedBy?: string;
+  reviewRemarks?: string;
+  approvedAt?: any;
+  rejectedAt?: any;
+  rejectionReason?: string;
+  postedToLedger: boolean;
+  transactionId?: string;
+  transactionDate: any;
+  createdAt?: any;
+  updatedAt?: any;
+}
+
+export interface PettyCashTransaction {
+  transactionId: string;
+  idempotencyKey: string;
+  pettyCashId?: string;
+  referenceId?: string;
+  accountId: string;
+  pettyCashAccountId: string;
+  orgId: string;
+  organizationId: string;
+  supervisorId: string;
+  supervisorName: string;
+  managerId: string;
+  managerName: string;
+  siteId?: string;
+  siteName?: string;
+  siteCode?: string;
+  expenseType: 'site' | 'other';
+  vendorName?: string;
+  isSiteExpense: boolean;
+  transactionType: 'INITIAL_FUND' | 'CASH_DISBURSED' | 'EXPENSE_APPROVED' | 'REPLENISHMENT' | 'CASH_RETURN' | 'ADJUSTMENT';
+  expenseCategory: string;
+  category: string;
+  description: string;
+  amount: number;
+  previousBalance: number;
+  newBalance: number;
+  remarks: string;
+  attachmentUrl?: string;
+  status: 'POSTED';
+  transactionDate: any;
+  createdBy: string;
+  createdRole: 'Supervisor' | 'Manager' | 'Organization' | 'System';
+  createdAt?: any;
+}
+
+// --- STANDARD EXPENSE CATEGORIES ---
+export const SITE_EXPENSE_CATEGORIES = [
+  'Office & Site Supplies',
+  'Transport & Travel',
+  'Emergency Repairs',
+  'Refreshments & Meals',
+  'Loading & Unloading',
+  'Fuel & Utilities',
+  'Hardware & Fasteners',
+  'Other / Miscellaneous'
+] as const;
+
+export const NON_SITE_EXPENSE_CATEGORIES = [
+  'Travel & Conveyance',
+  'Food & Meals',
+  'Office Stationery & Supplies',
+  'Mobile & Internet Recharge',
+  'Emergency Operational Expenses',
+  'Accommodation & Lodging',
+  'Training / Certification',
+  'Other / Miscellaneous'
+] as const;
+
+// --- EXAMPLE WEB FIRESTORE v9/v10 REACTION HELPER ---
+// Helper for confirming amount received on Web:
+/*
+import { runTransaction, doc, serverTimestamp, arrayUnion } from 'firebase/firestore';
+import { db } from './firebaseConfig';
+
+export async function supervisorConfirmAmountReceivedWeb(orgId: string, req: PettyCashRequest, supervisor: { id: string, name: string }) {
+  const reqRef = doc(db, 'organisation', orgId, 'pettyCashRequests', req.requestId);
+  const accountId = req.siteId ? `${orgId}_${req.siteId}` : supervisor.id.toLowerCase();
+  const accountRef = doc(db, 'organisation', orgId, 'pettyCashAccounts', accountId);
+
+  await runTransaction(db, async (txn) => {
+    const reqSnap = await txn.get(reqRef);
+    if (!reqSnap.exists()) throw new Error('Request not found');
+    const rData = reqSnap.data();
+    if (rData.receivedAt || rData.status === 'RECEIVED') return; // Idempotent check
+
+    const receivedAmt = rData.disbursedAmount || rData.approvedAmount || rData.requestedAmount;
+    const accSnap = await txn.get(accountRef);
+    const accData = accSnap.exists() ? accSnap.data() : {};
+
+    const prevAllocated = accData.totalAllocated || 0;
+    const prevReceived = accData.totalReceived || prevAllocated;
+    const prevSpent = accData.totalSpent || accData.totalUsed || 0;
+    const prevAvailable = accData.availableBalance ?? (prevAllocated - prevSpent);
+
+    const newTotalAllocated = prevAllocated + receivedAmt;
+    const newTotalReceived = prevReceived + receivedAmt;
+    const newAvailable = prevAvailable + receivedAmt;
+
+    const txnId = `TXN_${Date.now()}_RECV`;
+    const txnRef = doc(db, 'organisation', orgId, 'pettyCashTransactions', txnId);
+
+    // 1. Update Request
+    txn.update(reqRef, {
+      status: 'RECEIVED',
+      statusDisplay: 'Funds Active in Field',
+      currentStep: 5,
+      receivedAmount: receivedAmt,
+      receivedAt: serverTimestamp(),
+      receivedBySupervisorId: supervisor.id,
+      receivedBySupervisorName: supervisor.name,
+      remainingBalance: receivedAmt,
+      updatedAt: serverTimestamp()
+    });
+
+    // 2. Set/Merge Account
+    txn.set(accountRef, {
+      accountId,
+      orgId,
+      siteId: req.siteId || '',
+      siteName: req.siteName || '',
+      supervisorId: supervisor.id,
+      supervisorName: supervisor.name,
+      totalAllocated: newTotalAllocated,
+      totalReceived: newTotalReceived,
+      availableBalance: newAvailable,
+      status: 'ACTIVE',
+      lastTransactionAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+
+    // 3. Post Ledger Entry
+    txn.set(txnRef, {
+      transactionId: txnId,
+      idempotencyKey: `RECV_${req.requestId}_${receivedAmt}`,
+      pettyCashId: req.requestId,
+      accountId,
+      orgId,
+      supervisorId: supervisor.id,
+      supervisorName: supervisor.name,
+      siteId: req.siteId || null,
+      siteName: req.siteName || null,
+      transactionType: req.requestType === 'REPLENISHMENT' ? 'REPLENISHMENT' : 'INITIAL_FUND',
+      category: 'Initial Fund',
+      expenseCategory: 'Initial Fund',
+      description: `Petty cash received and confirmed for ${req.siteName || 'Site'}`,
+      amount: receivedAmt,
+      previousBalance: prevAvailable,
+      newBalance: newAvailable,
+      status: 'POSTED',
+      transactionDate: serverTimestamp(),
+      createdBy: supervisor.name,
+      createdRole: 'Supervisor',
+      createdAt: serverTimestamp()
+    });
+  });
+}
+*/
+
+================================================================================
+END OF SPECIFICATION
+================================================================================
+

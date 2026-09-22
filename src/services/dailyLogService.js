@@ -1,58 +1,134 @@
 import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  serverTimestamp,
+} from 'firebase/firestore'
+import { db } from './firebase.js'
+import {
   saveStandardDoc,
   updateStandardDoc,
-  deleteStandardDoc,
   fetchWithFallback,
   subscribeWithFallback,
-} from './firestoreService'
+} from './firestoreService.js'
 
 /**
- * Daily Site Progress Logs Service
- * Complies with Section 3.15 of Architecture Specification
+ * CST White Label - Daily Site Progress Diary & Expenditures (siteSupervisorEntries)
+ * Complies with Section 3.4, Section 4 Flow 3 & Section 5.3 of MANAGER_MODULES_FLOW_AND_DATA_STRUCTURE.txt
  */
 
 export const WEATHER_TYPES = ['Sunny / Clear Sky', 'Cloudy / Overcast', 'Rainy / Wet Conditions', 'High Winds / Storm']
 
+export async function fetchDailySiteEntries(orgId) {
+  if (!orgId) return []
+  return fetchWithFallback(orgId, 'siteSupervisorEntries')
+}
+
+export function subscribeDailySiteEntries(orgId, onData, onError) {
+  if (!orgId) return () => {}
+  return subscribeWithFallback(orgId, 'siteSupervisorEntries', onData, onError)
+}
+
+/**
+ * Calculates sum of materials, labours, and site sundries, saves to siteSupervisorEntries,
+ * and updates cumulative project spent in projects.
+ */
+export async function createDailySiteEntry(orgId, entryData, actor) {
+  if (!orgId) throw new Error('orgId is required')
+  if (!entryData.siteId) throw new Error('Site selection is required')
+
+  const timestamp = Date.now()
+  const entryId = entryData.entryId || `ENTRY_${timestamp}_${Math.random().toString(36).substring(2, 6)}`
+
+  // Calculate costs
+  const materials = Array.isArray(entryData.materials) ? entryData.materials : []
+  const labours = Array.isArray(entryData.labours) ? entryData.labours : []
+
+  const materialsCost = materials.reduce((acc, m) => acc + (Number(m.total || (Number(m.qty || 0) * Number(m.price || 0))) || 0), 0)
+  const labourCost = labours.reduce((acc, l) => acc + (Number(l.total || (Number(l.qty || 0) * Number(l.salary || 0))) || 0), 0)
+  const foodCost = Number(entryData.foodCost) || 0
+  const transportCost = Number(entryData.transportCost) || 0
+  const fuelCost = Number(entryData.fuelCost) || 0
+  const totalAmount = materialsCost + labourCost + foodCost + transportCost + fuelCost
+
+  const payload = {
+    entryId,
+    siteId: entryData.siteId,
+    siteName: entryData.siteName || '',
+    siteCode: entryData.siteCode || '',
+    projectName: entryData.projectName || entryData.siteName || '',
+    projectStage: entryData.projectStage || 'Foundation & Plinth',
+    supervisorId: actor?.id || entryData.supervisorId || 'mgr_lead',
+    supervisorName: actor?.name || entryData.supervisorName || 'Operations Manager',
+    date: entryData.date ? new Date(entryData.date) : serverTimestamp(),
+    materials,
+    labours,
+    materialsCost,
+    labourCost,
+    foodCost,
+    transportCost,
+    fuelCost,
+    totalAmount,
+    morningStatus: entryData.morningStatus || '',
+    afternoonStatus: entryData.afternoonStatus || '',
+    workDoneSummary: `${entryData.morningStatus || ''} ${entryData.afternoonStatus || ''}`.trim() || 'Daily site progress logged.',
+    weather: entryData.weather || 'Sunny / Clear Sky',
+    status: entryData.status || 'pending_manager_review',
+    fundedViaPettyCash: Boolean(entryData.fundedViaPettyCash),
+    pettyCashRequestId: entryData.pettyCashRequestId || null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  }
+
+  const docRef = doc(db, 'organisation', orgId, 'siteSupervisorEntries', entryId)
+  await setDoc(docRef, payload)
+
+  // Auto-sync cumulative financials to project site
+  try {
+    const siteRef = doc(db, 'organisation', orgId, 'projects', entryData.siteId)
+    const siteSnap = await getDoc(siteRef)
+    if (siteSnap.exists()) {
+      const currentSpent = Number(siteSnap.data().totalAmountSpent || siteSnap.data().spentAmount || 0)
+      const nextSpent = currentSpent + totalAmount
+      await updateDoc(siteRef, {
+        totalAmountSpent: nextSpent,
+        spentAmount: nextSpent,
+        amountSpent: nextSpent,
+        updatedAt: serverTimestamp(),
+      })
+    }
+  } catch (err) {
+    console.warn('Could not auto-sync cumulative spent to site:', err)
+  }
+
+  return { id: entryId, ...payload }
+}
+
+// ------------------------------------------------------------------------------------------------
+// LEGACY BACKWARD COMPATIBILITY
+// ------------------------------------------------------------------------------------------------
+
 export async function fetchDailySiteLogs(orgId) {
-  return fetchWithFallback(orgId, 'daily_site_logs')
+  return fetchDailySiteEntries(orgId)
 }
 
 export function subscribeDailySiteLogs(orgId, onData, onError) {
-  return subscribeWithFallback(orgId, 'daily_site_logs', onData, onError)
+  return subscribeDailySiteEntries(orgId, onData, onError)
 }
 
 export async function createDailySiteLog(orgId, logData) {
-  const payload = {
-    projectId: logData.projectId || logData.siteId || '',
-    projectName: logData.projectName || logData.siteName || 'Site',
-    date: logData.date || new Date().toISOString().split('T')[0],
-    supervisorUid: logData.supervisorUid || logData.userId || '',
-    supervisorName: logData.supervisorName || logData.userName || 'Site Supervisor',
-    weather: logData.weather || 'Sunny / Clear Sky',
-    workDoneSummary: logData.workDoneSummary || logData.summary || 'Daily structural work ongoing.',
-    workforceCount: logData.workforceCount || {
-      masons: Number(logData.masons) || 4,
-      helpers: Number(logData.helpers) || 8,
-      carpenters: Number(logData.carpenters) || 2,
-      electricians: Number(logData.electricians) || 1,
-      total: (Number(logData.masons) || 4) + (Number(logData.helpers) || 8) + (Number(logData.carpenters) || 2) + (Number(logData.electricians) || 1),
-    },
-    equipmentOnSite: Array.isArray(logData.equipmentOnSite) ? logData.equipmentOnSite : ['Concrete Mixer', 'Vibrator Needle'],
-    hindrances: logData.hindrances || 'No major bottlenecks encountered.',
-    sitePhotos: Array.isArray(logData.sitePhotos) ? logData.sitePhotos : [],
-    managerReviewed: Boolean(logData.managerReviewed),
-    reviewNotes: logData.reviewNotes || '',
-  }
-
-  const docId = await saveStandardDoc(orgId, 'daily_site_logs', payload)
-  return { id: docId, ...payload }
+  return createDailySiteEntry(orgId, logData, { id: logData.supervisorUid, name: logData.supervisorName })
 }
 
 export async function reviewDailySiteLog(orgId, logId, managerName, reviewNotes = '') {
-  await updateStandardDoc(orgId, 'daily_site_logs', logId, {
+  const entryRef = doc(db, 'organisation', orgId, 'siteSupervisorEntries', logId)
+  await updateDoc(entryRef, {
     managerReviewed: true,
     reviewedBy: managerName,
-    reviewedAt: new Date().toISOString(),
     reviewNotes,
+    updatedAt: serverTimestamp(),
   })
 }

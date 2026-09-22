@@ -1,21 +1,73 @@
 import {
+  collection,
+  doc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  serverTimestamp,
+} from 'firebase/firestore'
+import { db } from './firebase.js'
+import {
   saveStandardDoc,
   updateStandardDoc,
   deleteStandardDoc,
   fetchWithFallback,
   subscribeWithFallback,
-} from './firestoreService'
+} from './firestoreService.js'
 
 /**
- * Workforce & Daily Muster Roll Service
- * Complies with Section 3.10 of Architecture Specification
+ * CST White Label - Workforce, Labour & Attendance Service
+ * Scoped under:
+ *   /organisation/{orgId}/labours
+ *   /organisation/{orgId}/workers
+ *   /organisation/{orgId}/workerSiteMapping
+ *   /organisation/{orgId}/workerAttendance
+ * Complies with Section 3 Group 6 of MANAGER_MODULES_FLOW_AND_DATA_STRUCTURE.txt
  */
 
-export const WORKER_SKILLS = [
-  { id: 'Skilled', label: 'Skilled (Mason, Plumber, Electrician, Barbender)' },
-  { id: 'Semi-Skilled', label: 'Semi-Skilled (Assistant Mason, Carpenter Helper)' },
-  { id: 'Unskilled', label: 'Unskilled (General Helper, Earthwork Laborer)' },
+export const DEFAULT_LABOUR_CATEGORIES = [
+  { trade: 'Mason', dailyWage: 950, otHourlyRate: 150 },
+  { trade: 'Male Helper', dailyWage: 650, otHourlyRate: 100 },
+  { trade: 'Female Helper', dailyWage: 600, otHourlyRate: 90 },
+  { trade: 'Carpenter', dailyWage: 900, otHourlyRate: 140 },
+  { trade: 'Barbender', dailyWage: 900, otHourlyRate: 140 },
+  { trade: 'Welder', dailyWage: 850, otHourlyRate: 130 },
+  { trade: 'Electrician', dailyWage: 900, otHourlyRate: 140 },
+  { trade: 'Plumber', dailyWage: 850, otHourlyRate: 130 },
 ]
+
+// ------------------------------------------------------------------------------------------------
+// 1. LABOUR WAGE SCALES (/organisation/{orgId}/labours)
+// ------------------------------------------------------------------------------------------------
+
+export async function fetchLabourScales(orgId) {
+  return fetchWithFallback(orgId, 'labours')
+}
+
+export async function createLabourScale(orgId, scaleData) {
+  if (!orgId || !scaleData.trade?.trim()) throw new Error('Trade name is required')
+  const id = `LAB_${Date.now()}`
+  const docRef = doc(db, 'organisation', orgId, 'labours', id)
+  const payload = {
+    id,
+    trade: scaleData.trade.trim(),
+    name: scaleData.trade.trim(),
+    dailyWage: Number(scaleData.dailyWage) || 800,
+    otHourlyRate: Number(scaleData.otHourlyRate) || 120,
+    createdAt: serverTimestamp(),
+  }
+  await setDoc(docRef, payload)
+  return payload
+}
+
+export async function deleteLabourScale(orgId, id) {
+  await deleteDoc(doc(db, 'organisation', orgId, 'labours', id))
+}
+
+// ------------------------------------------------------------------------------------------------
+// 2. DIRECT WORKERS DIRECTORY (/organisation/{orgId}/workers)
+// ------------------------------------------------------------------------------------------------
 
 export async function fetchWorkers(orgId) {
   return fetchWithFallback(orgId, 'workers')
@@ -26,64 +78,132 @@ export function subscribeWorkers(orgId, onData, onError) {
 }
 
 export async function createWorker(orgId, workerData) {
+  if (!orgId || !workerData.name?.trim()) throw new Error('Worker name is required')
+
+  const timestamp = Date.now()
+  const workerId = workerData.workerId || `WRK_${timestamp.toString().slice(-4)}`
+
   const payload = {
-    name: workerData.name || workerData.workerName || '',
-    skillType: workerData.skillType || 'Skilled',
-    trade: workerData.trade || 'Masonry',
-    phone: workerData.phone || '',
-    dailyWageRate: Number(workerData.dailyWageRate || workerData.wageRate) || 750,
+    workerId,
+    name: workerData.name.trim(),
+    workerName: workerData.name.trim(),
+    phone: workerData.phone?.trim() || '',
+    address: workerData.address || '',
+    joiningDate: workerData.joiningDate ? new Date(workerData.joiningDate) : serverTimestamp(),
+    designation: workerData.designation || 'Mason',
+    trade: workerData.designation || 'Mason',
+    salary: Number(workerData.salary || workerData.dailyWageRate) || 800,
+    dailyWageRate: Number(workerData.salary || workerData.dailyWageRate) || 800,
     overtimeHourlyRate: Number(workerData.overtimeHourlyRate) || 120,
-    assignedProjectId: workerData.assignedProjectId || workerData.siteId || '',
-    assignedProjectName: workerData.assignedProjectName || workerData.siteName || '',
+    assignedSiteId: workerData.assignedSiteId || '',
+    assignedSiteName: workerData.assignedSiteName || '',
     status: 'active',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   }
-  const docId = await saveStandardDoc(orgId, 'workers', payload)
-  return { id: docId, ...payload }
+
+  const docRef = doc(db, 'organisation', orgId, 'workers', workerId)
+  await setDoc(docRef, payload)
+
+  return { id: workerId, ...payload }
 }
 
 export async function updateWorker(orgId, workerId, updates) {
-  await updateStandardDoc(orgId, 'workers', workerId, updates)
+  if (!orgId || !workerId) throw new Error('orgId and workerId are required')
+  const docRef = doc(db, 'organisation', orgId, 'workers', workerId)
+  await updateDoc(docRef, { ...updates, updatedAt: serverTimestamp() })
 }
 
 export async function deleteWorker(orgId, workerId) {
-  return deleteStandardDoc(orgId, 'workers', workerId)
+  if (!orgId || !workerId) throw new Error('orgId and workerId are required')
+  const docRef = doc(db, 'organisation', orgId, 'workers', workerId)
+  await deleteDoc(docRef)
 }
 
 // ------------------------------------------------------------------------------------------------
-// Daily Muster Roll Attendance Logs (/organisation/{orgId}/worker_attendance)
+// 3. WORKER SITE MAPPING (/organisation/{orgId}/workerSiteMapping)
+// ------------------------------------------------------------------------------------------------
+
+export async function fetchWorkerSiteMappings(orgId) {
+  return fetchWithFallback(orgId, 'workerSiteMapping')
+}
+
+export async function mapWorkerToSite(orgId, mappingData) {
+  if (!orgId || !mappingData.workerId || !mappingData.siteId) throw new Error('workerId and siteId required')
+  const id = `WMAP_${mappingData.siteId}_${mappingData.workerId}`
+  const docRef = doc(db, 'organisation', orgId, 'workerSiteMapping', id)
+  const payload = {
+    id,
+    siteId: mappingData.siteId,
+    siteName: mappingData.siteName || '',
+    workerId: mappingData.workerId,
+    workerName: mappingData.workerName || '',
+    allocatedDate: serverTimestamp(),
+  }
+  await setDoc(docRef, payload)
+
+  // Also update worker record
+  await updateWorker(orgId, mappingData.workerId, {
+    assignedSiteId: mappingData.siteId,
+    assignedSiteName: mappingData.siteName || '',
+  })
+
+  return payload
+}
+
+// ------------------------------------------------------------------------------------------------
+// 4. WORKER ATTENDANCE MUSTER ROLL (/organisation/{orgId}/workerAttendance)
 // ------------------------------------------------------------------------------------------------
 
 export async function fetchWorkerAttendance(orgId) {
-  return fetchWithFallback(orgId, 'worker_attendance')
+  return fetchWithFallback(orgId, 'workerAttendance')
 }
 
 export function subscribeWorkerAttendance(orgId, onData, onError) {
-  return subscribeWithFallback(orgId, 'worker_attendance', onData, onError)
+  return subscribeWithFallback(orgId, 'workerAttendance', onData, onError)
 }
 
-export async function recordWorkerAttendance(orgId, attendanceData) {
-  const headcount = Number(attendanceData.headcount || attendanceData.count) || 1
-  const dailyRate = Number(attendanceData.dailyWageRate || attendanceData.rate) || 800
-  const otHours = Number(attendanceData.otHours || attendanceData.overtimeHours) || 0
-  const hourlyOtRate = dailyRate / 8 * 1.5
-  const totalWage = headcount * (dailyRate + (otHours * hourlyOtRate))
+export async function recordWorkerAttendanceBatch(orgId, siteId, siteName, date, attendanceRecords, recorderActor) {
+  if (!orgId || !siteId) throw new Error('orgId and siteId are required')
+
+  const dateStr = date || new Date().toISOString().split('T')[0]
+  const docId = `ATTN_${siteId}_${dateStr}`
+  const docRef = doc(db, 'organisation', orgId, 'workerAttendance', docId)
+
+  const totalWage = attendanceRecords.reduce((acc, r) => acc + (Number(r.computedWage) || 0), 0)
+  const presentCount = attendanceRecords.filter((r) => r.status === 'P').length
+  const halfDayCount = attendanceRecords.filter((r) => r.status === 'HD').length
+  const absentCount = attendanceRecords.filter((r) => r.status === 'A').length
 
   const payload = {
-    projectId: attendanceData.projectId || attendanceData.siteId || '',
-    projectName: attendanceData.projectName || attendanceData.siteName || 'Site',
-    date: attendanceData.date || new Date().toISOString().split('T')[0],
-    roleCategory: attendanceData.roleCategory || attendanceData.trade || 'Masons',
-    skillType: attendanceData.skillType || 'Skilled',
-    headcount,
-    shift: attendanceData.shift || 'morning',
-    shiftHours: Number(attendanceData.shiftHours) || 8,
-    otHours,
-    dailyWageRate: dailyRate,
+    docId,
+    siteId,
+    siteName: siteName || '',
+    date: dateStr,
+    records: attendanceRecords, // [{ workerId, workerName, status: 'P'|'HD'|'A', otHours: 0, computedWage: 800 }]
     totalWage,
-    supervisorRecordedUid: attendanceData.supervisorRecordedUid || '',
-    supervisorName: attendanceData.supervisorName || 'Supervisor',
+    presentCount,
+    halfDayCount,
+    absentCount,
+    headcount: presentCount + halfDayCount,
+    count: presentCount + halfDayCount,
+    recordedBy: recorderActor?.name || 'Operations Manager',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   }
 
-  const docId = await saveStandardDoc(orgId, 'worker_attendance', payload)
+  await setDoc(docRef, payload)
   return { id: docId, ...payload }
+}
+
+// Legacy wrapper
+export async function recordWorkerAttendance(orgId, attendanceData) {
+  return recordWorkerAttendanceBatch(
+    orgId,
+    attendanceData.projectId || attendanceData.siteId,
+    attendanceData.projectName || attendanceData.siteName,
+    attendanceData.date,
+    attendanceData.workers || attendanceData.records || [],
+    { name: attendanceData.supervisorName }
+  )
 }

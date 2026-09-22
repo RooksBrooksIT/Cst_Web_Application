@@ -1,14 +1,22 @@
 import {
-  saveStandardDoc,
-  updateStandardDoc,
-  deleteStandardDoc,
+  collection,
+  doc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  serverTimestamp,
+} from 'firebase/firestore'
+import { db } from './firebase.js'
+import {
   fetchWithFallback,
   subscribeWithFallback,
-} from './firestoreService'
+} from './firestoreService.js'
 
 /**
- * Contractor & Sub-contractor Billing Service
- * Complies with Section 3.9 of Architecture Specification
+ * CST White Label - Contractor & Sub-Contractor Management Service
+ * Scoped under: /organisation/{orgId}/contractors and /organisation/{orgId}/contractorEntries
+ * Complies with Section 3 Group 6 & Section 5.6 of MANAGER_MODULES_FLOW_AND_DATA_STRUCTURE.txt
  */
 
 export const CONTRACTOR_TRADES = [
@@ -25,83 +33,124 @@ export const CONTRACTOR_TRADES = [
 ]
 
 // ------------------------------------------------------------------------------------------------
-// 1. Contractors Directory (/organisation/{orgId}/contractors)
+// 1. CONTRACTOR REGISTRY (/organisation/{orgId}/contractors)
 // ------------------------------------------------------------------------------------------------
 
 export async function fetchContractors(orgId) {
+  if (!orgId) return []
   return fetchWithFallback(orgId, 'contractors')
 }
 
 export function subscribeContractors(orgId, onData, onError) {
+  if (!orgId) return () => {}
   return subscribeWithFallback(orgId, 'contractors', onData, onError)
 }
 
 export async function createContractor(orgId, contractorData) {
+  if (!orgId) throw new Error('orgId is required')
+  if (!contractorData.contractorName?.trim()) throw new Error('Contractor Name is required')
+
+  const timestamp = Date.now()
+  const contractorId = contractorData.contractorId || `CONT_${timestamp.toString().slice(-4)}`
+
   const payload = {
-    name: contractorData.name || contractorData.contractorName || '',
-    trade: contractorData.trade || 'Civil & RCC Structure',
-    phone: contractorData.phone || contractorData.contactNo || '',
-    panGst: contractorData.panGst || contractorData.gstNumber || '',
-    workOrders: Array.isArray(contractorData.workOrders) ? contractorData.workOrders : [],
+    contractorId,
+    contractorName: contractorData.contractorName.trim(),
+    name: contractorData.contractorName.trim(),
+    phone: contractorData.phone?.trim() || '',
+    contractorNumber: contractorData.phone?.trim() || '',
+    address: contractorData.address || '',
+    projectField: contractorData.projectField || contractorData.trade || 'Civil & RCC Structure',
+    trade: contractorData.projectField || contractorData.trade || 'Civil & RCC Structure',
+    panGst: contractorData.panGst || '',
+    contractValue: Number(contractorData.contractValue) || 0,
+    advancePaid: Number(contractorData.advancePaid) || 0,
+    retentionPercentage: Number(contractorData.retentionPercentage) || 5,
     status: 'active',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   }
-  const docId = await saveStandardDoc(orgId, 'contractors', payload)
-  return { id: docId, ...payload }
+
+  const docRef = doc(db, 'organisation', orgId, 'contractors', contractorId)
+  await setDoc(docRef, payload)
+
+  return { id: contractorId, ...payload }
 }
 
 export async function updateContractor(orgId, contractorId, updates) {
-  await updateStandardDoc(orgId, 'contractors', contractorId, updates)
+  if (!orgId || !contractorId) throw new Error('orgId and contractorId are required')
+  const docRef = doc(db, 'organisation', orgId, 'contractors', contractorId)
+  await updateDoc(docRef, { ...updates, updatedAt: serverTimestamp() })
 }
 
 export async function deleteContractor(orgId, contractorId) {
-  return deleteStandardDoc(orgId, 'contractors', contractorId)
+  if (!orgId || !contractorId) throw new Error('orgId and contractorId are required')
+  const docRef = doc(db, 'organisation', orgId, 'contractors', contractorId)
+  await deleteDoc(docRef)
 }
 
 // ------------------------------------------------------------------------------------------------
-// 2. Contractor Bills & Measurement Sheets (/organisation/{orgId}/contractor_bills)
+// 2. CONTRACTOR DAILY WORK ENTRY (/organisation/{orgId}/contractorEntries)
 // ------------------------------------------------------------------------------------------------
 
-export async function fetchContractorBills(orgId) {
-  return fetchWithFallback(orgId, 'contractor_bills')
+export async function fetchContractorEntries(orgId) {
+  if (!orgId) return []
+  return fetchWithFallback(orgId, 'contractorEntries')
 }
 
-export function subscribeContractorBills(orgId, onData, onError) {
-  return subscribeWithFallback(orgId, 'contractor_bills', onData, onError)
+export function subscribeContractorEntries(orgId, onData, onError) {
+  if (!orgId) return () => {}
+  return subscribeWithFallback(orgId, 'contractorEntries', onData, onError)
 }
 
-export async function createContractorBill(orgId, billData) {
-  const grossAmount = Number(billData.grossAmount) || (Number(billData.measuredQty) * Number(billData.rate)) || 0
-  const tdsDeduction = Number(billData.tdsDeduction) || (grossAmount * 0.01) // 1% or 2%
-  const retentionDeduction = Number(billData.retentionDeduction) || (grossAmount * 0.05) // 5% retention
-  const netPayable = grossAmount - tdsDeduction - retentionDeduction
+export async function createContractorEntry(orgId, entryData) {
+  if (!orgId) throw new Error('orgId is required')
+  if (!entryData.contractorId) throw new Error('Contractor selection is required')
+  if (!entryData.siteId) throw new Error('Site selection is required')
+
+  const timestamp = Date.now()
+  const entryId = entryData.entryId || `CENTRY_${timestamp}_${Math.random().toString(36).substring(2, 6)}`
 
   const payload = {
-    contractorId: billData.contractorId || '',
-    contractorName: billData.contractorName || 'Contractor',
-    workOrderId: billData.workOrderId || '',
-    projectId: billData.projectId || billData.siteId || '',
-    projectName: billData.projectName || billData.siteName || 'Site',
-    billNumber: billData.billNumber || `BILL-${Date.now().toString().slice(-4)}`,
-    measurementSheetUrl: billData.measurementSheetUrl || '',
-    workDescription: billData.workDescription || '',
-    measuredQty: Number(billData.measuredQty) || 0,
-    rate: Number(billData.rate) || 0,
-    grossAmount,
-    tdsDeduction,
-    retentionDeduction,
-    netPayable,
-    status: billData.status || 'submitted',
-    date: billData.date || new Date().toISOString(),
+    entryId,
+    contractorId: entryData.contractorId,
+    contractorName: entryData.contractorName || '',
+    siteId: entryData.siteId,
+    siteName: entryData.siteName || '',
+    date: entryData.date ? new Date(entryData.date) : serverTimestamp(),
+    projectField: entryData.projectField || 'Civil Works',
+    workDescription: entryData.workDescription || 'Structural work completed',
+    measurement: entryData.measurement || '',
+    materials: Array.isArray(entryData.materials) ? entryData.materials : [],
+    labours: Array.isArray(entryData.labours) ? entryData.labours : [],
+    amount: Number(entryData.amount || entryData.claimedAmount) || 0,
+    claimedAmount: Number(entryData.amount || entryData.claimedAmount) || 0,
+    status: entryData.status || 'pending', // 'pending', 'approved', 'paid'
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   }
 
-  const docId = await saveStandardDoc(orgId, 'contractor_bills', payload)
-  return { id: docId, ...payload }
+  const docRef = doc(db, 'organisation', orgId, 'contractorEntries', entryId)
+  await setDoc(docRef, payload)
+
+  return { id: entryId, ...payload }
 }
 
-export async function updateContractorBillStatus(orgId, billId, status, paymentRef = '') {
-  await updateStandardDoc(orgId, 'contractor_bills', billId, {
+export async function updateContractorEntryStatus(orgId, entryId, status, remarks = '') {
+  if (!orgId || !entryId) throw new Error('orgId and entryId are required')
+  const docRef = doc(db, 'organisation', orgId, 'contractorEntries', entryId)
+  await updateDoc(docRef, {
     status,
-    paymentRef,
-    settledAt: status === 'paid' ? new Date().toISOString() : '',
+    remarks,
+    updatedAt: serverTimestamp(),
   })
+}
+
+// Legacy wrappers
+export async function createContractorBill(orgId, billData) {
+  return createContractorEntry(orgId, billData)
+}
+
+export async function updateContractorBillStatus(orgId, billId, status) {
+  return updateContractorEntryStatus(orgId, billId, status)
 }

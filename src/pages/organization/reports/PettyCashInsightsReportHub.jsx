@@ -12,14 +12,20 @@ export default function PettyCashInsightsReportHub({
   pettyCashAccounts = [],
   pettyCashExpenses = [],
   pettyCashRequests = [],
+  subReport = 'audit',
 }) {
-  const [activeTab, setActiveTab] = useState('audit') // 'audit' or 'ledger'
+  const [activeTab, setActiveTab] = useState(subReport === 'ledger' ? 'ledger' : 'audit')
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const d = new Date()
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
   })
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [searchQuery, setSearchQuery] = useState('')
+
+  React.useEffect(() => {
+    if (subReport === 'ledger') setActiveTab('ledger')
+    else if (subReport === 'audit') setActiveTab('audit')
+  }, [subReport])
 
   const reportData = useMemo(() => {
     return calculatePettyCashInsights({
@@ -129,10 +135,10 @@ export default function PettyCashInsightsReportHub({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
-              Module 5 · Imprest Governance
+              Petty Cash & Float Management
             </span>
             <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
-              Petty Cash Insights & Audit Hub
+              {activeTab === 'ledger' ? 'Itemized Petty Cash Receipts' : 'Petty Cash & Imprest Float Reports'}
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
               Supervisor float balances, emergency disbursal top-ups, and itemized receipt vouchers.
@@ -197,7 +203,7 @@ export default function PettyCashInsightsReportHub({
                 activeTab === 'audit' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              5A. Site Float Audit List
+              Site Float Audit List
             </button>
             <button
               type="button"
@@ -206,7 +212,7 @@ export default function PettyCashInsightsReportHub({
                 activeTab === 'ledger' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              5B. Itemized Monthly Receipts
+              Itemized Receipts
             </button>
           </div>
         </div>

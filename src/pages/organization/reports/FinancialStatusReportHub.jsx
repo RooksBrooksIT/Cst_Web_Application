@@ -13,9 +13,20 @@ export default function FinancialStatusReportHub({
   sitePayments = [],
   totalSiteExpensesPerDay = [],
   siteSupervisorEntries = [],
+  subReport = 'statement',
+  initialSiteId = 'all',
 }) {
-  const [activeTab, setActiveTab] = useState('statement') // 'statement' or 'weekly'
-  const [selectedSiteId, setSelectedSiteId] = useState('all')
+  const [activeTab, setActiveTab] = useState(subReport === 'cash_flow' ? 'weekly' : 'statement')
+  const [selectedSiteId, setSelectedSiteId] = useState(initialSiteId)
+
+  React.useEffect(() => {
+    if (subReport === 'cash_flow') setActiveTab('weekly')
+    else if (subReport === 'statement') setActiveTab('statement')
+  }, [subReport])
+
+  React.useEffect(() => {
+    if (initialSiteId) setSelectedSiteId(initialSiteId)
+  }, [initialSiteId])
 
   const reportData = useMemo(() => {
     return calculateFinancialStatusReport({ sites, sitePayments, totalSiteExpensesPerDay })
@@ -164,10 +175,10 @@ export default function FinancialStatusReportHub({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
-              Module 4 · Financial Audit
+              Financial Overview
             </span>
             <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
-              Financial Status, Cash Flow & Statements
+              {activeTab === 'weekly' ? 'Cash Flow Analysis' : 'Financial Statement & Budget Status'}
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
               Consolidated balance sheets, client inflow realization rates, and weekly cash flow ledgers.
@@ -217,7 +228,7 @@ export default function FinancialStatusReportHub({
                 activeTab === 'statement' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              4A. Financial Statement
+              Financial Statement
             </button>
             <button
               type="button"
@@ -226,7 +237,7 @@ export default function FinancialStatusReportHub({
                 activeTab === 'weekly' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              4B. Weekly Cash Flow
+              Cash Flow
             </button>
           </div>
         </div>

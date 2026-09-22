@@ -3,9 +3,19 @@ import { calculateSiteStatusReport } from '../../../services/reportService'
 import { exportToCSV, printReport } from '../../../services/exportService'
 import StatusBadge from '../../../components/common/StatusBadge'
 
-export default function SiteStatusReportHub({ sites = [] }) {
+export default function SiteStatusReportHub({
+  sites = [],
+  initialSiteId = 'all',
+  initialStage = 'all',
+}) {
   const [statusFilter, setStatusFilter] = useState('all')
   const [searchQuery, setSearchQuery] = useState('')
+  const [selectedSiteId, setSelectedSiteId] = useState(initialSiteId)
+
+  // Sync with prop changes if updated by parent filter
+  React.useEffect(() => {
+    if (initialSiteId) setSelectedSiteId(initialSiteId)
+  }, [initialSiteId])
 
   const reportData = useMemo(() => {
     return calculateSiteStatusReport(sites)
@@ -13,6 +23,8 @@ export default function SiteStatusReportHub({ sites = [] }) {
 
   const filteredSites = useMemo(() => {
     return reportData.siteList.filter((s) => {
+      const matchesSite = selectedSiteId === 'all' || s.siteId === selectedSiteId
+      const matchesStage = initialStage === 'all' || !initialStage || s.stage?.toLowerCase() === initialStage.toLowerCase()
       const matchesStatus =
         statusFilter === 'all' ||
         s.status.toLowerCase().replace(/\s+/g, '_') === statusFilter.toLowerCase()
@@ -23,9 +35,9 @@ export default function SiteStatusReportHub({ sites = [] }) {
         s.location.toLowerCase().includes(query) ||
         s.manager.toLowerCase().includes(query) ||
         s.stage.toLowerCase().includes(query)
-      return matchesStatus && matchesSearch
+      return matchesSite && matchesStage && matchesStatus && matchesSearch
     })
-  }, [reportData, statusFilter, searchQuery])
+  }, [reportData, selectedSiteId, initialStage, statusFilter, searchQuery])
 
   // Count timeline health
   const healthCounts = useMemo(() => {
@@ -109,10 +121,10 @@ export default function SiteStatusReportHub({ sites = [] }) {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
-              Module 3 · Timeline & Milestones
+              Execution Status
             </span>
             <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
-              Site Status, Execution & Progress Audit
+              Site Status & Progress Report
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
               Live schedule tracking, percentage completion meters, deadline forecasts, and delay alerts.

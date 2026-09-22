@@ -6,11 +6,15 @@ import logo from '../assets/logo/FinalLogo.jpg'
 function authMessage(error) {
   if (
     error.code === 'auth/invalid-credential' ||
-    error.code === 'auth/invalid-email' ||
-    error.code === 'auth/user-not-found' ||
-    error.code === 'auth/wrong-password'
+    error.code === 'auth/invalid-email'
   ) {
     return 'The username, email, or password entered is incorrect. Please check your credentials.'
+  }
+  if (error.code === 'auth/wrong-password') {
+    return 'The password entered is incorrect. Please verify your password and try again.'
+  }
+  if (error.code === 'auth/user-not-found') {
+    return error.message || 'No account found with these credentials for the selected login type.'
   }
   if (
     error.code === 'auth/unauthorized-role' ||
@@ -27,6 +31,7 @@ function authMessage(error) {
 export default function Login() {
   const { user, role, login, loading } = useAuth()
   const navigate = useNavigate()
+  const [loginType, setLoginType] = useState('Organization') // 'Organization' | 'Manager'
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -37,12 +42,18 @@ export default function Login() {
     return <Navigate to={role === 'Manager' ? '/manager/dashboard' : '/organization/dashboard'} replace />
   }
 
+  function handleTypeChange(type) {
+    if (type === loginType) return
+    setLoginType(type)
+    setError('')
+  }
+
   async function handleSubmit(event) {
     event.preventDefault()
     setError('')
     setSubmitting(true)
     try {
-      const authenticatedRole = await login(identifier, password)
+      const authenticatedRole = await login(identifier, password, loginType)
       navigate(authenticatedRole === 'Manager' ? '/manager/dashboard' : '/organization/dashboard', { replace: true })
     } catch (loginError) {
       setError(authMessage(loginError))
@@ -143,7 +154,7 @@ export default function Login() {
 
         {/* Form Container Card */}
         <div className="w-full max-w-md mx-auto my-auto py-8">
-          <div className="bg-white border border-slate-200/90 rounded-3xl shadow-xl p-8 sm:p-10 space-y-7">
+          <div className="bg-white border border-slate-200/90 rounded-3xl shadow-xl p-8 sm:p-10 space-y-6">
             {/* Header Text */}
             <div className="text-left space-y-1.5">
               <div className="hidden lg:inline-flex p-2 rounded-xl bg-[#0B3470]/5 border border-[#0B3470]/10 mb-2">
@@ -153,16 +164,60 @@ export default function Login() {
                 Welcome to eBricks
               </h2>
               <p className="text-xs text-slate-500">
-                Sign in to your Organization or Manager operational account.
+                Select your portal and sign in to your operational account.
               </p>
             </div>
 
+            {/* Login Type Segmented Selector */}
+            <div className="space-y-1.5">
+              <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                Select Login Type
+              </label>
+              <div className="p-1 bg-slate-100 rounded-2xl border border-slate-200 grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => handleTypeChange('Organization')}
+                  className={`py-2.5 px-3 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
+                    loginType === 'Organization'
+                      ? 'bg-white text-[#0B3470] shadow-sm font-bold border border-slate-200/80'
+                      : 'text-slate-600 hover:text-slate-900 font-medium hover:bg-white/60'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm">🏢</span>
+                    <span className="text-xs sm:text-sm font-bold">Organization</span>
+                  </div>
+                  <span className={`text-[10px] leading-tight ${loginType === 'Organization' ? 'text-blue-600 font-semibold' : 'text-slate-400'}`}>
+                    Admin Portal
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleTypeChange('Manager')}
+                  className={`py-2.5 px-3 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
+                    loginType === 'Manager'
+                      ? 'bg-white text-[#0B3470] shadow-sm font-bold border border-slate-200/80'
+                      : 'text-slate-600 hover:text-slate-900 font-medium hover:bg-white/60'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm">👷</span>
+                    <span className="text-xs sm:text-sm font-bold">Manager</span>
+                  </div>
+                  <span className={`text-[10px] leading-tight ${loginType === 'Manager' ? 'text-blue-600 font-semibold' : 'text-slate-400'}`}>
+                    Site Operations
+                  </span>
+                </button>
+              </div>
+            </div>
+
             {/* Login Form */}
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Single Identifier Field */}
+            <form onSubmit={handleSubmit} className="space-y-4 pt-1">
+              {/* Identifier Field */}
               <div className="space-y-1.5">
                 <label htmlFor="identifier" className="block text-xs font-semibold text-slate-700">
-                  Username or Email Address *
+                  {loginType === 'Organization' ? 'Organization Email or Username *' : 'Manager Email, Username, or ID *'}
                 </label>
                 <input
                   id="identifier"
@@ -170,7 +225,11 @@ export default function Login() {
                   autoComplete="username"
                   value={identifier}
                   onChange={(event) => setIdentifier(event.target.value)}
-                  placeholder="Enter your username, email, or mobile number"
+                  placeholder={
+                    loginType === 'Organization'
+                      ? 'Enter your organization email or username'
+                      : 'Enter your manager username, email, or ID'
+                  }
                   required
                   className="w-full px-4 py-3 bg-white border border-slate-300 rounded-xl text-slate-900 text-sm placeholder:text-slate-400 focus:border-[#0B3470] focus:ring-2 focus:ring-[#0B3470]/15 outline-none transition-all shadow-2xs"
                 />
@@ -232,15 +291,15 @@ export default function Login() {
               <button
                 type="submit"
                 disabled={submitting}
-                className="w-full py-3.5 px-4 rounded-xl text-sm font-bold bg-[#0B3470] hover:bg-[#082654] text-white shadow-md hover:shadow-lg transition-all active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="w-full py-3.5 px-4 rounded-xl text-sm font-bold bg-[#0B3470] hover:bg-[#082654] text-white shadow-md hover:shadow-lg transition-all active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
               >
                 {submitting ? (
                   <>
                     <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>Verifying credentials...</span>
+                    <span>Verifying {loginType.toLowerCase()} credentials...</span>
                   </>
                 ) : (
-                  <span>Sign In</span>
+                  <span>Sign In to {loginType} Portal</span>
                 )}
               </button>
             </form>
@@ -248,7 +307,11 @@ export default function Login() {
             {/* Role Notice */}
             <div className="pt-2 border-t border-slate-100 text-center">
               <p className="text-[11px] text-slate-500 leading-relaxed">
-                Single sign-in for <strong>Organization Admins</strong> and <strong>Site Operations Managers</strong>. Your role is identified automatically upon login.
+                {loginType === 'Organization' ? (
+                  <>Logging in as <strong>Organization Administrator</strong>. Validates against organization registration and administration records.</>
+                ) : (
+                  <>Logging in as <strong>Site Operations Manager</strong>. Validates active manager credentials and site assignments.</>
+                )}
               </p>
             </div>
           </div>

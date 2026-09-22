@@ -16,9 +16,23 @@ export default function DomainInventoryReportsHub({
   workerAttendance = [],
   vehicles = [],
   siteSupervisorIncentives = [],
+  subReport = 'materials',
 }) {
-  const [activeDomain, setActiveDomain] = useState('contractors')
+  const getInitialDomain = (sub) => {
+    if (sub === 'materials') return 'materials'
+    if (sub === 'tools') return 'tools'
+    if (sub === 'summary') return 'contractors'
+    return sub || 'materials'
+  }
+
+  const [activeDomain, setActiveDomain] = useState(() => getInitialDomain(subReport))
   const [searchQuery, setSearchQuery] = useState('')
+
+  React.useEffect(() => {
+    if (subReport) {
+      setActiveDomain(getInitialDomain(subReport))
+    }
+  }, [subReport])
 
   const reportData = useMemo(() => {
     return calculateDomainReports({
@@ -90,9 +104,9 @@ export default function DomainInventoryReportsHub({
   }
 
   const domainTabs = [
-    { id: 'contractors', label: 'Contractors', icon: '👷' },
     { id: 'materials', label: 'Materials & Stock', icon: '🧱' },
     { id: 'tools', label: 'Tools & Equipment', icon: '🔧' },
+    { id: 'contractors', label: 'Contractors', icon: '👷' },
     { id: 'workers', label: 'Workforce Muster', icon: '👥' },
     { id: 'vehicles', label: 'Fleet & Vehicles', icon: '🚛' },
     { id: 'incentives', label: 'Supervisor Incentives', icon: '🏆' },
@@ -105,13 +119,13 @@ export default function DomainInventoryReportsHub({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
-              Module 6 · Operations & Assets
+              Inventory & Operations
             </span>
             <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
-              Domain Inventory, Workforce & Fleet Reports
+              {reportData.title || 'Inventory & Domain Reports'}
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Auditing logs across trade contractors, material consumption, heavy equipment logs, and workforce muster rolls.
+              Auditing logs across trade contractors, material consumption, equipment logs, and workforce muster rolls.
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">

@@ -14,9 +14,23 @@ export default function ProjectStageReportsHub({
   managerExpenses = [],
   organizationEntries = [],
   contractorEntries = [],
+  initialStage = null,
+  subReport = null,
 }) {
-  const [selectedStage, setSelectedStage] = useState(PROJECT_STAGES[0])
-  const [activeSubTab, setActiveSubTab] = useState('summary') // 'summary' (2A) or 'detail' (2B)
+  const [selectedStage, setSelectedStage] = useState(initialStage || PROJECT_STAGES[0])
+  const [activeSubTab, setActiveSubTab] = useState(subReport || 'summary') // 'summary' or 'detail'
+
+  React.useEffect(() => {
+    if (initialStage && PROJECT_STAGES.includes(initialStage)) {
+      setSelectedStage(initialStage)
+    }
+  }, [initialStage])
+
+  React.useEffect(() => {
+    if (subReport && (subReport === 'summary' || subReport === 'detail')) {
+      setActiveSubTab(subReport)
+    }
+  }, [subReport])
 
   const stageData = useMemo(() => {
     return calculateProjectStageReport({
@@ -110,11 +124,11 @@ export default function ProjectStageReportsHub({
       <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
-              Module 2 · Stage Analytics
+            <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider block">
+              Project Milestones
             </span>
             <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
-              Project Stage Expenses Hub
+              Project / Milestone Progress
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
               Inspect construction milestones from Foundation to Finishing and track stage-specific expenditure burn.
@@ -124,16 +138,16 @@ export default function ProjectStageReportsHub({
             <button
               type="button"
               onClick={handleExportCSV}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer flex items-center gap-1"
             >
-              📥 Export CSV
+              <span>📥</span> Export CSV
             </button>
             <button
               type="button"
               onClick={handlePrintPDF}
-              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors shadow-2xs cursor-pointer"
+              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors shadow-2xs cursor-pointer flex items-center gap-1"
             >
-              🖨️ Print Stage PDF
+              <span>🖨️</span> Print PDF
             </button>
           </div>
         </div>
@@ -193,7 +207,7 @@ export default function ProjectStageReportsHub({
             activeSubTab === 'summary' ? 'bg-[#0B3470] text-white shadow-xs' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
           }`}
         >
-          2A. Project Stage Site Summary
+          Stage Summary by Site
         </button>
         <button
           type="button"
@@ -202,7 +216,7 @@ export default function ProjectStageReportsHub({
             activeSubTab === 'detail' ? 'bg-[#0B3470] text-white shadow-xs' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
           }`}
         >
-          2B. Stage Itemized Expense Entries
+          Itemized Stage Expenses
         </button>
       </div>
 

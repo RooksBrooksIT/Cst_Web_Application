@@ -1,6 +1,7 @@
-import { signInWithEmailAndPassword, signOut } from 'firebase/auth'
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore'
-import { auth, db, persistenceReady } from './firebase'
+import { signInWithEmailAndPassword } from 'firebase/auth'
+import { collection, collectionGroup, doc, getDoc, getDocs } from 'firebase/firestore'
+import { auth, db, persistenceReady } from './firebase.js'
+
 
 const SESSION_KEY = 'constructa_session'
 
@@ -87,7 +88,8 @@ function createSession(uid, email, orgId, role, profile) {
 }
 
 // ------------------------------------------------------------------------------------------------
-// HIGH-SPEED MANAGER LOOKUP & AUTHENTICATION
+// HIGH-SPEED MANAGER LOOKUP & AUTHENTICATION (FIRESTORE: manager)
+// Relevant fields: Email, Password, UserName, FullName, ManagerId, Status, Department, Designation
 // ------------------------------------------------------------------------------------------------
 async function loginManager(identifier, password) {
   const rawId = (identifier || '').trim()
@@ -99,93 +101,83 @@ async function loginManager(identifier, password) {
     throw Object.assign(new Error('Please enter both identifier and password.'), { code: 'auth/invalid-credential' })
   }
 
-  let directAuthPromise = null
-  if (rawId.includes('@')) {
-    directAuthPromise = authenticate(rawId, rawPassword).catch(() => null)
-  }
+  const managerCandidates = []
+  const seenDocPaths = new Set()
 
-  const candidatePromises = []
-
-  // Top-level collections
-  const topColNames = [
-    'manager',
-    'managers',
-    'Manager',
-    'Managers',
-    'config_users',
-    'config_user',
-    'configUsers',
-    'users',
-    'Users',
-  ]
-
-  topColNames.forEach((colName) => {
-    candidatePromises.push(
-      getDocs(collection(db, colName))
-        .then((s) => s.docs.map((d) => ({ doc: d, orgId: d.data()?.orgId || d.data()?.organisationId || 'org_main' })))
-        .catch(() => [])
-    )
-  })
-
-  // Organization sub-collections
-  const orgColNames = ['organisation', 'organisations', 'organization', 'organizations', 'Organisation', 'Organization']
-  const orgDocs = []
-
-  for (const orgCol of orgColNames) {
-    try {
-      const snap = await getDocs(collection(db, orgCol))
-      snap.docs.forEach((d) => orgDocs.push({ id: d.id, col: orgCol }))
-    } catch (e) {}
-  }
-
-  const uniqueOrgs = []
-  const seenOrgIds = new Set()
-  orgDocs.forEach((o) => {
-    if (!seenOrgIds.has(o.id)) {
-      seenOrgIds.add(o.id)
-      uniqueOrgs.push(o)
-    }
-  })
-
-  const subColNames = [
-    'manager',
-    'managers',
-    'Manager',
-    'Managers',
-    'config_users',
-    'config_user',
-    'configUsers',
-    'users',
-    'Users',
-    'team',
-    'Team',
-    'staff',
-  ]
-
-  uniqueOrgs.forEach(({ id: orgId, col: orgCol }) => {
-    subColNames.forEach((subCol) => {
-      candidatePromises.push(
-        getDocs(collection(db, orgCol, orgId, subCol))
-          .then((s) => s.docs.map((d) => ({ doc: d, orgId })))
-          .catch(() => [])
-      )
+  // 1. Check all subcollections named 'manager' across all organizations via collectionGroup
+  try {
+    const groupSnap = await getDocs(collectionGroup(db, 'manager'))
+    groupSnap.forEach((d) => {
+      const path = d.ref.path
+      if (!seenDocPaths.has(path)) {
+        seenDocPaths.add(path)
+        const parentOrgId = d.ref.parent?.parent?.id || 'default_org'
+        managerCandidates.push({ doc: d, data: d.data() || {}, orgId: parentOrgId })
+      }
     })
-  })
+  } catch (_err) {
+    // collectionGroup might be restricted or index missing; fallback will cover
+  }
 
-  const allGroups = await Promise.all(candidatePromises)
-  const allCandidates = allGroups.flat()
+  // 2. Check top-level collection 'manager' and 'managers'
+  for (const topCol of ['manager', 'managers', 'Manager', 'Managers']) {
+    try {
+      const topSnap = await getDocs(collection(db, topCol))
+      topSnap.forEach((d) => {
+        const path = d.ref.path
+        if (!seenDocPaths.has(path)) {
+          seenDocPaths.add(path)
+          const data = d.data() || {}
+          managerCandidates.push({
+            doc: d,
+            data,
+            orgId: data.orgId || data.organisationId || 'default_org',
+          })
+        }
+      })
+    } catch (_err) {}
+  }
 
-  for (const item of allCandidates) {
-    const data = item.doc.data() || {}
+  // 3. Fallback: inspect organisation subcollections directly
+  if (managerCandidates.length === 0) {
+    const orgColNames = ['organisation', 'organization', 'organisations', 'organizations']
+    for (const orgCol of orgColNames) {
+      try {
+        const orgsSnap = await getDocs(collection(db, orgCol))
+        for (const orgDoc of orgsSnap.docs) {
+          const orgId = orgDoc.id
+          for (const subCol of ['manager', 'managers']) {
+            try {
+              const subSnap = await getDocs(collection(db, orgCol, orgId, subCol))
+              subSnap.forEach((d) => {
+                const path = d.ref.path
+                if (!seenDocPaths.has(path)) {
+                  seenDocPaths.add(path)
+                  managerCandidates.push({ doc: d, data: d.data() || {}, orgId })
+                }
+              })
+            } catch (_subErr) {}
+          }
+        }
+      } catch (_orgErr) {}
+    }
+  }
+
+  // Validate credentials against Manager records
+  for (const item of managerCandidates) {
+    const data = item.data
     const docId = item.doc.id
     const orgId = item.orgId
 
-    const userName = extractFieldValue(data, ['UserName', 'username', 'userName', 'Name', 'name'])
     const email = extractFieldValue(data, ['Email', 'email', 'UserEmail'])
-    const contactNo = extractFieldValue(data, ['ContactNo', 'contactNo', 'phone', 'Phone', 'Mobile', 'mobile', 'phoneNumber'])
-    const managerId = extractFieldValue(data, ['ManagerId', 'managerId', 'id', 'uid']) || docId
     const storedPassword = extractFieldValue(data, ['Password', 'password', 'pass', 'pin'])
+    const userName = extractFieldValue(data, ['UserName', 'username', 'userName', 'Name', 'name'])
+    const fullName = extractFieldValue(data, ['FullName', 'fullName', 'Name', 'name']) || userName
+    const managerId = extractFieldValue(data, ['ManagerId', 'managerId', 'id', 'uid']) || docId
     const status = extractFieldValue(data, ['Status', 'status']) || 'Active'
+    const department = extractFieldValue(data, ['Department', 'department']) || 'Operations'
+    const designation = extractFieldValue(data, ['Designation', 'designation']) || 'Site Manager'
+    const contactNo = extractFieldValue(data, ['ContactNo', 'contactNo', 'phone', 'Phone', 'Mobile', 'mobile'])
 
     const contactDigits = contactNo.replace(/\D/g, '')
 
@@ -193,60 +185,53 @@ async function loginManager(identifier, password) {
       (userName && userName.toLowerCase() === idLower) ||
       (email && email.toLowerCase() === idLower) ||
       (managerId && managerId.toLowerCase() === idLower) ||
-      (contactNo && contactNo.toLowerCase() === idLower) ||
-      (digitsOnly && contactDigits && digitsOnly.length >= 8 && contactDigits.endsWith(digitsOnly)) ||
-      docId.toLowerCase() === idLower
+      docId.toLowerCase() === idLower ||
+      (digitsOnly && contactDigits && digitsOnly.length >= 8 && contactDigits.endsWith(digitsOnly))
 
     if (isMatch) {
-      if (status && !['active', 'approved', 'enabled', 'verified'].includes(status.toLowerCase())) {
+      // 1. Verify Status = "Active"
+      const normalizedStatus = String(status).trim().toLowerCase()
+      if (normalizedStatus !== 'active' && normalizedStatus !== 'approved' && normalizedStatus !== 'enabled') {
         throw Object.assign(
           new Error(`Manager account status is "${status}". Please contact your administrator.`),
           { code: 'auth/account-inactive' }
         )
       }
 
+      // 2. Validate Password against Manager credentials
       if (storedPassword && storedPassword === rawPassword) {
-        const directAuthCreds = directAuthPromise ? await directAuthPromise : null
-        const uid = directAuthCreds?.user?.uid || managerId || docId
-        const finalEmail = email || directAuthCreds?.user?.email || `${userName || docId}@ebricks.local`
-        return createSession(uid, finalEmail, orgId, 'Manager', data)
+        return createSession(managerId || docId, email || `${userName || docId}@ebricks.local`, orgId, 'Manager', {
+          ...data,
+          Email: email,
+          UserName: userName,
+          FullName: fullName,
+          ManagerId: managerId,
+          Status: status,
+          Department: department,
+          Designation: designation,
+          role: 'Manager',
+        })
       }
 
-      if (email && email.includes('@')) {
-        try {
-          const creds = await authenticate(email, rawPassword)
-          return createSession(creds.user.uid, creds.user.email, orgId, 'Manager', data)
-        } catch (authErr) {
-          if (authErr.code === 'auth/wrong-password' || authErr.code === 'auth/invalid-credential') {
-            throw Object.assign(new Error('The password entered is incorrect.'), { code: 'auth/wrong-password' })
-          }
-        }
-      }
-
-      if (storedPassword && storedPassword !== rawPassword) {
-        throw Object.assign(new Error('The password entered is incorrect.'), { code: 'auth/wrong-password' })
-      }
+      // If stored password mismatch
+      throw Object.assign(
+        new Error('The password entered is incorrect. Please check your credentials.'),
+        { code: 'auth/wrong-password' }
+      )
     }
   }
 
-  if (directAuthPromise) {
-    const creds = await directAuthPromise
-    if (creds) {
-      return createSession(creds.user.uid, creds.user.email, uniqueOrgs[0]?.id || 'org_main', 'Manager', {
-        email: creds.user.email,
-        fullName: creds.user.displayName || creds.user.email,
-      })
-    }
-  }
-
+  // Account not found in Manager collection
   throw Object.assign(
-    new Error('Manager account not found.'),
+    new Error('Manager account not found. Please check your credentials or switch to Organization Login if you are an admin.'),
     { code: 'auth/user-not-found' }
   )
 }
 
 // ------------------------------------------------------------------------------------------------
-// HIGH-SPEED ORGANIZATION LOOKUP & AUTHENTICATION
+// HIGH-SPEED ORGANIZATION LOOKUP & AUTHENTICATION (FIRESTORE: admin -> data)
+// Relevant fields: email, password, role = Organization, username, org_name,
+// registrationStatus, isSubscriptionActive, paymentStatus
 // ------------------------------------------------------------------------------------------------
 async function loginOrganization(identifier, password) {
   const rawId = (identifier || '').trim()
@@ -257,92 +242,205 @@ async function loginOrganization(identifier, password) {
     throw Object.assign(new Error('Please enter both identifier and password.'), { code: 'auth/invalid-credential' })
   }
 
-  const orgColNames = ['organisation', 'organisations', 'organization', 'organizations', 'Organisation', 'Organization']
-  const allOrgDocs = []
+  const orgCandidates = []
+  const seenOrgDocKeys = new Set()
 
+  // 1. Target admin -> data subcollection structure via collectionGroup('admin')
+  try {
+    const adminGroupSnap = await getDocs(collectionGroup(db, 'admin'))
+    adminGroupSnap.forEach((d) => {
+      if (d.id === 'data' || d.id === 'admin') {
+        const parentOrgId = d.ref.parent?.parent?.id || 'default_org'
+        const key = `${parentOrgId}_admin_data`
+        if (!seenOrgDocKeys.has(key)) {
+          seenOrgDocKeys.add(key)
+          orgCandidates.push({
+            data: d.data() || {},
+            orgId: parentOrgId,
+            source: 'admin/data',
+          })
+        }
+      }
+    })
+  } catch (_err) {}
+
+  // 2. Query organisation collections directly
+  const orgColNames = ['organisation', 'organisations', 'organization', 'organizations']
   for (const orgCol of orgColNames) {
     try {
       const snap = await getDocs(collection(db, orgCol))
-      snap.docs.forEach((d) => allOrgDocs.push({ doc: d, col: orgCol }))
-    } catch (e) {}
+      for (const orgDoc of snap.docs) {
+        const orgId = orgDoc.id
+        const orgDocData = orgDoc.data() || {}
+
+        // Add root organisation document
+        const rootKey = `${orgId}_root`
+        if (!seenOrgDocKeys.has(rootKey)) {
+          seenOrgDocKeys.add(rootKey)
+          orgCandidates.push({
+            data: orgDocData,
+            orgId,
+            source: 'root',
+          })
+        }
+
+        // Check specific admin -> data subcollection doc
+        try {
+          const adminDataSnap = await getDoc(doc(db, orgCol, orgId, 'admin', 'data'))
+          if (adminDataSnap.exists()) {
+            const adminKey = `${orgId}_admin_data`
+            if (!seenOrgDocKeys.has(adminKey)) {
+              seenOrgDocKeys.add(adminKey)
+              orgCandidates.push({
+                data: adminDataSnap.data() || {},
+                orgId,
+                source: 'admin/data',
+              })
+            }
+          }
+        } catch (_adminErr) {}
+
+        // Check legacy data -> admin subcollection doc
+        try {
+          const dataAdminSnap = await getDoc(doc(db, orgCol, orgId, 'data', 'admin'))
+          if (dataAdminSnap.exists()) {
+            const dataAdminKey = `${orgId}_data_admin`
+            if (!seenOrgDocKeys.has(dataAdminKey)) {
+              seenOrgDocKeys.add(dataAdminKey)
+              orgCandidates.push({
+                data: dataAdminSnap.data() || {},
+                orgId,
+                source: 'data/admin',
+              })
+            }
+          }
+        } catch (_dataAdminErr) {}
+      }
+    } catch (_e) {}
   }
 
-  for (const { doc: orgDoc, col: orgCol } of allOrgDocs) {
-    const orgData = orgDoc.data() || {}
-    const orgId = orgDoc.id
+  // 3. Also check root doc(db, 'admin', 'data') if present
+  try {
+    const rootAdminSnap = await getDoc(doc(db, 'admin', 'data'))
+    if (rootAdminSnap.exists()) {
+      const rootAdminKey = 'root_admin_data'
+      if (!seenOrgDocKeys.has(rootAdminKey)) {
+        seenOrgDocKeys.add(rootAdminKey)
+        orgCandidates.push({
+          data: rootAdminSnap.data() || {},
+          orgId: 'org_main',
+          source: 'root_admin_data',
+        })
+      }
+    }
+  } catch (_rootAdminErr) {}
 
-    const orgEmail = extractFieldValue(orgData, ['email', 'Email'])
-    const orgUsername = extractFieldValue(orgData, ['username', 'UserName'])
-    const orgPhone = extractFieldValue(orgData, ['phone', 'Phone', 'contactNo'])
-    const orgName = extractFieldValue(orgData, ['org_name', 'companyName', 'organizationName'])
-    const orgIdField = extractFieldValue(orgData, ['organizationId', 'orgId']) || orgId
+  // Validate credentials against Organization data structure
+  for (const candidate of orgCandidates) {
+    const data = candidate.data
+    const orgId = candidate.orgId
 
-    let adminData = null
-    try {
-      const adminSnap = await getDoc(doc(db, orgCol, orgId, 'data', 'admin'))
-      if (adminSnap.exists()) adminData = adminSnap.data()
-    } catch (e) {}
-
-    const adminEmail = extractFieldValue(adminData, ['email', 'Email'])
-    const adminUsername = extractFieldValue(adminData, ['username', 'UserName'])
-    const adminPhone = extractFieldValue(adminData, ['phone', 'Phone'])
-    const adminPassword = extractFieldValue(adminData, ['Password', 'password', 'pass'])
-    const orgPassword = extractFieldValue(orgData, ['Password', 'password', 'pass'])
+    const email = extractFieldValue(data, ['email', 'Email'])
+    const username = extractFieldValue(data, ['username', 'UserName'])
+    const storedPassword = extractFieldValue(data, ['password', 'Password', 'pass'])
+    const role = extractFieldValue(data, ['role', 'Role']) || 'Organization'
+    const orgName = extractFieldValue(data, ['org_name', 'orgName', 'companyName', 'organizationName', 'app_name', 'appName'])
+    const orgIdField = extractFieldValue(data, ['organizationId', 'orgId']) || orgId
+    const phone = extractFieldValue(data, ['phone', 'Phone', 'contactNo'])
+    const isSubscriptionActive = data.isSubscriptionActive !== undefined ? data.isSubscriptionActive : true
+    const paymentStatus = extractFieldValue(data, ['paymentStatus', 'payment_status']) || 'SUCCESS'
 
     const isMatch =
       orgId.toLowerCase() === idLower ||
-      (orgEmail && orgEmail.toLowerCase() === idLower) ||
-      (orgUsername && orgUsername.toLowerCase() === idLower) ||
-      (orgPhone && orgPhone.toLowerCase() === idLower) ||
+      (email && email.toLowerCase() === idLower) ||
+      (username && username.toLowerCase() === idLower) ||
       (orgName && orgName.toLowerCase() === idLower) ||
       (orgIdField && orgIdField.toLowerCase() === idLower) ||
-      (adminEmail && adminEmail.toLowerCase() === idLower) ||
-      (adminUsername && adminUsername.toLowerCase() === idLower) ||
-      (adminPhone && adminPhone.toLowerCase() === idLower)
+      (phone && phone.toLowerCase() === idLower)
 
     if (isMatch) {
-      ensureSubscription(orgData)
-
-      const storedPassword = adminPassword || orgPassword
-      if (storedPassword && storedPassword === rawPassword) {
-        return createSession(orgId, adminEmail || orgEmail || `${orgId}@ebricks.local`, orgId, 'Organization', adminData || orgData)
+      // 1. Verify role = "Organization"
+      if (normalizeRole(role) !== 'Organization') {
+        throw Object.assign(
+          new Error('Access denied. This account does not have Organization administrator privileges.'),
+          { code: 'auth/unauthorized-role' }
+        )
       }
 
-      const emailToAuth = adminEmail || orgEmail || (rawId.includes('@') ? rawId : '')
-      if (emailToAuth && emailToAuth.includes('@')) {
+      // 2. Verify subscription and payment status
+      if (isSubscriptionActive === false || paymentStatus === 'FAILED') {
+        throw Object.assign(
+          new Error('This organization subscription is inactive or payment is pending. Please contact support or complete payment.'),
+          { code: 'auth/subscription-inactive' }
+        )
+      }
+
+      const subscription = data.subscription || data
+      if (subscription?.subscriptionEndDate) {
+        const endDate = subscription.subscriptionEndDate?.toDate?.() || new Date(subscription.subscriptionEndDate)
+        if (endDate < new Date()) {
+          throw Object.assign(
+            new Error('This organization subscription has expired. Please renew your subscription to continue.'),
+            { code: 'auth/subscription-inactive' }
+          )
+        }
+      }
+
+      // 3. Validate credentials
+      if (storedPassword && storedPassword === rawPassword) {
+        // Authenticate with Firebase Auth if account is linked in Firebase Auth
+        if (email && email.includes('@')) {
+          await authenticate(email, rawPassword).catch(() => null)
+        }
+
+        return createSession(orgId, email || `${orgId}@ebricks.local`, orgId, 'Organization', {
+          ...data,
+          role: 'Organization',
+          org_name: orgName || 'Organization',
+          username: username || orgId,
+          email,
+        })
+      }
+
+      // If stored password differs or empty, attempt Firebase Auth
+      if (email && email.includes('@')) {
         try {
-          const creds = await authenticate(emailToAuth, rawPassword)
-          return createSession(creds.user.uid, creds.user.email, orgId, 'Organization', adminData || orgData)
+          const creds = await authenticate(email, rawPassword)
+          return createSession(creds.user.uid, creds.user.email, orgId, 'Organization', {
+            ...data,
+            role: 'Organization',
+            org_name: orgName || 'Organization',
+            username: username || orgId,
+            email: creds.user.email,
+          })
         } catch (authErr) {
           if (authErr.code === 'auth/wrong-password' || authErr.code === 'auth/invalid-credential') {
-            throw Object.assign(new Error('The password entered is incorrect.'), { code: 'auth/wrong-password' })
+            throw Object.assign(
+              new Error('The password entered is incorrect. Please check your credentials.'),
+              { code: 'auth/wrong-password' }
+            )
           }
         }
       }
 
-      if (storedPassword && storedPassword !== rawPassword) {
-        throw Object.assign(new Error('The password entered is incorrect.'), { code: 'auth/wrong-password' })
-      }
+      // Password mismatch
+      throw Object.assign(
+        new Error('The password entered is incorrect. Please check your credentials.'),
+        { code: 'auth/wrong-password' }
+      )
     }
   }
 
-  // Direct Firebase Auth fallback
-  if (rawId.includes('@')) {
-    const creds = await authenticate(rawId, rawPassword)
-    return createSession(creds.user.uid, creds.user.email, allOrgDocs[0]?.doc?.id || 'org_main', 'Organization', {
-      email: creds.user.email,
-      fullName: creds.user.displayName || creds.user.email,
-    })
-  }
-
+  // Account not found in Organization data structure
   throw Object.assign(
-    new Error('Organization account not found.'),
+    new Error('Organization account not found. Please check your credentials or switch to Manager Login if you are a site manager.'),
     { code: 'auth/user-not-found' }
   )
 }
 
 // ------------------------------------------------------------------------------------------------
-// UNIFIED INTELLIGENT LOGIN FLOW (AUTO-DETECTS ORGANIZATION VS MANAGER)
+// ROLE-BASED LOGIN DISPATCHER
+// Enforces strict authentication for the selected login type without cross-role fallback
 // ------------------------------------------------------------------------------------------------
 export async function loginUser(identifier, password, preferredRole = null) {
   const rawId = (identifier || '').trim()
@@ -352,48 +450,29 @@ export async function loginUser(identifier, password, preferredRole = null) {
     throw Object.assign(new Error('Please enter both identifier and password.'), { code: 'auth/invalid-credential' })
   }
 
-  // If role is explicitly provided
+  // Enforce selected login type strictly
   if (preferredRole === 'Manager') {
-    try {
-      return await loginManager(rawId, rawPassword)
-    } catch (err) {
-      if (err.code === 'auth/wrong-password' || err.code === 'auth/account-inactive') throw err
-      try {
-        return await loginOrganization(rawId, rawPassword)
-      } catch (e) {
-        throw err
-      }
-    }
+    return await loginManager(rawId, rawPassword)
   }
 
   if (preferredRole === 'Organization') {
-    try {
-      return await loginOrganization(rawId, rawPassword)
-    } catch (err) {
-      if (err.code === 'auth/wrong-password' || err.code === 'auth/subscription-inactive') throw err
-      try {
-        return await loginManager(rawId, rawPassword)
-      } catch (e) {
-        throw err
-      }
-    }
+    return await loginOrganization(rawId, rawPassword)
   }
 
-  // Unified auto-detection: Run manager and organization validation concurrently
+  // Default fallback if no preferredRole is passed
   const [managerResult, orgResult] = await Promise.allSettled([
     loginManager(rawId, rawPassword),
     loginOrganization(rawId, rawPassword),
   ])
 
-  if (managerResult.status === 'fulfilled') {
-    return managerResult.value
-  }
-
   if (orgResult.status === 'fulfilled') {
     return orgResult.value
   }
 
-  // Check specific errors
+  if (managerResult.status === 'fulfilled') {
+    return managerResult.value
+  }
+
   const managerErr = managerResult.reason
   const orgErr = orgResult.reason
 
@@ -406,6 +485,10 @@ export async function loginUser(identifier, password, preferredRole = null) {
   }
 
   if (orgErr?.code === 'auth/subscription-inactive') {
+    throw orgErr
+  }
+
+  if (orgErr?.code === 'auth/unauthorized-role') {
     throw orgErr
   }
 
