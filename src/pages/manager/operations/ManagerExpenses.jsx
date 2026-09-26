@@ -16,6 +16,8 @@ import {
   ChevronUp,
   X,
   CreditCard,
+  Table,
+  LayoutGrid,
 } from 'lucide-react'
 import {
   fetchManagerExpenses,
@@ -24,6 +26,7 @@ import {
 } from '../../../services/managerExpenseService.js'
 
 export default function ManagerExpenses({ orgId, sites = [], currentUser, onNotify }) {
+  const [viewMode, setViewMode] = useState('table') // 'table' | 'cards'
   const [expenses, setExpenses] = useState([])
   const [loading, setLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -238,24 +241,56 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
           />
         </div>
 
-        <div className="flex items-center gap-2">
-          <Building2 className="w-4 h-4 text-slate-400" />
-          <select
-            value={selectedSiteFilter}
-            onChange={(e) => setSelectedSiteFilter(e.target.value)}
-            className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20"
-          >
-            <option value="ALL">All Project Sites ({sites.length})</option>
-            {sites.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.siteName || s.projectName}
-              </option>
-            ))}
-          </select>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Building2 className="w-4 h-4 text-slate-400" />
+            <select
+              value={selectedSiteFilter}
+              onChange={(e) => setSelectedSiteFilter(e.target.value)}
+              className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20"
+            >
+              <option value="ALL">All Project Sites ({sites.length})</option>
+              {sites.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.siteName || s.projectName}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* View Mode Switcher */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80 shrink-0">
+            <button
+              type="button"
+              onClick={() => setViewMode('table')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                viewMode === 'table'
+                  ? 'bg-white text-[#0B3470] shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="Table View"
+            >
+              <Table className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Table</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('cards')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                viewMode === 'cards'
+                  ? 'bg-white text-[#0B3470] shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="List Feed View"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Feed</span>
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Expenses Feed */}
+      {/* Expenses Content: Table View or Cards View */}
       {loading && expenses.length === 0 ? (
         <div className="py-20 text-center text-slate-400">Loading expense claims...</div>
       ) : filteredExpenses.length === 0 ? (
@@ -265,6 +300,83 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
           <p className="text-xs text-slate-400 mt-1">
             Click "Record Direct Expense" to log out-of-pocket expenditures for your projects.
           </p>
+        </div>
+      ) : viewMode === 'table' ? (
+        /* EXPENSES TABLE FORMAT */
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50/75 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                  <th className="py-3.5 px-4">Site & Stage</th>
+                  <th className="py-3.5 px-4">Date</th>
+                  <th className="py-3.5 px-4">Bill Items</th>
+                  <th className="py-3.5 px-4">Total Amount</th>
+                  <th className="py-3.5 px-4">Remarks / Notes</th>
+                  <th className="py-3.5 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-xs">
+                {filteredExpenses.map((item) => {
+                  const expenseDate = item.expenseDate?.seconds
+                    ? new Date(item.expenseDate.seconds * 1000).toLocaleDateString('en-IN', {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                      })
+                    : 'Recent'
+                  const billsCount = Array.isArray(item.bills) ? item.bills.length : 1
+                  const totalAmt = Number(item.totalAmount) || 0
+
+                  return (
+                    <tr key={item.id || item.expenseId} className="hover:bg-slate-50/70 transition-colors">
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center font-bold text-xs shrink-0 border border-purple-100">
+                            <Receipt className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <strong className="block font-bold text-slate-900 text-sm">{item.siteName}</strong>
+                            <span className="px-2 py-0.5 text-[10px] font-semibold bg-indigo-50 text-indigo-700 rounded-md inline-block mt-0.5">
+                              {item.projectStage || 'Superstructure'}
+                            </span>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="py-3.5 px-4 font-mono text-slate-700">
+                        {expenseDate}
+                      </td>
+
+                      <td className="py-3.5 px-4">
+                        <span className="px-2 py-0.5 text-[11px] font-semibold bg-slate-100 text-slate-800 rounded-md">
+                          {billsCount} {billsCount === 1 ? 'Bill' : 'Bills'}
+                        </span>
+                      </td>
+
+                      <td className="py-3.5 px-4 font-black text-slate-900 text-sm">
+                        ₹{totalAmt.toLocaleString('en-IN')}
+                      </td>
+
+                      <td className="py-3.5 px-4 text-slate-600 max-w-xs truncate">
+                        {item.remarks || 'No remarks'}
+                      </td>
+
+                      <td className="py-3.5 px-4 text-right">
+                        <button
+                          onClick={() => handleDelete(item.id || item.expenseId)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer border border-slate-200"
+                          title="Delete Claim"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : (
         <div className="space-y-4">

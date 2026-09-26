@@ -33,6 +33,7 @@ import LabourWageScales from './workforce/LabourWageScales'
 import WorkersDirectory from './workforce/WorkersDirectory'
 import WorkerSiteMapping from './workforce/WorkerSiteMapping'
 import WorkerAttendanceMuster from './workforce/WorkerAttendanceMuster'
+import ManagerWorkerAttendanceReport from './workforce/ManagerWorkerAttendanceReport'
 
 // Group 7: Fleet
 import VehicleFleetHub from './fleet/VehicleFleetHub'
@@ -246,6 +247,7 @@ export default function ManagerModule() {
         { id: 'workers', label: 'Workers Configuration', path: '/manager/workers', icon: Users },
         { id: 'worker-mapping', label: 'Workers Site Mapping', path: '/manager/worker-mapping', icon: Link2 },
         { id: 'attendance', label: 'Worker Attendance', path: '/manager/attendance', icon: CalendarCheck },
+        { id: 'attendance-report', label: 'Worker Attendance Report', path: '/manager/attendance-report', icon: FileText },
       ],
     },
     {
@@ -345,6 +347,8 @@ export default function ManagerModule() {
       case 'attendance':
       case 'workforce':
         return <WorkerAttendanceMuster orgId={orgId} sites={sites} currentUser={currentUser} onNotify={showToast} />
+      case 'attendance-report':
+        return <ManagerWorkerAttendanceReport orgId={orgId} sites={sites} currentUser={currentUser} onNotify={showToast} />
 
       // Group 7: Fleet
       case 'fleet':

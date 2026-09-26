@@ -13,8 +13,10 @@ export default function PettyCashInsightsReportHub({
   pettyCashExpenses = [],
   pettyCashRequests = [],
   subReport = 'audit',
+  initialSiteId = 'all',
 }) {
   const [activeTab, setActiveTab] = useState(subReport === 'ledger' ? 'ledger' : 'audit')
+  const [selectedSiteId, setSelectedSiteId] = useState(initialSiteId)
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const d = new Date()
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
@@ -27,6 +29,10 @@ export default function PettyCashInsightsReportHub({
     else if (subReport === 'audit') setActiveTab('audit')
   }, [subReport])
 
+  React.useEffect(() => {
+    if (initialSiteId) setSelectedSiteId(initialSiteId)
+  }, [initialSiteId])
+
   const reportData = useMemo(() => {
     return calculatePettyCashInsights({
       sites,
@@ -36,9 +42,15 @@ export default function PettyCashInsightsReportHub({
     })
   }, [sites, pettyCashAccounts, pettyCashExpenses, pettyCashRequests])
 
+  const filteredSiteAuditList = useMemo(() => {
+    if (selectedSiteId === 'all') return reportData.siteAuditList
+    return reportData.siteAuditList.filter((s) => s.siteId === selectedSiteId)
+  }, [reportData, selectedSiteId])
+
   // Filtered monthly ledger
   const filteredLedger = useMemo(() => {
     return reportData.itemizedLedger.filter((item) => {
+      const matchesSite = selectedSiteId === 'all' || item.siteId === selectedSiteId
       const matchesMonth = item.rawDate ? String(item.rawDate).startsWith(selectedMonth) : true
       const matchesCategory = categoryFilter === 'all' || item.category.toLowerCase().includes(categoryFilter.toLowerCase())
       const q = searchQuery.trim().toLowerCase()
@@ -48,9 +60,9 @@ export default function PettyCashInsightsReportHub({
         item.supervisor?.toLowerCase().includes(q) ||
         item.vendor?.toLowerCase().includes(q) ||
         item.description?.toLowerCase().includes(q)
-      return matchesMonth && matchesCategory && matchesSearch
+      return matchesSite && matchesMonth && matchesCategory && matchesSearch
     })
-  }, [reportData, selectedMonth, categoryFilter, searchQuery])
+  }, [reportData, selectedSiteId, selectedMonth, categoryFilter, searchQuery])
 
   const handleExportCSV = () => {
     if (activeTab === 'audit') {
@@ -221,7 +233,7 @@ export default function PettyCashInsightsReportHub({
       {/* 3 Overview KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
-          <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider block">Total Disbursed Float</span>
+          <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider block">Total Approved Imprest Float</span>
           <strong className="text-2xl font-extrabold text-slate-900 font-mono block">{money(reportData.kpis.totalDisbursed)}</strong>
           <small className="text-slate-400 text-[11px]">Approved allocations across sites</small>
         </div>
@@ -243,6 +255,37 @@ export default function PettyCashInsightsReportHub({
         </div>
       </div>
 
+      {/* Petty Cash Category Breakdown Panel */}
+      {reportData.categoryBreakdown && reportData.categoryBreakdown.length > 0 && (
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
+              Category Wise Distribution
+            </h3>
+            <span className="text-[11px] text-slate-400">Distribution across petty cash vouchers</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {reportData.categoryBreakdown.map((cat, idx) => (
+              <div key={idx} className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <span>{cat.icon || '🏷️'}</span>
+                    <span>{cat.name}</span>
+                  </span>
+                  <span className="text-[11px] font-extrabold text-amber-700 font-mono">{cat.percent}%</span>
+                </div>
+                <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                  <div className="bg-amber-600 h-1.5 rounded-full" style={{ width: `${cat.percent}%` }} />
+                </div>
+                <div className="text-xs font-mono font-bold text-slate-900">
+                  {money(cat.total)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* 5A. Site-by-Site Audit Table */}
       {activeTab === 'audit' && (
         <div className="bg-white border border-slate-200/90 rounded-2xl shadow-xs overflow-hidden">
@@ -259,14 +302,14 @@ export default function PettyCashInsightsReportHub({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {reportData.siteAuditList.length === 0 ? (
+                {filteredSiteAuditList.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="p-12 text-center text-slate-400 text-xs">
                       No petty cash records found for sites.
                     </td>
                   </tr>
                 ) : (
-                  reportData.siteAuditList.map((s, idx) => (
+                  filteredSiteAuditList.map((s, idx) => (
                     <tr key={s.siteId || idx} className="hover:bg-slate-50/80 transition-colors">
                       <td className="p-3.5 font-bold text-slate-900">{s.siteName}</td>
                       <td className="p-3.5 text-slate-600">{s.supervisor}</td>

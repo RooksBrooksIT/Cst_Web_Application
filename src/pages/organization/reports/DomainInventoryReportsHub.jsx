@@ -17,6 +17,7 @@ export default function DomainInventoryReportsHub({
   vehicles = [],
   siteSupervisorIncentives = [],
   subReport = 'materials',
+  initialSiteId = 'all',
 }) {
   const getInitialDomain = (sub) => {
     if (sub === 'materials') return 'materials'
@@ -26,6 +27,7 @@ export default function DomainInventoryReportsHub({
   }
 
   const [activeDomain, setActiveDomain] = useState(() => getInitialDomain(subReport))
+  const [selectedSiteId, setSelectedSiteId] = useState(initialSiteId)
   const [searchQuery, setSearchQuery] = useState('')
 
   React.useEffect(() => {
@@ -33,6 +35,12 @@ export default function DomainInventoryReportsHub({
       setActiveDomain(getInitialDomain(subReport))
     }
   }, [subReport])
+
+  React.useEffect(() => {
+    if (initialSiteId) {
+      setSelectedSiteId(initialSiteId)
+    }
+  }, [initialSiteId])
 
   const reportData = useMemo(() => {
     return calculateDomainReports({
@@ -61,14 +69,18 @@ export default function DomainInventoryReportsHub({
   ])
 
   const filteredRecords = useMemo(() => {
+    let list = reportData.records
+    if (selectedSiteId && selectedSiteId !== 'all') {
+      list = list.filter((r) => r.siteId === selectedSiteId || r.site === selectedSiteId || r.projectId === selectedSiteId)
+    }
     const query = searchQuery.trim().toLowerCase()
-    if (!query) return reportData.records
-    return reportData.records.filter((rec) =>
+    if (!query) return list
+    return list.filter((rec) =>
       Object.values(rec).some((val) =>
         String(val).toLowerCase().includes(query)
       )
     )
-  }, [reportData, searchQuery])
+  }, [reportData, searchQuery, selectedSiteId])
 
   const handleExportCSV = () => {
     if (filteredRecords.length === 0) return
@@ -171,6 +183,32 @@ export default function DomainInventoryReportsHub({
           })}
         </div>
       </div>
+
+      {/* Contractor Summary KPI Cards */}
+      {activeDomain === 'contractors' && reportData.summary && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Total Contractors</span>
+            <strong className="text-xl font-extrabold text-blue-700 block font-mono">{reportData.summary.totalRegisteredContractors || 0}</strong>
+            <small className="text-slate-400 text-[10px]">Registered trade partners</small>
+          </div>
+          <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Total Billed Value</span>
+            <strong className="text-xl font-extrabold text-slate-900 block font-mono">{money(reportData.summary.totalBillValue || 0)}</strong>
+            <small className="text-slate-400 text-[10px]">Submitted work bills</small>
+          </div>
+          <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+            <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">Total Paid Out</span>
+            <strong className="text-xl font-extrabold text-emerald-700 block font-mono">{money(reportData.summary.totalPaidAmount || 0)}</strong>
+            <small className="text-slate-400 text-[10px]">Cleared contractor payments</small>
+          </div>
+          <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1 border-l-4 border-l-amber-500">
+            <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wider block">Total Outstanding</span>
+            <strong className="text-xl font-extrabold text-amber-700 block font-mono">{money(reportData.summary.totalPendingBalance || 0)}</strong>
+            <small className="text-slate-400 text-[10px]">Pending contractor balance</small>
+          </div>
+        </div>
+      )}
 
       {/* Filter Toolbar & Count */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">

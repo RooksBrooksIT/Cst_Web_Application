@@ -1,0 +1,227 @@
+================================================================================
+EBRICKS WEB APPLICATION - ORGANIZATION REPORTS SECTION FLOW SPECIFICATION
+================================================================================
+Application: eBricks White Label Construction Management System
+Role Target: Organization Admin / HQ Management & Financial Controller
+Date: September 26, 2026
+Version: 1.0 (Canonical Organization Reports Architecture)
+================================================================================
+
+1. EXECUTIVE OVERVIEW & REPORTING SYSTEM ARCHITECTURE
+--------------------------------------------------------------------------------
+The eBricks Organization Reports Section provides real-time financial, operational,
+inventory, workforce, and project stage insights across all construction projects.
+Reports aggregate data live from Firestore, applying organization multi-tenant 
+isolation (/organisation/{orgId}/data/{collection}).
+
+All Organization Reports:
+  1. Financial Status & Executive Summary Report
+  2. Project & Site Summary Report
+  3. Site Expenses & Petty Cash Breakdown Report
+  4. Material Inventory & Movement Report
+  5. Tools & Machinery Inventory Report
+  6. Workers Attendance & Payroll Report
+  7. Project Stage & Schedule Insights Dashboard
+  8. Manager & Supervisor Incentive Calculation Report
+
+--------------------------------------------------------------------------------
+2. DETAILED REPORT SPECIFICATIONS & FIRESTORE COLLECTIONS
+--------------------------------------------------------------------------------
+
+================================================================================
+REPORT 1: FINANCIAL STATUS & EXECUTIVE SUMMARY REPORT
+================================================================================
+Description: Comprehensive financial overview across all active and completed projects.
+Primary Collections Used:
+  - /organisation/{orgId}/data/projects
+  - /organisation/{orgId}/data/expenses
+  - /organisation/{orgId}/data/totalSiteExpensesPerDay
+  - /organisation/{orgId}/data/pettyCashRequests
+
+Key Metrics & Formulae:
+  - Total Estimated Budget  = Sum(projectBudget)
+  - Total Customer Received = Sum(amountReceived || amountPaid)
+  - Total Expenses Spent    = Sum(totalExpense || amountSpent)
+  - Net Customer Balance    = Total Customer Received - Total Expenses Spent
+  - Remaining Budget        = Total Estimated Budget - Total Expenses Spent
+  - Overall Budget Usage %  = (Total Expenses Spent / Total Estimated Budget) * 100
+
+Data Object Schema:
+{
+  "projectId": "PR001_ST001_Pothys",
+  "projectName": "Pothys Villa Project",
+  "projectBudget": 1500000,
+  "amountReceived": 1200000,
+  "amountSpent": 850000,
+  "balanceAmount": 350000,
+  "budgetUtilizationPct": 56.6,
+  "projectCategory": "Residential",
+  "projectStatus": "Active"
+}
+
+================================================================================
+REPORT 2: PROJECT & SITE SUMMARY REPORT
+================================================================================
+Description: Site-by-site operational summary comparing budgets, expenses, labor, and materials.
+Primary Collections Used:
+  - /organisation/{orgId}/data/projects
+  - /organisation/{orgId}/data/totalSiteExpensesPerDay
+  - /organisation/{orgId}/data/siteMaterialsRequest
+  - /organisation/{orgId}/data/siteToolsRequest
+  - /organisation/{orgId}/data/workersAttendance
+
+Key Metrics:
+  - Site ID & Name, Assigned Manager, Assigned Supervisor
+  - Total Materials Cost (₹), Total Tool Rentals (₹), Total Labour Cost (₹)
+  - Site Completion Percentage (%), Start Date, Planned End Date
+
+================================================================================
+REPORT 3: SITE EXPENSES & PETTY CASH BREAKDOWN REPORT
+================================================================================
+Description: Granular line-item breakdown of petty cash distributions and expense categories.
+Primary Collections Used:
+  - /organisation/{orgId}/data/pettyCashRequests
+  - /organisation/{orgId}/data/expenses
+  - /organisation/{orgId}/data/totalSiteExpensesPerDay
+
+Expense Categories Tracked:
+  1. Civil Materials (Cement, Steel, Bricks, Sand, Aggregates)
+  2. Fuel & Transportation (Diesel, Vehicle Hire)
+  3. Site Labour & Wages (Direct Labour, Subcontractor Wages)
+  4. Machinery & Tools (Equipment Rental, Maintenance)
+  5. Site Admin & Refreshments (Food, Tea, Stationery, Miscellaneous)
+
+Data Object Schema:
+{
+  "siteId": "ST001",
+  "totalPettyCashApproved": 50000,
+  "totalPettyCashSpent": 38500,
+  "remainingPettyCash": 11500,
+  "categoryExpenses": {
+    "Cement & Steel": 15000,
+    "Fuel": 8500,
+    "Labour Wages": 12000,
+    "Site Food & Tea": 3000
+  }
+}
+
+================================================================================
+REPORT 4: MATERIAL INVENTORY & MOVEMENT REPORT
+================================================================================
+Description: Stock levels at Company Warehouse vs. Sites, plus inter-site material transfers.
+Primary Collections Used:
+  - /organisation/{orgId}/data/materials
+  - /organisation/{orgId}/data/materialsAvailability
+  - /organisation/{orgId}/data/materialTransfer
+  - /organisation/{orgId}/data/materialmovementhistory
+
+Key Metrics:
+  - Company Stock Available (Units)
+  - Total Stock Allocated to Sites (Units)
+  - Transfer Movement History:
+    - Company Warehouse -> Site Transfer
+    - Site -> Site Inter-Transfer
+    - Site -> Company Return Stock
+
+Data Object Schema:
+{
+  "materialId": "cement_opc",
+  "materialName": "Cement OPC 53 Grade",
+  "unit": "bags",
+  "companyStock": 250,
+  "allocatedSiteStock": 170,
+  "totalStock": 420,
+  "transferLogs": [
+    {
+      "transferType": "CompanyToSite",
+      "fromSiteName": "Company Warehouse",
+      "toSiteName": "Metro Station Site A",
+      "quantity": 50,
+      "date": "2026-09-25",
+      "status": "COMPLETED"
+    }
+  ]
+}
+
+================================================================================
+REPORT 5: TOOLS & MACHINERY INVENTORY REPORT
+================================================================================
+Description: Equipment tracking across Company Warehouse, active sites, and repair status.
+Primary Collections Used:
+  - /organisation/{orgId}/data/tools
+  - /organisation/{orgId}/data/toolsInventory
+  - /organisation/{orgId}/data/toolsAtCompany
+  - /organisation/{orgId}/data/toolsAtSite
+  - /organisation/{orgId}/data/toolsMovement
+  - /organisation/{orgId}/data/toolsReturn
+
+Key Metrics:
+  - Total Owned Tools/Machinery Count
+  - Tools Available at Company Warehouse
+  - Tools Active on Construction Sites
+  - Tools Under Maintenance / Damaged / Return Pending
+
+================================================================================
+REPORT 6: WORKERS ATTENDANCE & PAYROLL REPORT
+================================================================================
+Description: Daily attendance breakdown, attendance percentage, and monthly calculated salary ledger.
+Primary Collections Used:
+  - /organisation/{orgId}/data/labours
+  - /organisation/{orgId}/data/workerSiteMapping
+  - /organisation/{orgId}/data/workersAttendance
+  - /organisation/{orgId}/data/WorkerMonthlyAttendance
+
+Key Metrics:
+  - Total Mapped Workers
+  - Present Days (P = 1.0), Half Days (H = 0.5), Overtime (OT = 1.0 + Bonus), Absent (A = 0.0)
+  - Monthly Calculated Wages (₹) = (P * Rate) + (H * Rate * 0.5) + (OT * Rate) + OT Bonus
+  - Day-by-Day (1-31) Status Attendance Grid
+
+================================================================================
+REPORT 7: PROJECT STAGE & SCHEDULE INSIGHTS DASHBOARD
+================================================================================
+Description: Stage-by-stage construction progress, stage budget vs actual cost, schedule delays.
+Primary Collections Used:
+  - /organisation/{orgId}/data/projects
+  - /organisation/{orgId}/data/siteSupervisorProjectStageSchedule
+  - /organisation/{orgId}/data/stageProgress
+
+Key Metrics:
+  - Active Stage Name (Foundation, Framing, Plastering, Electrical, Finishing)
+  - Stage Completion Percentage (%)
+  - Stage Budget vs Actual Stage Expenditure
+  - Schedule Status (On Time, Coming Soon, Overdue by X Days)
+
+================================================================================
+REPORT 8: MANAGER & SUPERVISOR INCENTIVE CALCULATION REPORT
+================================================================================
+Description: Performance bonus and milestone incentive calculations for Managers and Supervisors.
+Primary Collections Used:
+  - /organisation/{orgId}/data/projects
+  - /organisation/{orgId}/data/manager
+  - /organisation/{orgId}/data/supervisor
+  - /organisation/{orgId}/data/incentives
+
+Key Metrics:
+  - Target Completion Date vs Actual Completion Date
+  - Budget Savings Incentive Percentage
+  - Calculated Bonus Amount (₹)
+
+--------------------------------------------------------------------------------
+3. COMMON FILTERS, EXPORT & WEB IMPLEMENTATION FLOW
+--------------------------------------------------------------------------------
+
+A. Standard Web Application Filters:
+  1. Date Range Picker / Month Picker (YYYY-MM or Start & End Date)
+  2. Project / Site Selector Dropdown (All Projects or specific projectId)
+  3. Status Filter (Active, Completed, Overdue, All)
+  4. Search Bar (Search by Project, Worker, Material, or Tool Name)
+
+B. Export & Output Formats:
+  1. Dynamic React Data Tables with sorting & pagination
+  2. Export to PDF Statement (Printable Layout)
+  3. Export to Excel / CSV Spreadsheet
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

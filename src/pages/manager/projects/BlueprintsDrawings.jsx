@@ -17,6 +17,8 @@ import {
   Maximize2,
   X,
   ExternalLink,
+  Table,
+  LayoutGrid,
 } from 'lucide-react'
 import {
   fetchDrawings,
@@ -26,6 +28,7 @@ import {
 } from '../../../services/drawingService.js'
 
 export default function BlueprintsDrawings({ orgId, sites = [], currentUser, onNotify }) {
+  const [viewMode, setViewMode] = useState('table') // 'table' | 'cards'
   const [drawings, setDrawings] = useState([])
   const [loading, setLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -231,10 +234,40 @@ export default function BlueprintsDrawings({ orgId, sites = [], currentUser, onN
               ))}
             </select>
           </div>
+
+          {/* View Mode Switcher */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80 shrink-0">
+            <button
+              type="button"
+              onClick={() => setViewMode('table')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                viewMode === 'table'
+                  ? 'bg-white text-[#0B3470] shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="Table View"
+            >
+              <Table className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Table</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('cards')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                viewMode === 'cards'
+                  ? 'bg-white text-[#0B3470] shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="Cards View"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Cards</span>
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Blueprint Grid */}
+      {/* Blueprint Content: Table View or Cards View */}
       {loading && drawings.length === 0 ? (
         <div className="py-24 text-center text-slate-400">Loading drawings catalog...</div>
       ) : filteredDrawings.length === 0 ? (
@@ -246,7 +279,88 @@ export default function BlueprintsDrawings({ orgId, sites = [], currentUser, onN
             their mobile terminals.
           </p>
         </div>
+      ) : viewMode === 'table' ? (
+        /* TABLE FORMAT VIEW */
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50/75 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                  <th className="py-3.5 px-4">Drawing Title & Revision</th>
+                  <th className="py-3.5 px-4">Target Site</th>
+                  <th className="py-3.5 px-4">Discipline / Purpose</th>
+                  <th className="py-3.5 px-4">Uploaded Date</th>
+                  <th className="py-3.5 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-xs">
+                {filteredDrawings.map((doc) => {
+                  return (
+                    <tr key={doc.id || doc.docId} className="hover:bg-slate-50/70 transition-colors">
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center font-bold text-xs shrink-0 border border-indigo-100">
+                            <FileText className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-slate-900 text-sm">{doc.docName || doc.title}</span>
+                              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-100 text-amber-900 border border-amber-200">
+                                {doc.revisionNumber || 'Rev 1.0'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="py-3.5 px-4 text-slate-700">
+                        <div className="flex items-center gap-1.5">
+                          <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <span className="font-medium">{doc.siteName || 'Unassigned Site'}</span>
+                        </div>
+                      </td>
+
+                      <td className="py-3.5 px-4">
+                        <span className="px-2.5 py-1 rounded-md text-xs font-semibold bg-slate-100 text-slate-800 border border-slate-200">
+                          {doc.purpose || 'Architectural'}
+                        </span>
+                      </td>
+
+                      <td className="py-3.5 px-4 text-slate-500 font-mono">
+                        {doc.uploadDate || 'Recent'}
+                      </td>
+
+                      <td className="py-3.5 px-4 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            onClick={() => {
+                              setZoomLevel(1)
+                              setActivePreviewDoc(doc)
+                            }}
+                            className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-50 text-[#0B3470] hover:bg-blue-100 border border-blue-200 transition-colors flex items-center gap-1"
+                            title="Inspect Schematic"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>Inspect</span>
+                          </button>
+                          <button
+                            onClick={() => setDeleteConfirmDoc(doc)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer border border-slate-200"
+                            title="Archive Drawing"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
       ) : (
+        /* CARDS FORMAT VIEW */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredDrawings.map((doc) => {
             const isImage = doc.fileUrl && (doc.fileUrl.includes('unsplash') || doc.fileUrl.includes('image') || doc.fileUrl.startsWith('blob:'))

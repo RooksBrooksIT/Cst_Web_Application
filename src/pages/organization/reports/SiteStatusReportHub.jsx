@@ -177,27 +177,32 @@ export default function SiteStatusReportHub({
         </div>
       </div>
 
-      {/* Timeline Health KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
-          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Total Sites</span>
-          <strong className="text-2xl font-extrabold text-slate-900 block font-mono">{reportData.totalSites}</strong>
-          <small className="text-slate-400 text-[11px]">Across organization</small>
+      {/* Timeline & Portfolio Summary KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Active Sites</span>
+          <strong className="text-xl font-extrabold text-blue-700 block font-mono">{reportData.totalActiveSites || 0}</strong>
+          <small className="text-slate-400 text-[10px]">In progress execution</small>
         </div>
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
-          <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">On Track</span>
-          <strong className="text-2xl font-extrabold text-emerald-700 block font-mono">{healthCounts.onTrack} Sites</strong>
-          <small className="text-slate-400 text-[11px]">Progressing on schedule</small>
+        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+          <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">Completed</span>
+          <strong className="text-xl font-extrabold text-emerald-700 block font-mono">{reportData.totalCompletedSites || 0}</strong>
+          <small className="text-slate-400 text-[10px]">Handed over</small>
         </div>
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
-          <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wider block">Approaching Deadline</span>
-          <strong className="text-2xl font-extrabold text-amber-700 block font-mono">{healthCounts.approaching} Sites</strong>
-          <small className="text-slate-400 text-[11px]">Within 14 days of end date</small>
-        </div>
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1 border-l-4 border-l-rose-500">
+        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1 border-l-4 border-l-rose-500">
           <span className="text-[11px] font-bold text-rose-700 uppercase tracking-wider block">Delayed / Overdue</span>
-          <strong className="text-2xl font-extrabold text-rose-600 block font-mono">{healthCounts.delayed} Sites</strong>
-          <small className="text-slate-400 text-[11px]">Immediate intervention required</small>
+          <strong className="text-xl font-extrabold text-rose-600 block font-mono">{reportData.totalDelayedSites || 0}</strong>
+          <small className="text-slate-400 text-[10px]">Overdue timeline</small>
+        </div>
+        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Total Allocated</span>
+          <strong className="text-xl font-extrabold text-slate-900 block font-mono">₹{(reportData.totalBudgetAllocated || 0).toLocaleString('en-IN')}</strong>
+          <small className="text-slate-400 text-[10px]">Approved site budget</small>
+        </div>
+        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+          <span className="text-[11px] font-bold text-indigo-700 uppercase tracking-wider block">Portfolio Spend %</span>
+          <strong className="text-xl font-extrabold text-indigo-700 block font-mono">{reportData.overallSpendingPct || 0}%</strong>
+          <small className="text-slate-400 text-[10px]">Overall budget utilization</small>
         </div>
       </div>
 
@@ -211,7 +216,8 @@ export default function SiteStatusReportHub({
                 <th className="p-3.5">Supervisor / Manager</th>
                 <th className="p-3.5">Current Stage</th>
                 <th className="p-3.5 text-center">Status</th>
-                <th className="p-3.5 text-center min-w-[140px]">Progress</th>
+                <th className="p-3.5 text-center min-w-[120px]">Progress</th>
+                <th className="p-3.5 text-center">Expense Status</th>
                 <th className="p-3.5">Contract Timeline</th>
                 <th className="p-3.5 text-center">Schedule Health</th>
               </tr>
@@ -219,7 +225,7 @@ export default function SiteStatusReportHub({
             <tbody className="divide-y divide-slate-100">
               {filteredSites.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-12 text-center text-slate-400 text-xs">
+                  <td colSpan={8} className="p-12 text-center text-slate-400 text-xs">
                     No sites found matching your filter criteria.
                   </td>
                 </tr>
@@ -254,6 +260,23 @@ export default function SiteStatusReportHub({
                           />
                         </div>
                       </div>
+                    </td>
+                    <td className="p-3.5 text-center whitespace-nowrap">
+                      <span
+                        className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold border ${
+                          s.expenseStatus === 'budget_exceeded'
+                            ? 'bg-rose-100 text-rose-800 border-rose-300'
+                            : s.expenseStatus === 'high_expense'
+                            ? 'bg-amber-100 text-amber-800 border-amber-300'
+                            : 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                        }`}
+                      >
+                        {s.expenseStatus === 'budget_exceeded'
+                          ? 'Budget Exceeded'
+                          : s.expenseStatus === 'high_expense'
+                          ? 'High Expense'
+                          : 'On Budget'}
+                      </span>
                     </td>
                     <td className="p-3.5 text-slate-600 whitespace-nowrap text-[11px]">
                       <div>{s.plannedStart}</div>

@@ -35,6 +35,12 @@ export const COLLECTION_ALIASES = {
   siteToolsRequest: ['siteToolsRequest', 'tool_allocations', 'equipment_movement'],
   siteSupervisorProjectStageSchedule: ['siteSupervisorProjectStageSchedule', 'project_stage_schedules'],
   materials: ['materials', 'inventory', 'Material', 'material_inventory'],
+  materialsAvailability: [
+    'materialsAvailability',
+    'data/materialsAvailability',
+    'materials_availability',
+    'materialsAvailabilityData',
+  ],
   materialCategories: ['materialCategories'],
   materialSubCategory: ['materialSubCategory'],
   units: ['units'],

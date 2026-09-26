@@ -243,33 +243,65 @@ export default function FinancialStatusReportHub({
         </div>
       </div>
 
-      {/* 4 Executive KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
-          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Contract Baseline</span>
-          <strong className="text-2xl font-extrabold text-slate-900 font-mono block">{money(reportData.kpis.totalBudget)}</strong>
-          <small className="text-slate-400 text-[11px]">Approved budget</small>
+      {/* 6 Executive Summary KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Total Estimated Budget</span>
+          <strong className="text-xl font-extrabold text-slate-900 font-mono block">{money(reportData.kpis.totalBudget)}</strong>
+          <small className="text-slate-400 text-[10px]">Contract baseline</small>
         </div>
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
-          <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">Customer Inflow</span>
-          <strong className="text-2xl font-extrabold text-emerald-700 font-mono block">{money(reportData.kpis.totalReceived)}</strong>
-          <small className="text-slate-400 text-[11px]">Milestones realized</small>
+        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+          <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">Customer Received</span>
+          <strong className="text-xl font-extrabold text-emerald-700 font-mono block">{money(reportData.kpis.totalReceived)}</strong>
+          <small className="text-slate-400 text-[10px]">Realized inflows</small>
         </div>
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
           <span className="text-[11px] font-bold text-rose-700 uppercase tracking-wider block">Total Outflows</span>
-          <strong className="text-2xl font-extrabold text-rose-600 font-mono block">{money(reportData.kpis.totalSpent)}</strong>
-          <small className="text-slate-400 text-[11px]">Actual spend</small>
+          <strong className="text-xl font-extrabold text-rose-600 font-mono block">{money(reportData.kpis.totalSpent)}</strong>
+          <small className="text-slate-400 text-[10px]">Actual site spend</small>
         </div>
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1 border-l-4 border-l-purple-600">
-          <span className="text-[11px] font-bold text-purple-700 uppercase tracking-wider block">Net Cash in Hand</span>
+        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1 border-l-4 border-l-purple-600">
+          <span className="text-[11px] font-bold text-purple-700 uppercase tracking-wider block">Net Cash Balance</span>
           <strong
-            className={`text-2xl font-extrabold font-mono block ${
+            className={`text-xl font-extrabold font-mono block ${
               reportData.kpis.cashInHand >= 0 ? 'text-purple-700' : 'text-rose-600'
             }`}
           >
             {money(reportData.kpis.cashInHand)}
           </strong>
-          <small className="text-slate-400 text-[11px]">Inflow minus outflow</small>
+          <small className="text-slate-400 text-[10px]">Inflow minus outflow</small>
+        </div>
+        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+          <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wider block">Pending Customer</span>
+          <strong className="text-xl font-extrabold text-amber-700 font-mono block">{money(reportData.kpis.pendingCustomerAmount || 0)}</strong>
+          <small className="text-slate-400 text-[10px]">Receivables due</small>
+        </div>
+        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+          <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider block">Remaining Cushion</span>
+          <strong className="text-xl font-extrabold text-blue-700 font-mono block">{money(reportData.kpis.remainingBudget || 0)}</strong>
+          <small className="text-slate-400 text-[10px]">Unspent budget</small>
+        </div>
+      </div>
+
+      {/* Customer Inflow Realization Progress Banner */}
+      <div className="bg-gradient-to-r from-slate-900 to-[#0B3470] p-4 rounded-2xl text-white shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="space-y-1 text-center sm:text-left">
+          <span className="text-[10px] uppercase font-bold text-blue-300 tracking-wider">Payment Realization Rate</span>
+          <h4 className="text-sm font-bold">
+            Customer Inflows vs Contract Budget: <span className="text-emerald-400">{reportData.kpis.receivedRatio || 0}%</span>
+          </h4>
+        </div>
+        <div className="w-full sm:w-1/2 space-y-1">
+          <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden border border-slate-700">
+            <div
+              className="bg-emerald-400 h-2 rounded-full transition-all duration-500"
+              style={{ width: `${Math.min(100, reportData.kpis.receivedRatio || 0)}%` }}
+            />
+          </div>
+          <div className="flex justify-between text-[10px] text-slate-300 font-mono">
+            <span>Received: {money(reportData.kpis.totalReceived)}</span>
+            <span>Pending: {money(reportData.kpis.pendingCustomerAmount || 0)}</span>
+          </div>
         </div>
       </div>
 

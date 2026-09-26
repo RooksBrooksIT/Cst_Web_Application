@@ -13,6 +13,7 @@ import {
   ArrowRight,
   Sparkles,
 } from 'lucide-react'
+import { evaluateAllProjectAlerts } from '../../../utils/projectAlerts'
 
 export default function ManagerNotificationsHub({
   orgId,
@@ -105,6 +106,25 @@ export default function ManagerNotificationsHub({
       })
     })
 
+    // 5. Budget, Expense & Planned End-Date Project Alerts
+    const projectAlertsEval = evaluateAllProjectAlerts(dashboardData.sites || [])
+    projectAlertsEval.projectAlerts.forEach((pa) => {
+      pa.alerts.forEach((alert) => {
+        list.push({
+          id: `palert_${pa.projectId}_${alert.id}`,
+          type: 'PROJECT_ALERT',
+          category: alert.type === 'expense' ? 'Budget Expense Alert' : alert.type === 'payment' ? 'Customer Payment Alert' : 'Project End-Date Alert',
+          title: `${alert.badgeLabel}: ${pa.projectName}`,
+          message: `${alert.description} (Code: ${pa.siteCode || 'SITE'})`,
+          timestamp: Date.now() - 1800000,
+          targetTab: 'sites',
+          priority: alert.severity === 'critical' ? 'critical' : 'high',
+          icon: AlertTriangle,
+          color: alert.severity === 'critical' ? 'text-rose-600 bg-rose-50' : alert.severity === 'warning' ? 'text-amber-600 bg-amber-50' : 'text-blue-600 bg-blue-50',
+        })
+      })
+    })
+
     return list.sort((a, b) => b.timestamp - a.timestamp)
   }, [dashboardData])
 
@@ -126,6 +146,7 @@ export default function ManagerNotificationsHub({
     return alerts.filter((a) => {
       const isUnread = !readIds.has(a.id)
       if (filterType === 'UNREAD') return isUnread
+      if (filterType === 'PROJECT_ALERT') return a.type === 'PROJECT_ALERT'
       if (filterType === 'APPROVAL') return a.type === 'APPROVAL'
       if (filterType === 'STOCK') return a.type === 'STOCK'
       return true
@@ -144,7 +165,7 @@ export default function ManagerNotificationsHub({
           </div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Notifications</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Live operations alerts, pending milestone sign-offs, and critical material shortage alerts.
+            Live operations alerts, project budget threshold warnings, milestone sign-offs, and critical material shortage alerts.
           </p>
         </div>
 
@@ -163,6 +184,7 @@ export default function ManagerNotificationsHub({
         {[
           { id: 'ALL', label: `All Alerts (${alerts.length})` },
           { id: 'UNREAD', label: `Unread (${alerts.filter((a) => !readIds.has(a.id)).length})` },
+          { id: 'PROJECT_ALERT', label: `Project Risk (${alerts.filter((a) => a.type === 'PROJECT_ALERT').length})` },
           { id: 'APPROVAL', label: `Approvals (${alerts.filter((a) => a.type === 'APPROVAL').length})` },
           { id: 'STOCK', label: `Stock Alerts (${alerts.filter((a) => a.type === 'STOCK').length})` },
         ].map((tab) => (

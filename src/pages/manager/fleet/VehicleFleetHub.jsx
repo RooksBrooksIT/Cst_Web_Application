@@ -17,6 +17,8 @@ import {
   CreditCard,
   X,
   Sparkles,
+  Table,
+  LayoutGrid,
 } from 'lucide-react'
 import {
   fetchVehicles,
@@ -33,6 +35,7 @@ import {
 
 export default function VehicleFleetHub({ orgId, sites = [], currentUser, onNotify }) {
   const [activeTab, setActiveTab] = useState('vehicles') // 'vehicles' | 'drivers' | 'logs'
+  const [viewMode, setViewMode] = useState('table') // 'table' | 'cards'
   const [vehicles, setVehicles] = useState([])
   const [drivers, setDrivers] = useState([])
   const [logs, setLogs] = useState([])
@@ -301,18 +304,51 @@ export default function VehicleFleetHub({ orgId, sites = [], currentUser, onNoti
       {/* TAB 0: VEHICLES FLEET */}
       {activeTab === 'vehicles' && (
         <div className="space-y-4">
-          <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex justify-between items-center">
+          <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-wrap justify-between items-center gap-3">
             <span className="text-xs font-semibold text-slate-700">Fleet Inventory</span>
-            <button
-              onClick={() => {
-                if (drivers.length > 0 && !formAssignedDriver) setFormAssignedDriver(drivers[0].driverName || drivers[0].name)
-                setShowVehicleModal(true)
-              }}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-[#0B3470] hover:bg-[#082855] text-white text-xs font-semibold rounded-xl shadow-xs cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Register Vehicle</span>
-            </button>
+            
+            <div className="flex items-center gap-3">
+              {/* View Mode Switcher */}
+              <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('table')}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                    viewMode === 'table'
+                      ? 'bg-white text-[#0B3470] shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Table View"
+                >
+                  <Table className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Table</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('cards')}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                    viewMode === 'cards'
+                      ? 'bg-white text-[#0B3470] shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Cards View"
+                >
+                  <LayoutGrid className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Cards</span>
+                </button>
+              </div>
+
+              <button
+                onClick={() => {
+                  if (drivers.length > 0 && !formAssignedDriver) setFormAssignedDriver(drivers[0].driverName || drivers[0].name)
+                  setShowVehicleModal(true)
+                }}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-[#0B3470] hover:bg-[#082855] text-white text-xs font-semibold rounded-xl shadow-xs cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Register Vehicle</span>
+              </button>
+            </div>
           </div>
 
           {loading && vehicles.length === 0 ? (
@@ -322,6 +358,73 @@ export default function VehicleFleetHub({ orgId, sites = [], currentUser, onNoti
               <Truck className="w-12 h-12 text-slate-300 mx-auto mb-2" />
               <p className="text-sm font-semibold text-slate-700">No vehicles registered</p>
               <p className="text-xs text-slate-400 mt-1">Click "Register Vehicle" to add tippers, mixers, or pickup trucks.</p>
+            </div>
+          ) : viewMode === 'table' ? (
+            /* VEHICLES TABLE FORMAT */
+            <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50/75 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                      <th className="py-3.5 px-4">Registration & Vehicle</th>
+                      <th className="py-3.5 px-4">Type</th>
+                      <th className="py-3.5 px-4">Assigned Driver</th>
+                      <th className="py-3.5 px-4">Current Odometer</th>
+                      <th className="py-3.5 px-4">Status</th>
+                      <th className="py-3.5 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-xs">
+                    {vehicles.map((v) => (
+                      <tr key={v.id || v.vehicleId} className="hover:bg-slate-50/70 transition-colors">
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center shrink-0 border border-blue-100">
+                              <Truck className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <strong className="block font-bold text-slate-900 text-sm">
+                                {v.numberPlate || v.registrationNumber}
+                              </strong>
+                              <span className="text-[11px] text-slate-400">{v.modelName || 'Commercial Vehicle'}</span>
+                            </div>
+                          </div>
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          <span className="px-2.5 py-0.5 rounded text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200/60 uppercase tracking-wider">
+                            {v.vehicleType || 'Truck'}
+                          </span>
+                        </td>
+
+                        <td className="py-3.5 px-4 text-slate-800 font-semibold">
+                          {v.assignedDriverName || 'Unassigned'}
+                        </td>
+
+                        <td className="py-3.5 px-4 font-mono font-bold text-slate-900">
+                          {v.currentOdometer || 0} KM
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          <span className="px-2 py-0.5 text-[11px] font-semibold bg-emerald-50 text-emerald-700 rounded-md">
+                            {v.status || 'Active'}
+                          </span>
+                        </td>
+
+                        <td className="py-3.5 px-4 text-right">
+                          <button
+                            onClick={() => handleDeleteVehicle(v.id || v.vehicleId)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer border border-slate-200"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -377,15 +480,48 @@ export default function VehicleFleetHub({ orgId, sites = [], currentUser, onNoti
       {/* TAB 1: DRIVERS ROSTER */}
       {activeTab === 'drivers' && (
         <div className="space-y-4">
-          <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex justify-between items-center">
+          <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-wrap justify-between items-center gap-3">
             <span className="text-xs font-semibold text-slate-700">Driver Licensing Directory</span>
-            <button
-              onClick={() => setShowDriverModal(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-[#0B3470] hover:bg-[#082855] text-white text-xs font-semibold rounded-xl shadow-xs cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Add Driver</span>
-            </button>
+
+            <div className="flex items-center gap-3">
+              {/* View Mode Switcher */}
+              <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('table')}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                    viewMode === 'table'
+                      ? 'bg-white text-[#0B3470] shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Table View"
+                >
+                  <Table className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Table</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('cards')}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                    viewMode === 'cards'
+                      ? 'bg-white text-[#0B3470] shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Cards View"
+                >
+                  <LayoutGrid className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Cards</span>
+                </button>
+              </div>
+
+              <button
+                onClick={() => setShowDriverModal(true)}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-[#0B3470] hover:bg-[#082855] text-white text-xs font-semibold rounded-xl shadow-xs cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Add Driver</span>
+              </button>
+            </div>
           </div>
 
           {loading && drivers.length === 0 ? (
@@ -395,6 +531,70 @@ export default function VehicleFleetHub({ orgId, sites = [], currentUser, onNoti
               <UserCheck className="w-12 h-12 text-slate-300 mx-auto mb-2" />
               <p className="text-sm font-semibold text-slate-700">No drivers onboarded</p>
               <p className="text-xs text-slate-400 mt-1">Click "Add Driver" to register fleet drivers and licenses.</p>
+            </div>
+          ) : viewMode === 'table' ? (
+            /* DRIVERS TABLE FORMAT */
+            <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50/75 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                      <th className="py-3.5 px-4">Driver Name & License</th>
+                      <th className="py-3.5 px-4">Contact Phone</th>
+                      <th className="py-3.5 px-4">Assigned Vehicle</th>
+                      <th className="py-3.5 px-4">Verification Status</th>
+                      <th className="py-3.5 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-xs">
+                    {drivers.map((d) => (
+                      <tr key={d.id || d.driverId} className="hover:bg-slate-50/70 transition-colors">
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center font-bold text-xs shrink-0 border border-blue-100">
+                              {(d.driverName || d.name || 'D').slice(0, 2).toUpperCase()}
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-slate-900 text-sm">{d.driverName || d.name}</h4>
+                              <p className="text-xs font-mono text-slate-400 mt-0.5">License: {d.licenseNumber || 'Verified'}</p>
+                            </div>
+                          </div>
+                        </td>
+
+                        <td className="py-3.5 px-4 font-mono text-slate-700">
+                          {d.phone || 'No direct phone'}
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          {d.assignedVehicleNumber ? (
+                            <span className="font-bold text-slate-900 bg-slate-100 px-2 py-1 rounded border border-slate-200 font-mono">
+                              {d.assignedVehicleNumber}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">Unassigned</span>
+                          )}
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          <span className="px-2 py-0.5 text-[11px] font-semibold bg-emerald-50 text-emerald-700 rounded-md">
+                            Verified License
+                          </span>
+                        </td>
+
+                        <td className="py-3.5 px-4 text-right">
+                          <button
+                            onClick={() => handleDeleteDriver(d.id || d.driverId)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer border border-slate-200"
+                            title="Remove"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">

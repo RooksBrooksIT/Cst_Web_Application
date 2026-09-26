@@ -294,11 +294,20 @@ export function calculateDateRangeExpenses({
     }
   }
 
+  const activeSitesSet = new Set()
+  dayCards.forEach((d) => {
+    if (d.siteName) activeSitesSet.add(d.siteName)
+  })
+
+  const daysCount = dayCards.length
+  const avgDailySpend = daysCount > 0 ? grandRangeTotal / daysCount : 0
+  const activeSitesCount = activeSitesSet.size || (site ? 1 : 0)
+
   return {
     siteName: site ? (site.projectName || site.siteName || site.name) : 'All Portfolio Sites',
     fromDate: formatDateDisplay(fromDate),
     toDate: formatDateDisplay(toDate),
-    daysCount: dayCards.length,
+    daysCount,
     dayCards,
     kpis: {
       totalLabour: totalRangeLabour,
@@ -307,6 +316,8 @@ export function calculateDateRangeExpenses({
       totalTransport: totalRangeTransport,
       totalBills: totalRangeBills,
       grandTotal: grandRangeTotal,
+      avgDailySpend,
+      activeSitesCount,
     },
   }
 }
@@ -322,7 +333,38 @@ export function calculateSiteLifetimeSummary({
   contractorEntries = [],
   siteSupervisorIncentives = [],
 }) {
-  if (!site) return null
+  const emptyKpis = {
+    budget: 0,
+    received: 0,
+    spent: 0,
+    cashInHand: 0,
+    budgetRemaining: 0,
+    usagePercent: 0,
+  }
+
+  if (!site) {
+    return {
+      siteId: '',
+      siteName: 'No Site Selected',
+      siteLocation: 'N/A',
+      currentStage: 'N/A',
+      supervisorName: 'N/A',
+      budget: 0,
+      totalReceived: 0,
+      totalSpent: 0,
+      cashInHand: 0,
+      budgetRemaining: 0,
+      utilizationRate: 0,
+      kpis: emptyKpis,
+      breakdown: {
+        labour: 0,
+        material: 0,
+        foodTransport: 0,
+        bills: 0,
+        incentives: 0,
+      },
+    }
+  }
 
   const budget = parseAmount(site.projectBudget || site.budget || site.estimatedBudget || 0)
   
@@ -361,7 +403,16 @@ export function calculateSiteLifetimeSummary({
   const totalSpent = parseAmount(site.amountSpent || site.spentAmount) || (totalLabour + totalMaterial + totalFoodTransport + totalBills + totalIncentives)
   const cashInHand = totalReceived - totalSpent
   const budgetRemaining = budget - totalSpent
-  const utilizationRate = budget > 0 ? ((totalSpent / budget) * 100).toFixed(1) : '0.0'
+  const utilizationRate = budget > 0 ? parseFloat(((totalSpent / budget) * 100).toFixed(1)) : 0
+
+  const kpis = {
+    budget,
+    received: totalReceived,
+    spent: totalSpent,
+    cashInHand,
+    budgetRemaining,
+    usagePercent: utilizationRate,
+  }
 
   return {
     siteId: site.id,
@@ -375,6 +426,7 @@ export function calculateSiteLifetimeSummary({
     cashInHand,
     budgetRemaining,
     utilizationRate,
+    kpis,
     breakdown: {
       labour: totalLabour,
       material: totalMaterial,
@@ -409,6 +461,7 @@ export function calculateProjectStageReport({
   managerExpenses = [],
   organizationEntries = [],
   contractorEntries = [],
+  siteSupervisorProjectStageSchedule = [],
 }) {
   const targetStage = selectedStage || PROJECT_STAGES[0]
 
@@ -435,6 +488,30 @@ export function calculateProjectStageReport({
     stageTotalFoodTransport += parseAmount(e.foodAllowance || 0) + parseAmount(e.transportAmount || 0)
   })
 
+  const grandStageSpend = stageTotalLabour + stageTotalMaterial + stageTotalFoodTransport + stageTotalBills
+
+  // Match stage schedule budget if available
+  const matchingSchedules = siteSupervisorProjectStageSchedule.filter((sch) =>
+    String(sch.projectStage || sch.stage || '').trim().toLowerCase() === targetStage.toLowerCase()
+  )
+  const stageEstimatedBudget = matchingSchedules.reduce(
+    (sum, sch) => sum + parseAmount(sch.estimatedStageBudget || sch.stageBudget || sch.budget || 0),
+    sitesInStage.reduce((sum, s) => sum + parseAmount(s.projectBudget || s.budget || 0) * 0.15, 0)
+  )
+
+  const stageVariance = stageEstimatedBudget - grandStageSpend
+  const stageCompletionPct = stageEstimatedBudget > 0 ? Math.min(100, Math.round((grandStageSpend / stageEstimatedBudget) * 100)) : 0
+
+  let scheduleAlert = 'On Schedule'
+  let alertTone = 'green'
+  if (stageVariance < 0) {
+    scheduleAlert = `Overdue / Budget Exceeded by ${money(Math.abs(stageVariance))}`
+    alertTone = 'red'
+  } else if (stageCompletionPct >= 80) {
+    scheduleAlert = 'Near Completion'
+    alertTone = 'blue'
+  }
+
   const stageSiteSummary = sites.map((s) => {
     const isCurrentlyInStage = String(s.projectStage || s.stage || '').toLowerCase() === targetStage.toLowerCase()
     const entriesForSiteAndStage = siteSupervisorEntries.filter((e) => matchesSite(e, s) && String(e.projectStage || e.stage || '').toLowerCase() === targetStage.toLowerCase())
@@ -456,16 +533,19 @@ export function calculateProjectStageReport({
     }
   })
 
-  const grandStageSpend = stageTotalLabour + stageTotalMaterial + stageTotalFoodTransport + stageTotalBills
-
   return {
     selectedStage: targetStage,
     sitesCountInStage: sitesInStage.length,
+    stageEstimatedBudget,
+    grandStageSpend,
+    stageVariance,
+    stageCompletionPct,
+    scheduleAlert,
+    alertTone,
     stageTotalLabour,
     stageTotalMaterial,
     stageTotalFoodTransport,
     stageTotalBills,
-    grandStageSpend,
     stageSiteSummary,
     detailedEntries: stageEntries.slice(0, 50),
   }
@@ -486,6 +566,8 @@ export function calculateSiteStatusReport(sites = []) {
   }
 
   const today = new Date()
+  let totalBudgetAllocated = 0
+  let totalSpent = 0
 
   const siteList = sites.map((s) => {
     const statusRaw = String(s.currentStatus || s.status || s.projectStatus || 'in_progress').toLowerCase().replace(/\s+/g, '_')
@@ -500,6 +582,20 @@ export function calculateSiteStatusReport(sites = []) {
     const plannedEnd = s.plannedEndDate || s.targetCompletionDate || s.endDate || null
     const actualStart = s.actualStartDate || null
     const actualEnd = s.actualEndDate || s.completionDate || null
+
+    const siteBudget = parseAmount(s.projectBudget || s.budget || s.estimatedBudget || 0)
+    const siteSpent = parseAmount(s.amountSpent || s.spentAmount || 0)
+
+    totalBudgetAllocated += siteBudget
+    totalSpent += siteSpent
+
+    const spentRatio = siteBudget > 0 ? siteSpent / siteBudget : 0
+    let expenseStatus = 'on_budget' // 'on_budget', 'high_expense', 'budget_exceeded'
+    if (spentRatio >= 1.0) {
+      expenseStatus = 'budget_exceeded'
+    } else if (spentRatio >= 0.8) {
+      expenseStatus = 'high_expense'
+    }
 
     let delayStatus = 'on_track' // 'on_track', 'approaching_deadline', 'delayed'
     let delayDays = 0
@@ -533,11 +629,26 @@ export function calculateSiteStatusReport(sites = []) {
       actualEnd: formatDateDisplay(actualEnd),
       delayStatus,
       delayDays,
+      siteBudget,
+      siteSpent,
+      expenseStatus,
+      spentRatio: Math.round(spentRatio * 100),
     }
   })
 
+  const totalActiveSites = statusCounts.live + statusCounts.in_progress
+  const totalCompletedSites = statusCounts.completed
+  const totalDelayedSites = siteList.filter((s) => s.delayStatus === 'delayed').length
+  const overallSpendingPct = totalBudgetAllocated > 0 ? Math.round((totalSpent / totalBudgetAllocated) * 100) : 0
+
   return {
     totalSites: sites.length,
+    totalActiveSites,
+    totalCompletedSites,
+    totalDelayedSites,
+    totalBudgetAllocated,
+    totalSpent,
+    overallSpendingPct,
     statusCounts,
     siteList,
   }
@@ -592,6 +703,7 @@ export function calculateFinancialStatusReport({ sites = [], sitePayments = [], 
   const totalCashInHand = totalClientReceived - totalActualSpent
   const totalBudgetRemaining = totalContractBudget - totalActualSpent
   const overallUtilization = totalContractBudget > 0 ? ((totalActualSpent / totalContractBudget) * 100).toFixed(1) : '0.0'
+  const pendingCustomerAmount = Math.max(0, totalContractBudget - totalClientReceived)
 
   return {
     kpis: {
@@ -601,6 +713,7 @@ export function calculateFinancialStatusReport({ sites = [], sitePayments = [], 
       totalCashInHand,
       totalBudgetRemaining,
       overallUtilization,
+      pendingCustomerAmount,
     },
     statements,
   }
@@ -618,6 +731,21 @@ export function calculatePettyCashInsights({
 }) {
   let totalDisbursed = 0
   let totalSpent = 0
+
+  // Filter approved/completed requests
+  const approvedRequests = pettyCashRequests.filter((r) => {
+    const st = String(r.status || '').toUpperCase()
+    return st === 'APPROVED' || st === 'COMPLETED'
+  })
+  const totalApproved = approvedRequests.reduce((sum, r) => sum + parseAmount(r.amount || r.totalAmount || 0), 0)
+
+  // Category breakdown totals
+  const categories = {
+    materials: 0,
+    fuel: 0,
+    labour_food: 0,
+    admin: 0,
+  }
 
   // Site Audit List
   const siteAuditList = sites.map((s) => {
@@ -667,7 +795,22 @@ export function calculatePettyCashInsights({
     }
   })
 
-  const netFloatInHand = totalDisbursed - totalSpent
+  // Categorize expenses
+  pettyCashExpenses.forEach((exp) => {
+    const cat = String(exp.category || '').toLowerCase()
+    const amt = parseAmount(exp.amount || exp.totalAmount || 0)
+    if (cat.includes('material') || cat.includes('cement') || cat.includes('steel') || cat.includes('brick') || cat.includes('sand')) {
+      categories.materials += amt
+    } else if (cat.includes('fuel') || cat.includes('vehicle') || cat.includes('transport') || cat.includes('logistics')) {
+      categories.fuel += amt
+    } else if (cat.includes('labour') || cat.includes('food') || cat.includes('refreshment') || cat.includes('wages')) {
+      categories.labour_food += amt
+    } else {
+      categories.admin += amt
+    }
+  })
+
+  const netFloatInHand = (totalApproved || totalDisbursed) - totalSpent
 
   // Itemized transactions list
   const itemizedLedger = pettyCashExpenses.map((exp) => ({
@@ -685,10 +828,18 @@ export function calculatePettyCashInsights({
 
   return {
     kpis: {
+      totalApproved: totalApproved || totalDisbursed,
       totalDisbursed,
       totalSpent,
       netFloatInHand,
+      remainingPettyCash: (totalApproved || totalDisbursed) - totalSpent,
     },
+    categoryBreakdown: [
+      { name: 'Material Expenses', amount: categories.materials, desc: 'Cement, steel, bricks, sand' },
+      { name: 'Fuel & Vehicle Rentals', amount: categories.fuel, desc: 'Site fuel, logistics, equipment' },
+      { name: 'Site Labour & Food Expenses', amount: categories.labour_food, desc: 'Daily worker refreshments, food' },
+      { name: 'Admin & Miscellaneous', amount: categories.admin, desc: 'Stationery, site admin, utilities' },
+    ],
     siteAuditList,
     itemizedLedger,
   }
@@ -712,17 +863,40 @@ export function calculateDomainReports({
 }) {
   switch (type) {
     case 'contractors': {
-      const list = (contractorEntries.length > 0 ? contractorEntries : contractorBills).map((entry) => ({
-        contractorName: entry.contractorName || entry.name || 'Contractor',
-        siteName: entry.siteName || entry.projectName || entry.siteId || 'Site',
-        trade: entry.category || entry.trade || entry.workType || 'General Civil',
-        description: entry.workDescription || entry.description || entry.title || 'Subcontracted Work',
-        date: formatDateDisplay(entry.date || entry.createdAt),
-        amount: parseAmount(entry.totalAmount || entry.amount || entry.grossAmount || 0),
-        status: entry.status || 'Approved',
-      }))
-      const totalPayout = list.reduce((sum, item) => sum + item.amount, 0)
-      return { type: 'contractors', title: 'Contractor Payouts & Subcontractor MB Report', totalPayout, records: list }
+      const rawList = contractorEntries.length > 0 ? contractorEntries : contractorBills
+      const list = rawList.map((entry) => {
+        const billAmount = parseAmount(entry.billAmount || entry.totalAmount || entry.amount || entry.grossAmount || 0)
+        const paidAmount = parseAmount(entry.paidAmount || entry.amountPaid || entry.totalPaid || 0)
+        const balanceAmount = parseAmount(entry.balanceAmount || entry.pendingBalance || (billAmount - paidAmount))
+        return {
+          contractorName: entry.contractorName || entry.name || 'Contractor',
+          siteName: entry.siteName || entry.projectName || entry.siteId || 'Site',
+          trade: entry.category || entry.trade || entry.workType || 'General Civil',
+          description: entry.workDescription || entry.description || entry.title || 'Subcontracted Work',
+          date: formatDateDisplay(entry.date || entry.createdAt),
+          billAmount,
+          paidAmount,
+          balanceAmount,
+          amount: billAmount,
+          status: entry.status || 'Approved',
+        }
+      })
+
+      const uniqueContractors = new Set(list.map((c) => c.contractorName)).size || contractors.length
+      const totalBillValue = list.reduce((sum, item) => sum + item.billAmount, 0)
+      const totalPaidAmount = list.reduce((sum, item) => sum + item.paidAmount, 0)
+      const totalPendingBalance = list.reduce((sum, item) => sum + item.balanceAmount, 0)
+
+      return {
+        type: 'contractors',
+        title: 'Contractor Payouts & Subcontractor MB Report',
+        totalRegisteredContractors: uniqueContractors,
+        totalBillValue,
+        totalPaidAmount,
+        totalPendingBalance,
+        totalPayout: totalBillValue,
+        records: list,
+      }
     }
 
     case 'materials': {

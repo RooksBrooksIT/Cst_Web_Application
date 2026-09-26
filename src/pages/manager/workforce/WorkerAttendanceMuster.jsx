@@ -23,8 +23,10 @@ import {
   subscribeWorkerAttendance,
   submitDailyAttendance,
 } from '../../../services/workforceService.js'
+import ManagerWorkerAttendanceReport from './ManagerWorkerAttendanceReport.jsx'
 
-export default function WorkerAttendanceMuster({ orgId, sites = [], currentUser, onNotify }) {
+export default function WorkerAttendanceMuster({ orgId, sites = [], currentUser, onNotify, defaultView = 'muster' }) {
+  const [activeView, setActiveView] = useState(defaultView) // 'muster' | 'report'
   const [selectedSiteId, setSelectedSiteId] = useState('')
   const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0])
   const [siteMapping, setSiteMapping] = useState(null)
@@ -265,6 +267,37 @@ export default function WorkerAttendanceMuster({ orgId, sites = [], currentUser,
     }
   }
 
+  if (activeView === 'report') {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveView('muster')}
+              className="px-4 py-2 text-xs font-semibold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition-all cursor-pointer"
+            >
+              ← Daily Shift Muster Roll
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveView('report')}
+              className="px-4 py-2 text-xs font-bold rounded-xl bg-[#0B3470] text-white shadow-xs cursor-pointer"
+            >
+              Worker Attendance Report
+            </button>
+          </div>
+        </div>
+        <ManagerWorkerAttendanceReport
+          orgId={orgId}
+          sites={sites}
+          currentUser={currentUser}
+          onNotify={onNotify}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
       {/* Top Banner */}
@@ -282,14 +315,33 @@ export default function WorkerAttendanceMuster({ orgId, sites = [], currentUser,
           </p>
         </div>
 
-        <button
-          onClick={handleSaveAttendance}
-          disabled={saving || (musterRecords.length === 0 && extraWorkers.length === 0)}
-          className="inline-flex items-center justify-center gap-2 px-6 py-2.5 bg-[#0B3470] hover:bg-[#082855] text-white text-sm font-semibold rounded-xl transition-all shadow-xs disabled:opacity-50 cursor-pointer"
-        >
-          <Save className="w-4 h-4" />
-          <span>{saving ? 'Committing Muster...' : 'Commit Daily Muster Roll'}</span>
-        </button>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
+            <button
+              type="button"
+              onClick={() => setActiveView('muster')}
+              className="px-3 py-1.5 text-xs font-bold rounded-lg bg-white text-[#0B3470] shadow-xs cursor-pointer"
+            >
+              Muster Entry
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveView('report')}
+              className="px-3 py-1.5 text-xs font-bold rounded-lg text-slate-600 hover:text-slate-900 cursor-pointer"
+            >
+              Attendance Report
+            </button>
+          </div>
+
+          <button
+            onClick={handleSaveAttendance}
+            disabled={saving || (musterRecords.length === 0 && extraWorkers.length === 0)}
+            className="inline-flex items-center justify-center gap-2 px-6 py-2.5 bg-[#0B3470] hover:bg-[#082855] text-white text-sm font-semibold rounded-xl transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+          >
+            <Save className="w-4 h-4" />
+            <span>{saving ? 'Committing Muster...' : 'Commit Daily Muster Roll'}</span>
+          </button>
+        </div>
       </div>
 
       {/* Selector & Headcount Tally Bar */}

@@ -217,6 +217,139 @@ export async function managerApproveStageMilestone(orgId, scheduleId, qualityNot
 }
 
 // ------------------------------------------------------------------------------------------------
+function formatDateStr(d = new Date()) {
+  return new Intl.DateTimeFormat('en-IN', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(d)
+}
+
+/**
+ * Organization HQ Authorization (Stage 3 -> Stage 4 handoff)
+ * Complies 100% with Section 4.B of eBricks_Organization_Approvals_Workflow.txt
+ */
+export async function executeOrganizationApproval(orgId, collectionName, docId, currentUser, remarks = '') {
+  if (!orgId || !collectionName || !docId) throw new Error('orgId, collectionName, and docId are required')
+
+  const actorName = currentUser?.displayName || currentUser?.fullName || currentUser?.name || currentUser?.email || 'Organization Admin'
+  const actorId = currentUser?.uid || 'org_hq_admin'
+  const now = new Date()
+
+  const docRef = doc(db, 'organisation', orgId, collectionName, docId)
+  const snap = await getDoc(docRef)
+  const currentData = snap.exists() ? snap.data() : {}
+
+  const auditEntry = {
+    step: '3. Organization Authorization',
+    action: 'Approved by Organization',
+    actorRole: 'Organization',
+    actorName: actorName,
+    actorId: actorId,
+    remarks: remarks || 'Authorized by Organization HQ.',
+    timestamp: now.toISOString(),
+    dateStr: formatDateStr(now),
+  }
+
+  const existingHistory = Array.isArray(currentData.approvalHistory) ? currentData.approvalHistory : []
+
+  await updateDoc(docRef, {
+    status: 'pending_manager_clearance',
+    approvalStatus: 'pending_manager_clearance',
+    statusDisplay: 'Pending Manager Clearance',
+    currentStep: 3,
+    orgApproved: true,
+    orgApprovedBy: actorName,
+    orgApprovalRemarks: remarks || 'Authorized by Organization HQ.',
+    updatedAt: serverTimestamp(),
+    approvalHistory: [...existingHistory, auditEntry],
+  })
+
+  // Write In-App Notification
+  try {
+    const notificationPayload = {
+      title: '✅ Requisition Authorized by HQ',
+      body: `HQ (${actorName}) authorized Requisition #${docId}. Manager clearance required to release to site.`,
+      targetRole: 'manager_and_organisation',
+      targetRoles: ['manager', 'organisation'],
+      requestType: collectionName,
+      requestId: docId,
+      docId: docId,
+      siteId: currentData.siteId || currentData.siteid || '',
+      status: 'pending_manager_clearance',
+      senderRole: 'Organization',
+      senderName: actorName,
+      createdAt: serverTimestamp(),
+    }
+    await saveStandardDoc(orgId, 'notifications', notificationPayload)
+  } catch (err) {
+    console.warn('Notification write warning:', err)
+  }
+}
+
+/**
+ * Organization HQ Rejection (Stage 3 decline)
+ * Complies 100% with Section 4.C of eBricks_Organization_Approvals_Workflow.txt
+ */
+export async function executeOrganizationRejection(orgId, collectionName, docId, currentUser, rejectionReason = '') {
+  if (!orgId || !collectionName || !docId) throw new Error('orgId, collectionName, and docId are required')
+
+  const actorName = currentUser?.displayName || currentUser?.fullName || currentUser?.name || currentUser?.email || 'Organization Admin'
+  const actorId = currentUser?.uid || 'org_hq_admin'
+  const now = new Date()
+
+  const docRef = doc(db, 'organisation', orgId, collectionName, docId)
+  const snap = await getDoc(docRef)
+  const currentData = snap.exists() ? snap.data() : {}
+
+  const auditEntry = {
+    step: '3. Organization Authorization',
+    action: 'Rejected by Organization',
+    actorRole: 'Organization',
+    actorName: actorName,
+    actorId: actorId,
+    remarks: rejectionReason || 'Declined by Organization HQ.',
+    timestamp: now.toISOString(),
+    dateStr: formatDateStr(now),
+  }
+
+  const existingHistory = Array.isArray(currentData.approvalHistory) ? currentData.approvalHistory : []
+
+  await updateDoc(docRef, {
+    status: 'rejected_by_org',
+    approvalStatus: 'rejected_by_org',
+    statusDisplay: 'Rejected by Organization',
+    currentStep: -1,
+    orgApproved: false,
+    rejectionReason: rejectionReason || 'Declined by Organization HQ.',
+    rejectedBy: actorName,
+    rejectedRole: 'Organization',
+    updatedAt: serverTimestamp(),
+    approvalHistory: [...existingHistory, auditEntry],
+  })
+
+  // Write In-App Notification
+  try {
+    const notificationPayload = {
+      title: '❌ Requisition Declined by HQ',
+      body: `Requisition #${docId} was declined by HQ (${actorName}). Reason: ${rejectionReason || 'No reason specified'}`,
+      targetRole: 'manager_and_organisation',
+      targetRoles: ['manager', 'organisation'],
+      requestType: collectionName,
+      requestId: docId,
+      docId: docId,
+      siteId: currentData.siteId || currentData.siteid || '',
+      status: 'rejected_by_org',
+      senderRole: 'Organization',
+      senderName: actorName,
+      createdAt: serverTimestamp(),
+    }
+    await saveStandardDoc(orgId, 'notifications', notificationPayload)
+  } catch (err) {
+    console.warn('Notification write warning:', err)
+  }
+}
+
+// ------------------------------------------------------------------------------------------------
 // LEGACY BACKWARD-COMPATIBLE WRAPPERS
 // ------------------------------------------------------------------------------------------------
 
@@ -233,16 +366,12 @@ export async function executeTier1Review(orgId, approvalId, managerName, isAppro
 }
 
 export async function executeTier2OrgApproval(orgId, approvalId, orgAdminName, isApproved, remarks = '') {
-  const nextStatus = isApproved ? 'pending_manager_clearance' : 'rejected_by_org'
-  const entryRef = doc(db, 'organisation', orgId, 'siteSupervisorEntries', approvalId)
-  await updateDoc(entryRef, {
-    status: nextStatus,
-    approvalStatus: nextStatus,
-    orgApproved: isApproved,
-    orgApprovedBy: orgAdminName,
-    orgRemarks: remarks,
-    updatedAt: serverTimestamp(),
-  })
+  const currentUser = { displayName: orgAdminName }
+  if (isApproved) {
+    return executeOrganizationApproval(orgId, 'siteSupervisorEntries', approvalId, currentUser, remarks)
+  } else {
+    return executeOrganizationRejection(orgId, 'siteSupervisorEntries', approvalId, currentUser, remarks)
+  }
 }
 
 export async function executeTier3Clearance(orgId, approvalId, managerName, utrReference) {

@@ -1,0 +1,153 @@
+================================================================================
+EBRICKS WEB APPLICATION - WORKERS ATTENDANCE & REPORT FLOW SPECIFICATION
+================================================================================
+Application: eBricks White Label Construction Management System
+Target Platform: Web Application Frontend & Backend
+Date: September 26, 2026
+Version: 1.0 (Canonical Workers Attendance Architecture)
+================================================================================
+
+1. OVERVIEW & SYSTEM ARCHITECTURE
+--------------------------------------------------------------------------------
+The Workers Attendance module in eBricks manages worker registration, site-worker
+allocations, daily attendance recording (Present, Absent, Half Day, Overtime), 
+extra/contractor labor tracking, monthly salary calculations, and real-time attendance
+and salary reporting.
+
+Primary Firestore Collections:
+  1. /organisation/{orgId}/data/labours/{workerId}          -> Master Worker Directory
+  2. /organisation/{orgId}/data/workerSiteMapping/{siteId}  -> Worker-to-Site Mappings
+  3. /organisation/{orgId}/data/workersAttendance/{docId}   -> Daily Attendance Logs
+  4. /organisation/{orgId}/data/WorkerMonthlyAttendance/{id}-> Monthly Payroll & Aggregates
+
+--------------------------------------------------------------------------------
+2. WORKER ATTENDANCE STATUS TYPES & WAGE CALCULATION RULES
+--------------------------------------------------------------------------------
+
+Attendance Statuses & Mathematical Weighting:
+  - Present ("P" / "present")    : Weight = 1.0 Day  | Pay = 1.0 * Daily Salary Rate
+  - Half Day ("H" / "half day")  : Weight = 0.5 Day  | Pay = 0.5 * Daily Salary Rate
+  - Overtime ("OT" / "overtime") : Weight = 1.0 Day  | Pay = 1.0 * Daily Rate + OT Allowance
+  - Absent ("A" / "absent")      : Weight = 0.0 Day  | Pay = 0.0
+  - Not Marked ("None")          : Weight = 0.0 Day  | Pay = 0.0
+
+Formula for Monthly Calculated Worker Salary:
+  Total Salary = (Present Count * Daily Rate) 
+               + (Half Day Count * (Daily Rate / 2)) 
+               + (Overtime Count * Daily Rate) 
+               + Total Overtime Bonus
+
+--------------------------------------------------------------------------------
+3. DAILY ATTENDANCE MARKING FLOW (SUPERVISOR / MANAGER)
+--------------------------------------------------------------------------------
+
+Step A: Load Mapped Workers for Selected Site & Date
+  1. Query /organisation/{orgId}/data/workerSiteMapping
+     Filter by siteId == selectedSiteId
+  2. Fetch worker list containing: workerId, workerName, designation, dailySalary.
+
+Step B: Submit Daily Attendance Payload
+  Document ID format: {siteId}_{siteName}_{supervisorName} (or {siteId}_{YYYY-MM-DD})
+  Write to: /organisation/{orgId}/data/workersAttendance/{docId}
+
+Sample Document Payload:
+{
+  "siteId": "ST001",
+  "siteName": "Pothys Residential Complex",
+  "supervisorName": "John Supervisor",
+  "supervisorId": "SUP001",
+  "Day": "2026-09-26",
+  "date": "2026-09-26",
+  "month": "2026-09",
+  "totalMappedWorkers": 12,
+  "totalMappedPresent": 10,
+  "totalExtraWorkers": 3,
+  "totalWorkersOnSite": 13,
+  "workers": {
+    "W001": {
+      "workerId": "W001",
+      "workerName": "Ramesh Kumar",
+      "designation": "Mason",
+      "salaryPerDay": 800,
+      "attendance": "Present",
+      "remarks": "On time"
+    },
+    "W002": {
+      "workerId": "W002",
+      "workerName": "Suresh P",
+      "designation": "Helper",
+      "salaryPerDay": 500,
+      "attendance": "Half Day",
+      "remarks": "Left at 1:00 PM"
+    }
+  },
+  "extraWorkers": [
+    {
+      "workerType": "General Labour",
+      "count": 3,
+      "dailyRate": 450
+    }
+  ],
+  "updatedAt": Firebase.ServerTimestamp()
+}
+
+--------------------------------------------------------------------------------
+4. WORKERS ATTENDANCE REPORT SECTION FLOW (WEB APP)
+--------------------------------------------------------------------------------
+
+A. Report Filter Controls:
+---------------------------
+  1. Site / Project Selector: ["All Sites", "ST001 - Pothys", "ST002 - Metro"]
+  2. Month / Year Picker   : ["2026-09", "2026-08", ...] (Defaults to Current Month)
+  3. Search Input Field    : Search by Worker Name, ID, or Designation
+
+B. Summary KPI Header Cards:
+----------------------------
+  - Card 1: Total Active Workers Mapped
+  - Card 2: Total Days Logged in Month
+  - Card 3: Overall Attendance Rate (%) = (Total Present Points / Total Possible Days) * 100
+  - Card 4: Total Estimated Monthly Wage Outflow (₹)
+  - Card 5: Extra / Unmapped Labour Count
+
+C. Data Aggregation Algorithm for Report Table:
+------------------------------------------------
+  1. Query /organisation/{orgId}/data/workersAttendance
+     Filter by month == selectedMonth (and siteId == selectedSite if specific site chosen).
+  2. Iterate through all docs and aggregate per workerId:
+     - presentCount   = count of days with status == "present" or "p"
+     - absentCount    = count of days with status == "absent" or "a"
+     - halfDayCount   = count of days with status == "half day" or "h"
+     - overtimeCount  = count of days with status == "overtime" or "ot"
+     - totalCalculatedSalary = (presentCount * rate) + (halfDayCount * rate * 0.5) + (overtimeCount * rate)
+  3. Also query /organisation/{orgId}/data/WorkerMonthlyAttendance for pre-aggregated monthly fallback ledger.
+
+D. Worker Attendance Detail Table Columns:
+------------------------------------------
+  - Col 1: Worker ID & Name
+  - Col 2: Designation / Skill
+  - Col 3: Assigned Site / Project
+  - Col 4: Daily Salary Rate (₹)
+  - Col 5: Present Days (P)
+  - Col 6: Half Days (H)
+  - Col 7: Overtime Days (OT)
+  - Col 8: Absent Days (A)
+  - Col 9: Total Monthly Wages (₹)
+  - Col 10: Day-by-Day Status Grid (Days 1 to 31 with green/yellow/red/blue badges)
+
+--------------------------------------------------------------------------------
+5. WEB APPLICATION REACT / JS IMPLEMENTATION STEPS
+--------------------------------------------------------------------------------
+
+Step 1: Create Attendance Query Service (services/attendanceService.js)
+  - Function: fetchWorkersAttendanceReport(orgId, selectedMonth, selectedSiteId)
+  - Function: submitDailyAttendance(orgId, siteId, attendanceData)
+
+Step 2: Build Report Component (pages/organization/reports/WorkerAttendanceReport.jsx)
+  - Include Summary KPI Cards at the top.
+  - Include Site & Month Filter Dropdowns.
+  - Render Responsive Data Table with daily attendance status badges.
+  - Add "Export PDF / CSV" buttons.
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

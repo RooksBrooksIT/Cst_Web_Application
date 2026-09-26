@@ -14,6 +14,10 @@ import {
   ArrowUpRight,
   Eye,
   Layers,
+  Table,
+  LayoutGrid,
+  Clock,
+  Tag,
 } from 'lucide-react'
 import {
   fetchMaterials,
@@ -24,7 +28,23 @@ import {
   createMaterialRequest,
 } from '../../../services/materialService.js'
 
+function formatDate(raw) {
+  if (!raw) return 'N/A'
+  const d = raw?.toDate ? raw.toDate() : new Date(raw)
+  return Number.isNaN(d.getTime())
+    ? 'N/A'
+    : new Intl.DateTimeFormat('en-IN', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }).format(d)
+}
+
+function cleanKey(str) {
+  return (str || '').trim().toLowerCase().replace(/[^a-zA-Z0-9_]/g, '_')
+}
+
 export default function MaterialsStock({ orgId, sites = [], currentUser, onNotify }) {
+  const [viewMode, setViewMode] = useState('table') // 'table' | 'cards'
   const [materials, setMaterials] = useState([])
   const [warehouseStock, setWarehouseStock] = useState([])
   const [sitePools, setSitePools] = useState([])
@@ -79,43 +99,105 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
     }
   }, [orgId])
 
-  // Combine Master Materials with Live Central Warehouse stock and Site Pool Aggregates
+  // Combine Master Materials with Live Central Warehouse materialsAvailability stock telemetry
   const consolidatedTelemetry = useMemo(() => {
-    return materials.map((m) => {
-      const name = m.materialName || m.name || ''
-      const cleanName = name.trim().toLowerCase().replace(/[^a-zA-Z0-9_]/g, '_')
+    const itemMap = new Map()
 
-      // 1. Central Warehouse Available Stock
-      const availDoc = warehouseStock.find(
-        (w) =>
-          (w.materialName || '').toLowerCase() === name.toLowerCase() ||
-          w.id === cleanName
-      )
-      const centralQty = Number(availDoc?.availableCount ?? m.currentTotalStock ?? m.currentStock ?? 0)
+    // 1. Process master materials catalog
+    materials.forEach((m) => {
+      const matId = m.materialId || m.id || cleanKey(m.materialName || m.name)
+      const name = m.materialName || m.name || m.displayName || ''
+      const cleanName = cleanKey(name) || cleanKey(matId)
 
-      // 2. Aggregate On-Site Distributed Stock
-      const matchedPools = sitePools.filter(
-        (p) => (p.materialName || '').toLowerCase() === name.toLowerCase()
-      )
-      const siteTotalAllocated = matchedPools.reduce((acc, p) => acc + (Number(p.currentBalance) || 0), 0)
-      const totalOrgStock = centralQty + siteTotalAllocated
-
-      const minReorder = Number(m.minReorderLevel || 20)
-      const unitStr = m.materialUnit || m.unitName || m.unit || 'Units'
-      const unitPrice = Number(m.unitPrice || m.standardRate || 0)
-
-      return {
-        ...m,
+      itemMap.set(cleanName, {
+        id: matId,
+        materialId: matId,
         materialName: name,
-        centralQty: Math.max(0, centralQty),
-        siteTotalAllocated: Math.max(0, siteTotalAllocated),
-        totalOrgStock: Math.max(0, totalOrgStock),
-        minReorder,
-        unitStr,
-        unitPrice,
-        siteBreakdown: matchedPools,
-      }
+        displayName: m.displayName || name,
+        category: m.materialCategory || m.categoryName || m.category || 'General',
+        unitStr: m.materialUnit || m.unitName || m.unit || 'Units',
+        centralQty: Number(m.currentTotalStock ?? m.currentStock ?? 0),
+        companyAvailableCount: Number(m.currentTotalStock ?? 0),
+        siteTotalAllocated: 0,
+        totalAvailableCount: Number(m.currentTotalStock ?? 0),
+        minReorder: Number(m.minReorderLevel || 20),
+        unitPrice: Number(m.unitPrice || m.standardRate || 0),
+        siteBreakdown: [],
+        siteInventories: [],
+        lastupdated: m.updatedAt || m.lastupdated,
+      })
     })
+
+    // 2. Merge / Add live materialsAvailability documents (/organisation/{orgId}/data/materialsAvailability)
+    warehouseStock.forEach((w) => {
+      const matId = w.materialId || w.id
+      const name = w.materialName || w.displayName || w.name || ''
+      const cleanName = cleanKey(name) || cleanKey(matId)
+
+      const existing = itemMap.get(cleanName) || {}
+
+      const centralQty = Number(
+        w.companyAvailableCount ?? w.availableCount ?? w.count ?? existing.centralQty ?? 0
+      )
+
+      // Process siteInventories array from materialsAvailability schema
+      const siteInventories = Array.isArray(w.siteInventories) ? w.siteInventories : []
+
+      let siteTotalAllocated = siteInventories.reduce(
+        (sum, s) => sum + (Number(s.availableCount ?? s.count) || 0),
+        0
+      )
+
+      // Fallback to sitePools if siteInventories array is empty
+      const matchedPools = sitePools.filter(
+        (p) => (p.materialName || '').toLowerCase() === (name || existing.materialName || '').toLowerCase()
+      )
+      if (siteInventories.length === 0 && matchedPools.length > 0) {
+        siteTotalAllocated = matchedPools.reduce((acc, p) => acc + (Number(p.currentBalance) || 0), 0)
+      }
+
+      const totalAvailableCount = Number(
+        w.totalAvailableCount ?? (centralQty + siteTotalAllocated)
+      )
+
+      const mergedSiteBreakdown = siteInventories.length > 0
+        ? siteInventories.map((s) => ({
+            siteId: s.siteId,
+            siteName: s.siteName || s.siteId,
+            currentBalance: Number(s.availableCount ?? s.count) || 0,
+            count: Number(s.count) || 0,
+            availableCount: Number(s.availableCount ?? s.count) || 0,
+            updatedAt: s.updatedAt,
+          }))
+        : matchedPools.map((p) => ({
+            siteId: p.siteId,
+            siteName: p.siteName || p.siteId,
+            currentBalance: Number(p.currentBalance) || 0,
+            availableCount: Number(p.currentBalance) || 0,
+            updatedAt: p.updatedAt,
+          }))
+
+      itemMap.set(cleanName, {
+        ...existing,
+        id: matId || existing.id || cleanName,
+        materialId: matId || existing.materialId || cleanName,
+        materialName: name || existing.materialName || 'Material Item',
+        displayName: w.displayName || existing.displayName || name || 'Material Item',
+        category: w.category || existing.category || 'General',
+        unitStr: w.unit || existing.unitStr || 'Units',
+        centralQty: Math.max(0, centralQty),
+        companyAvailableCount: Math.max(0, centralQty),
+        siteTotalAllocated: Math.max(0, siteTotalAllocated),
+        totalAvailableCount: Math.max(0, totalAvailableCount),
+        minReorder: Number(w.minReorder || existing.minReorder || 20),
+        unitPrice: Number(w.unitPrice || existing.unitPrice || 0),
+        siteBreakdown: mergedSiteBreakdown,
+        siteInventories: mergedSiteBreakdown,
+        lastupdated: w.lastupdated || w.updatedAt || existing.lastupdated,
+      })
+    })
+
+    return Array.from(itemMap.values())
   }, [materials, warehouseStock, sitePools])
 
   // Computed metrics
@@ -138,9 +220,10 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
   // Filtered materials list
   const filteredList = useMemo(() => {
     return consolidatedTelemetry.filter((m) => {
-      const name = m.materialName.toLowerCase()
-      const cat = (m.materialCategory || m.categoryName || m.category || '').toLowerCase()
-      const matchesSearch = name.includes(searchQuery.toLowerCase()) || cat.includes(searchQuery.toLowerCase())
+      const name = (m.displayName || m.materialName).toLowerCase()
+      const cat = (m.category || '').toLowerCase()
+      const idStr = (m.materialId || '').toLowerCase()
+      const matchesSearch = name.includes(searchQuery.toLowerCase()) || cat.includes(searchQuery.toLowerCase()) || idStr.includes(searchQuery.toLowerCase())
 
       if (filterState === 'LOW') return matchesSearch && m.centralQty <= m.minReorder && m.centralQty > 0
       if (filterState === 'OUT') return matchesSearch && m.centralQty <= 0
@@ -172,8 +255,8 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
           siteId: reqSiteId,
           siteName: site?.siteName || site?.projectName || 'Primary Site',
           materialId: requisitionMaterial.id || requisitionMaterial.materialId,
-          materialName: requisitionMaterial.materialName,
-          category: requisitionMaterial.materialCategory || requisitionMaterial.category || 'General',
+          materialName: requisitionMaterial.displayName || requisitionMaterial.materialName,
+          category: requisitionMaterial.category || 'General',
           requestedQty: Number(reqQty) || 1,
           unit: requisitionMaterial.unitStr,
           urgency: reqUrgency,
@@ -209,7 +292,7 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
         </div>
       </div>
 
-      {/* KPI Alert Cards (3 Bento Cards) */}
+      {/* KPI Alert Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div
           onClick={() => setFilterState('ALL')}
@@ -223,9 +306,9 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Tracked SKU Types</span>
             <Boxes className="w-5 h-5 text-blue-600" />
           </div>
-          <p className="text-2xl font-black text-slate-900 mt-2">{materials.length} Master SKUs</p>
+          <p className="text-2xl font-black text-slate-900 mt-2">{consolidatedTelemetry.length} SKUs</p>
           <div className="flex items-center gap-3 text-xs text-slate-600 font-medium mt-1">
-            <span>Depot: <strong className="text-blue-900">{totalCentralWarehouseUnits.toLocaleString()}</strong></span>
+            <span>Central: <strong className="text-blue-900">{totalCentralWarehouseUnits.toLocaleString()}</strong></span>
             <span>•</span>
             <span>On-Site: <strong className="text-emerald-800">{totalOnSiteUnits.toLocaleString()}</strong></span>
           </div>
@@ -264,7 +347,7 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
         </div>
       </div>
 
-      {/* Filter Bar */}
+      {/* Filter and View Controls Bar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col sm:flex-row gap-3 items-center justify-between">
         <div className="relative w-full sm:w-80">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -272,27 +355,59 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search stock by material name..."
+            placeholder="Search material ID, display name, category..."
             className="w-full pl-9 pr-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20"
           />
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-slate-500 font-medium">Filter:</span>
-          <select
-            value={filterState}
-            onChange={(e) => setFilterState(e.target.value)}
-            className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20"
-          >
-            <option value="ALL">All Items ({materials.length})</option>
-            <option value="LOW">Low Stock Only ({lowStockItems.length})</option>
-            <option value="OUT">Out of Stock Only ({outOfStockItems.length})</option>
-          </select>
+        <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 font-medium">Filter:</span>
+            <select
+              value={filterState}
+              onChange={(e) => setFilterState(e.target.value)}
+              className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 font-medium"
+            >
+              <option value="ALL">All Items ({consolidatedTelemetry.length})</option>
+              <option value="LOW">Low Stock Only ({lowStockItems.length})</option>
+              <option value="OUT">Out of Stock Only ({outOfStockItems.length})</option>
+            </select>
+          </div>
+
+          {/* View Mode Switcher */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80 shrink-0">
+            <button
+              type="button"
+              onClick={() => setViewMode('table')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                viewMode === 'table'
+                  ? 'bg-white text-[#0B3470] shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="Table View"
+            >
+              <Table className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Table</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('cards')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                viewMode === 'cards'
+                  ? 'bg-white text-[#0B3470] shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="Cards View"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Cards</span>
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Live Stock Grid */}
-      {loading && materials.length === 0 ? (
+      {/* Live Stock Content Area */}
+      {loading && consolidatedTelemetry.length === 0 ? (
         <div className="py-20 text-center text-slate-400">Loading live stock telemetry...</div>
       ) : filteredList.length === 0 ? (
         <div className="bg-white p-12 text-center rounded-2xl border border-dashed border-slate-200">
@@ -300,7 +415,143 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
           <p className="text-sm font-semibold text-slate-700">No stock alerts in this view</p>
           <p className="text-xs text-slate-400 mt-1">All monitored inventory levels satisfy minimum site requirements.</p>
         </div>
+      ) : viewMode === 'table' ? (
+        /* TABLE FORMAT VIEW */
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50/75 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                  <th className="py-3.5 px-4">Material ID & Display Name</th>
+                  <th className="py-3.5 px-4">Category & Unit</th>
+                  <th className="py-3.5 px-4">Central Warehouse</th>
+                  <th className="py-3.5 px-4">Total Org Available</th>
+                  <th className="py-3.5 px-4">Site Allocations</th>
+                  <th className="py-3.5 px-4">Last Updated</th>
+                  <th className="py-3.5 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-xs">
+                {filteredList.map((m) => {
+                  const isCritical = m.centralQty <= 0
+                  const isWarning = m.centralQty > 0 && m.centralQty <= m.minReorder
+
+                  return (
+                    <tr key={m.id || m.materialId} className="hover:bg-slate-50/70 transition-colors">
+                      {/* Material ID & Display Name */}
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-blue-50 text-[#0B3470] flex items-center justify-center font-bold text-xs shrink-0 border border-blue-100">
+                            <Boxes className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <strong className="block font-bold text-slate-900 text-sm">
+                                {m.displayName || m.materialName}
+                              </strong>
+                              {m.materialName !== m.displayName && (
+                                <span className="text-[11px] text-slate-400">({m.materialName})</span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span className="font-mono text-[10px] font-bold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                                {m.materialId}
+                              </span>
+                              <span
+                                className={`px-2 py-0.5 text-[10px] font-bold rounded-full ${
+                                  isCritical
+                                    ? 'bg-rose-100 text-rose-800'
+                                    : isWarning
+                                    ? 'bg-amber-100 text-amber-800'
+                                    : 'bg-emerald-100 text-emerald-800'
+                                }`}
+                              >
+                                {isCritical ? 'Depleted' : isWarning ? 'Low Stock' : 'Optimal'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Category & Unit */}
+                      <td className="py-3.5 px-4">
+                        <div>
+                          <span className="px-2.5 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                            {m.category}
+                          </span>
+                          <p className="text-[11px] text-slate-400 mt-1 capitalize font-medium">Unit: {m.unitStr}</p>
+                        </div>
+                      </td>
+
+                      {/* Central Warehouse Available */}
+                      <td className="py-3.5 px-4">
+                        <div>
+                          <p className={`text-sm font-black ${isCritical ? 'text-rose-600' : isWarning ? 'text-amber-700' : 'text-slate-900'}`}>
+                            {m.companyAvailableCount.toLocaleString()}{' '}
+                            <span className="text-xs font-normal text-slate-500">{m.unitStr}</span>
+                          </p>
+                          <span className="text-[10px] text-slate-400 uppercase font-semibold">Central Depot</span>
+                        </div>
+                      </td>
+
+                      {/* Total Org Available */}
+                      <td className="py-3.5 px-4">
+                        <div>
+                          <p className="text-sm font-black text-emerald-800">
+                            {m.totalAvailableCount.toLocaleString()}{' '}
+                            <span className="text-xs font-normal text-slate-500">{m.unitStr}</span>
+                          </p>
+                          <span className="text-[10px] text-slate-400 uppercase font-semibold">Depot + Sites</span>
+                        </div>
+                      </td>
+
+                      {/* Site Allocations */}
+                      <td className="py-3.5 px-4">
+                        <button
+                          type="button"
+                          onClick={() => setInspectMaterial(m)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-colors cursor-pointer"
+                        >
+                          <Building2 className="w-3.5 h-3.5 text-slate-400" />
+                          <span>{m.siteInventories.length} Site {m.siteInventories.length === 1 ? 'Pool' : 'Pools'}</span>
+                        </button>
+                      </td>
+
+                      {/* Last Updated */}
+                      <td className="py-3.5 px-4 font-mono text-slate-500 text-[11px]">
+                        {formatDate(m.lastupdated)}
+                      </td>
+
+                      {/* Actions */}
+                      <td className="py-3.5 px-4 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setInspectMaterial(m)}
+                            className="p-1.5 rounded-lg text-slate-600 hover:text-blue-700 hover:bg-blue-50 border border-slate-200 transition-colors"
+                            title="Inspect Site Breakdown"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenRequisition(m)}
+                            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#0B3470] text-white hover:bg-[#082855] transition-colors flex items-center gap-1 shadow-xs"
+                          >
+                            <ShoppingCart className="w-3.5 h-3.5" />
+                            <span>Requisition</span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
       ) : (
+        /* CARDS FORMAT VIEW */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {filteredList.map((m) => {
             const isCritical = m.centralQty <= 0
@@ -322,11 +573,12 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
-                        {m.materialCategory || m.categoryName || m.category || 'Materials'}
+                        {m.category}
                       </span>
                       <h3 className="text-base font-bold text-slate-900 mt-0.5 leading-snug">
-                        {m.materialName}
+                        {m.displayName || m.materialName}
                       </h3>
+                      <p className="text-xs text-slate-400 font-mono mt-0.5">{m.materialId}</p>
                     </div>
 
                     <span
@@ -349,16 +601,16 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
                         Central Warehouse
                       </span>
                       <p className="text-lg font-black text-slate-900 mt-0.5">
-                        {m.centralQty}{' '}
+                        {m.companyAvailableCount.toLocaleString()}{' '}
                         <span className="text-xs font-normal text-slate-500">{m.unitStr}</span>
                       </p>
                     </div>
                     <div>
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                        Distributed on Sites
+                        Total Org Available
                       </span>
                       <p className="text-lg font-black text-emerald-800 mt-0.5">
-                        {m.siteTotalAllocated}{' '}
+                        {m.totalAvailableCount.toLocaleString()}{' '}
                         <span className="text-xs font-normal text-slate-500">{m.unitStr}</span>
                       </p>
                     </div>
@@ -376,7 +628,7 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
                     </div>
 
                     <div className="flex justify-between text-[11px] text-slate-400">
-                      <span>Safety Reorder: {m.minReorder} {m.unitStr}</span>
+                      <span>Last Updated: {formatDate(m.lastupdated)}</span>
                       <span>Rate: ₹{m.unitPrice}</span>
                     </div>
                   </div>
@@ -389,7 +641,7 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
                     className="inline-flex items-center gap-1 text-xs font-bold text-slate-600 hover:text-blue-700 cursor-pointer"
                   >
                     <Eye className="w-3.5 h-3.5" />
-                    <span>Site Pool ({m.siteBreakdown.length})</span>
+                    <span>Site Pool ({m.siteInventories.length})</span>
                   </button>
 
                   <button
@@ -411,11 +663,14 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
       {/* ======================================================================================= */}
       {inspectMaterial && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div>
-                <h3 className="text-base font-bold text-slate-900">On-Site Distribution Breakdown</h3>
-                <p className="text-xs text-slate-500">{inspectMaterial.materialName}</p>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 uppercase font-mono">
+                  {inspectMaterial.materialId}
+                </span>
+                <h3 className="text-lg font-bold text-slate-900 mt-1">{inspectMaterial.displayName || inspectMaterial.materialName}</h3>
+                <p className="text-xs text-slate-500">Category: {inspectMaterial.category} · Unit: {inspectMaterial.unitStr}</p>
               </div>
               <button
                 onClick={() => setInspectMaterial(null)}
@@ -425,39 +680,56 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
               </button>
             </div>
 
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3 bg-blue-50/70 p-3 rounded-xl border border-blue-200 text-xs">
-                <div>
-                  <span className="text-slate-500">Central Warehouse Stock:</span>
-                  <p className="text-base font-bold text-[#0B3470]">{inspectMaterial.centralQty} {inspectMaterial.unitStr}</p>
-                </div>
-                <div>
-                  <span className="text-slate-500">Total Across Sites:</span>
-                  <p className="text-base font-bold text-emerald-800">{inspectMaterial.siteTotalAllocated} {inspectMaterial.unitStr}</p>
-                </div>
+            <div className="grid grid-cols-3 gap-3 bg-blue-50/70 p-3.5 rounded-xl border border-blue-200 text-xs">
+              <div>
+                <span className="text-slate-500 block text-[10px] uppercase font-bold">Central Depot Stock</span>
+                <p className="text-base font-black text-[#0B3470] mt-0.5">{inspectMaterial.companyAvailableCount} {inspectMaterial.unitStr}</p>
               </div>
+              <div>
+                <span className="text-slate-500 block text-[10px] uppercase font-bold">On-Site Allocations</span>
+                <p className="text-base font-black text-emerald-800 mt-0.5">{inspectMaterial.siteTotalAllocated} {inspectMaterial.unitStr}</p>
+              </div>
+              <div>
+                <span className="text-slate-500 block text-[10px] uppercase font-bold">Total Available</span>
+                <p className="text-base font-black text-slate-900 mt-0.5">{inspectMaterial.totalAvailableCount} {inspectMaterial.unitStr}</p>
+              </div>
+            </div>
 
-              {inspectMaterial.siteBreakdown.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-6">
-                  No active project sites currently hold stock for this material.
+            <div>
+              <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2 flex items-center justify-between">
+                <span>Site Inventories ({inspectMaterial.siteInventories.length})</span>
+                <span className="text-slate-400 font-normal normal-case font-mono">Last updated: {formatDate(inspectMaterial.lastupdated)}</span>
+              </h4>
+
+              {inspectMaterial.siteInventories.length === 0 ? (
+                <p className="text-xs text-slate-400 text-center py-6 border border-slate-200 rounded-xl bg-slate-50">
+                  No active project sites currently hold inventory for this material.
                 </p>
               ) : (
                 <div className="border border-slate-200 rounded-xl overflow-hidden max-h-60 overflow-y-auto">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-slate-50 border-b border-slate-200 font-semibold text-slate-600">
                       <tr>
-                        <th className="py-2 px-3">Project Site</th>
-                        <th className="py-2 px-3 text-right">Current Balance</th>
+                        <th className="py-2.5 px-3">Site ID & Site Name</th>
+                        <th className="py-2.5 px-3 text-right">Available Stock</th>
+                        <th className="py-2.5 px-3 text-right">Updated At</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {inspectMaterial.siteBreakdown.map((pool, idx) => (
-                        <tr key={pool.id || idx}>
-                          <td className="py-2.5 px-3 font-semibold text-slate-800">
-                            {pool.siteName || pool.siteId}
+                      {inspectMaterial.siteInventories.map((siteItem, idx) => (
+                        <tr key={siteItem.siteId || idx} className="hover:bg-slate-50/70">
+                          <td className="py-2.5 px-3">
+                            <div className="flex items-center gap-1.5">
+                              <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                              <strong className="font-semibold text-slate-900">{siteItem.siteName || siteItem.siteId}</strong>
+                              <span className="font-mono text-[10px] text-slate-400">({siteItem.siteId})</span>
+                            </div>
                           </td>
-                          <td className="py-2.5 px-3 text-right font-black text-slate-900">
-                            {pool.currentBalance} {inspectMaterial.unitStr}
+                          <td className="py-2.5 px-3 text-right font-black text-emerald-800">
+                            {(siteItem.availableCount ?? siteItem.count ?? siteItem.currentBalance ?? 0).toLocaleString()} {inspectMaterial.unitStr}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono text-slate-400 text-[11px]">
+                            {formatDate(siteItem.updatedAt)}
                           </td>
                         </tr>
                       ))}
@@ -465,23 +737,23 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
                   </table>
                 </div>
               )}
+            </div>
 
-              <div className="flex justify-end pt-2 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setInspectMaterial(null)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer"
-                >
-                  Close
-                </button>
-              </div>
+            <div className="flex justify-end pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setInspectMaterial(null)}
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-[#0B3470] text-white hover:bg-blue-800"
+              >
+                Close Breakdown
+              </button>
             </div>
           </div>
         </div>
       )}
 
       {/* ======================================================================================= */}
-      {/* QUICK REQUISITION MODAL */}
+      {/* REQUISITION MODAL */}
       {/* ======================================================================================= */}
       {requisitionMaterial && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
@@ -489,7 +761,7 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
               <div>
                 <h3 className="text-base font-bold text-slate-900">Raise Material Requisition</h3>
-                <p className="text-xs text-slate-500">Procure replenishment for site dispatch.</p>
+                <p className="text-xs text-slate-500">{requisitionMaterial.displayName || requisitionMaterial.materialName}</p>
               </div>
               <button
                 onClick={() => setRequisitionMaterial(null)}
@@ -499,33 +771,20 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
               </button>
             </div>
 
-            <form onSubmit={handleCreateRequisitionSubmit} className="space-y-4">
+            <form onSubmit={handleCreateRequisitionSubmit} className="space-y-4 text-xs">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                  Selected Material
-                </label>
-                <input
-                  type="text"
-                  disabled
-                  value={requisitionMaterial.materialName}
-                  className="w-full px-3 py-2 text-sm bg-slate-100 border border-slate-200 rounded-xl font-semibold text-slate-800"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                  Destination Site *
+                <label className="block font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                  Destination Project Site *
                 </label>
                 <select
                   required
                   value={reqSiteId}
                   onChange={(e) => setReqSiteId(e.target.value)}
-                  className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 text-xs font-medium"
                 >
-                  <option value="">Select Destination Site...</option>
                   {sites.map((s) => (
                     <option key={s.id} value={s.id}>
-                      {s.siteName || s.projectName || s.id}
+                      {s.siteName || s.projectName}
                     </option>
                   ))}
                 </select>
@@ -533,8 +792,8 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                    Required Qty ({requisitionMaterial.unitStr}) *
+                  <label className="block font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                    Quantity ({requisitionMaterial.unitStr}) *
                   </label>
                   <input
                     type="number"
@@ -542,22 +801,22 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
                     min="1"
                     value={reqQty}
                     onChange={(e) => setReqQty(e.target.value)}
-                    className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl font-bold"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 font-bold text-slate-900"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                    Priority Level
+                  <label className="block font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                    Priority / Urgency
                   </label>
                   <select
                     value={reqUrgency}
                     onChange={(e) => setReqUrgency(e.target.value)}
-                    className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 font-medium"
                   >
                     <option value="Normal">Normal</option>
                     <option value="High">High</option>
-                    <option value="Critical">Critical (Immediate Pour)</option>
+                    <option value="Emergency">Emergency</option>
                   </select>
                 </div>
               </div>
@@ -566,16 +825,16 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
                 <button
                   type="button"
                   onClick={() => setRequisitionMaterial(null)}
-                  className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl font-medium"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={submittingReq}
-                  className="px-5 py-2 text-xs font-semibold text-white bg-[#0B3470] hover:bg-[#082855] rounded-xl shadow-xs disabled:opacity-50 cursor-pointer"
+                  className="px-5 py-2 font-bold text-white bg-[#0B3470] hover:bg-[#082855] rounded-xl shadow-xs disabled:opacity-50"
                 >
-                  {submittingReq ? 'Forwarding...' : 'Dispatch Requisition to Approvals'}
+                  {submittingReq ? 'Submitting...' : 'Submit Request'}
                 </button>
               </div>
             </form>
@@ -585,4 +844,3 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
     </div>
   )
 }
-

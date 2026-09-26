@@ -7,6 +7,32 @@ import NotificationDrawer from '../../components/common/NotificationDrawer'
 import StatusBadge from '../../components/common/StatusBadge'
 import logo from '../../assets/logo/FinalLogo.jpg'
 import OrganizationModule from './Module'
+import ProjectAlertBadge from '../../components/common/ProjectAlertBadge'
+import { evaluateAllProjectAlerts } from '../../utils/projectAlerts'
+import {
+  Building2,
+  Wallet,
+  TrendingUp,
+  Users,
+  CheckCircle2,
+  Clock,
+  AlertTriangle,
+  Activity,
+  Plus,
+  ArrowRight,
+  Search,
+  Boxes,
+  FileText,
+  Sparkles,
+  ShieldCheck,
+  ChevronRight,
+  BarChart3,
+  DollarSign,
+  Layers,
+  Compass,
+  Briefcase,
+  Layers3,
+} from 'lucide-react'
 
 const stages = ['Foundation', 'Plinth', 'Superstructure', 'Finishing', 'Handover']
 
@@ -61,7 +87,7 @@ function ProgressBar({ percent }) {
     <div className="flex items-center gap-3">
       <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200/60">
         <div
-          className="bg-linear-to-r from-blue-600 to-indigo-600 h-2 rounded-full transition-all duration-500"
+          className="bg-linear-to-r from-[#0B3470] to-blue-600 h-2 rounded-full transition-all duration-500"
           style={{ width: `${p}%` }}
         />
       </div>
@@ -70,38 +96,39 @@ function ProgressBar({ percent }) {
   )
 }
 
-function MetricCard({ title, value: metricValue, detail, href, tone = 'blue' }) {
-  let toneBorder = 'border-slate-200 hover:border-blue-500/50'
-  let toneBadge = 'bg-blue-50 text-blue-700'
-  let symbol = '▦'
-
-  if (tone === 'orange') {
-    toneBorder = 'border-slate-200 hover:border-amber-500/50'
-    toneBadge = 'bg-amber-50 text-amber-700'
-    symbol = '₹'
-  } else if (tone === 'green') {
-    toneBorder = 'border-slate-200 hover:border-emerald-500/50'
-    toneBadge = 'bg-emerald-50 text-emerald-700'
-    symbol = '↗'
-  } else if (tone === 'red') {
-    toneBorder = 'border-slate-200 hover:border-rose-500/50'
-    toneBadge = 'bg-rose-50 text-rose-700'
-    symbol = '!'
+function MetricCard({ title, value: metricValue, detail, href, icon: Icon, tone = 'blue', badge }) {
+  const toneMap = {
+    blue: { bg: 'bg-blue-50 text-[#0B3470]', border: 'hover:border-blue-300', ring: 'hover:ring-blue-500/10' },
+    green: { bg: 'bg-emerald-50 text-emerald-700', border: 'hover:border-emerald-300', ring: 'hover:ring-emerald-500/10' },
+    orange: { bg: 'bg-amber-50 text-amber-700', border: 'hover:border-amber-300', ring: 'hover:ring-amber-500/10' },
+    red: { bg: 'bg-rose-50 text-rose-700', border: 'hover:border-rose-300', ring: 'hover:ring-rose-500/10' },
+    indigo: { bg: 'bg-indigo-50 text-indigo-700', border: 'hover:border-indigo-300', ring: 'hover:ring-indigo-500/10' },
   }
+  const theme = toneMap[tone] || toneMap.blue
 
   return (
     <Link
       to={href}
-      className={`group p-5 rounded-2xl bg-white border ${toneBorder} shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between`}
+      className={`group relative p-5 rounded-2xl bg-white border border-slate-200/80 shadow-xs hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 flex flex-col justify-between ${theme.border} ${theme.ring}`}
     >
-      <div className="flex items-start justify-between">
-        <span className={`p-2 rounded-xl text-base font-bold ${toneBadge}`}>{symbol}</span>
-        <span className="text-xs font-semibold text-slate-400 group-hover:text-blue-600 transition-colors">Inspect →</span>
+      <div className="flex items-start justify-between gap-2">
+        <span className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm shadow-xs ${theme.bg}`}>
+          {Icon ? <Icon className="w-5 h-5" /> : '▦'}
+        </span>
+        {badge ? (
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-100 text-rose-800 animate-pulse">
+            {badge}
+          </span>
+        ) : (
+          <span className="text-[11px] font-bold text-slate-400 group-hover:text-blue-600 transition-colors flex items-center gap-0.5">
+            Inspect <ChevronRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+          </span>
+        )}
       </div>
       <div className="mt-4 space-y-1">
-        <p className="text-xs font-semibold text-slate-500">{title}</p>
-        <strong className="text-2xl font-extrabold text-slate-900 block tracking-tight">{metricValue}</strong>
-        <small className="text-[11px] text-slate-400 block line-clamp-1">{detail}</small>
+        <p className="text-xs font-semibold text-slate-500 line-clamp-1">{title}</p>
+        <strong className="text-2xl md:text-3xl font-extrabold text-slate-900 block tracking-tight">{metricValue}</strong>
+        <small className="text-[11px] text-slate-400 block line-clamp-1 font-medium">{detail}</small>
       </div>
     </Link>
   )
@@ -307,7 +334,28 @@ export default function OrganizationDashboard() {
   const activeSites = filteredSites.filter((site) => ['active', 'in progress', 'ongoing', 'live'].includes(statusOf(site).toLowerCase())).length
   const completedSites = filteredSites.filter((site) => statusOf(site).toLowerCase() === 'completed').length
   const planningSites = filteredSites.filter((site) => statusOf(site).toLowerCase() === 'planning').length
-  const pendingApprovals = approvals.filter((item) => !['approved', 'rejected', 'completed', 'cleared'].includes(String(value(item, ['status', 'approvalStatus'], '')).toLowerCase())).length
+  const orgDashboardData = useOrganizationDashboard(orgId)
+  const pendingApprovals = useMemo(() => {
+    const all = [
+      ...(orgDashboardData.siteMaterialsRequest || []),
+      ...(orgDashboardData.siteToolsRequest || []),
+      ...(orgDashboardData.siteSupervisorProjectStageSchedule || []),
+      ...(orgDashboardData.pettyCashRequests || []),
+      ...(orgDashboardData.siteSupervisorEntries || []),
+      ...(orgDashboardData.vehicleMovements || []),
+    ]
+    return all.filter((item) => {
+      const st = String(item.status || item.approvalStatus || '').toLowerCase()
+      return ['pending_org_approval', 'pending_organization_approval', 'manager_verified'].includes(st)
+    }).length
+  }, [
+    orgDashboardData.siteMaterialsRequest,
+    orgDashboardData.siteToolsRequest,
+    orgDashboardData.siteSupervisorProjectStageSchedule,
+    orgDashboardData.pettyCashRequests,
+    orgDashboardData.siteSupervisorEntries,
+    orgDashboardData.vehicleMovements,
+  ])
   const activeWorkforce = filteredSites.reduce((total, site) => total + number(site, ['activeWorkforce', 'workersDeployed', 'workforce']), 0)
 
   const organizationName = value(userData, ['organizationName', 'orgName', 'companyName'], 'Your Organization')
@@ -467,6 +515,11 @@ export default function OrganizationDashboard() {
               sites={sites}
               materials={materials}
               materialRequests={materialRequests}
+              siteMaterialsRequest={orgDashboardData.siteMaterialsRequest}
+              siteToolsRequest={orgDashboardData.siteToolsRequest}
+              siteSupervisorProjectStageSchedule={orgDashboardData.siteSupervisorProjectStageSchedule}
+              siteSupervisorEntries={orgDashboardData.siteSupervisorEntries}
+              vehicleMovements={orgDashboardData.vehicleMovements}
               pettyCashAccounts={pettyCashAccounts}
               pettyCashRequests={pettyCashRequests}
               pettyCashExpenses={pettyCashExpenses}
@@ -492,68 +545,195 @@ export default function OrganizationDashboard() {
             />
           ) : (
             <>
-              {/* Hero Banner with #0B3470 Gradient Accent */}
-              <section className="relative overflow-hidden rounded-3xl bg-linear-to-r from-[#0B3470] via-[#0d3f85] to-[#164e96] text-white p-6 md:p-8 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-6">
-                <div className="space-y-2 relative z-10">
-                  <p className="text-xs font-bold uppercase tracking-wider text-blue-200">
-                    {organizationName} · {currentDate}
-                  </p>
-                  <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
-                    Construction operations, clearly in view.
-                  </h1>
-                  <p className="text-sm text-blue-100/90 max-w-xl leading-relaxed">
-                    Track site momentum, workforce readiness, material balances, and payment authorizations from one executive desk.
-                  </p>
-                  <div className="flex flex-wrap items-center gap-4 text-xs text-blue-100 pt-2 font-medium">
-                    <span className="flex items-center gap-1.5 text-emerald-300">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" /> Live synchronization
-                    </span>
-                    <span>• {filteredSites.length} portfolio sites</span>
-                    <span>• {activeWorkforce || 140} active workers</span>
+              {/* Modern Organization Header & Control Bar */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 text-[#0B3470] px-3 py-0.5 text-[11px] font-bold border border-blue-200/80">
+                        <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                        {organizationName} · Live Operations Desk
+                      </span>
+                      <span className="text-xs text-slate-500 font-medium">{currentDate}</span>
+                    </div>
+
+                    <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight">
+                      Executive Construction Control & Governance
+                    </h1>
+
+                    <p className="text-xs text-slate-500 max-w-3xl">
+                      Real-time telemetry across site progress milestones, Tier-2 HQ authorization queues, material stock reserves, and project budget utilization.
+                    </p>
+                  </div>
+
+                  {/* Top Bar Quick Controls */}
+                  <div className="flex items-center gap-2.5 flex-wrap self-start lg:self-auto">
+                    <div>
+                      <select
+                        aria-label="Filter Portfolio View"
+                        value={selectedProjectId}
+                        onChange={(e) => setSelectedProjectId(e.target.value)}
+                        className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all cursor-pointer shadow-2xs"
+                      >
+                        <option value="all">All Portfolio Projects ({sites.length})</option>
+                        {sites.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.projectName || s.siteName || s.id}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <Link
+                      to="/organization/sites"
+                      className="px-3.5 py-2 rounded-xl bg-[#0B3470] hover:bg-[#082654] text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Add Site</span>
+                    </Link>
+
+                    <Link
+                      to="/organization/approvals"
+                      className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                    >
+                      <ShieldCheck className="w-4 h-4" />
+                      <span>HQ Approvals</span>
+                      {pendingApprovals > 0 && (
+                        <span className="px-1.5 py-0.5 text-[10px] font-black bg-white text-amber-800 rounded-full">
+                          {pendingApprovals}
+                        </span>
+                      )}
+                    </Link>
                   </div>
                 </div>
 
-                <div className="bg-white/10 backdrop-blur-md border border-white/20 p-4 rounded-2xl space-y-3 min-w-[240px] text-white relative z-10 shadow-lg">
-                  <span className="text-xs font-bold text-blue-100 block">Portfolio View</span>
-                  <select
-                    value={selectedProjectId}
-                    onChange={(e) => setSelectedProjectId(e.target.value)}
-                    className="w-full bg-[#082654] border border-white/20 rounded-xl p-2 text-xs text-white outline-none font-medium"
-                  >
-                    <option value="all">All Projects ({sites.length})</option>
-                    {sites.map((s) => (
-                      <option key={s.id} value={s.id}>{s.projectName || s.siteName || s.id}</option>
-                    ))}
-                  </select>
-                  <Link to="/organization/sites" className="block text-xs font-bold text-sky-300 hover:text-white text-center transition-colors">
-                    Open Site Register →
-                  </Link>
+                {/* Compact KPI Summary Strip */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-3 border-t border-slate-100">
+                  <div className="p-3.5 rounded-xl bg-slate-50/80 border border-slate-200/80 flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Portfolio Sites</span>
+                      <strong className="text-lg font-extrabold text-slate-900 block font-mono mt-0.5">
+                        {filteredSites.length} <span className="text-xs font-semibold text-slate-500 font-sans">Sites</span>
+                      </strong>
+                    </div>
+                    <div className="p-2 rounded-xl bg-blue-50 text-[#0B3470]">
+                      <Building2 className="w-5 h-5" />
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-slate-50/80 border border-slate-200/80 flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Active Workforce</span>
+                      <strong className="text-lg font-extrabold text-emerald-700 block font-mono mt-0.5">
+                        {activeWorkforce || 140} <span className="text-xs font-semibold text-slate-500 font-sans">Workers</span>
+                      </strong>
+                    </div>
+                    <div className="p-2 rounded-xl bg-emerald-50 text-emerald-700">
+                      <Users className="w-5 h-5" />
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-slate-50/80 border border-slate-200/80 flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Pending Authorizations</span>
+                      <strong className="text-lg font-extrabold text-amber-700 block font-mono mt-0.5">
+                        {pendingApprovals} <span className="text-xs font-semibold text-slate-500 font-sans">Action Req.</span>
+                      </strong>
+                    </div>
+                    <div className="p-2 rounded-xl bg-amber-50 text-amber-700">
+                      <Clock className="w-5 h-5" />
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-slate-50/80 border border-slate-200/80 flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Budget Spend</span>
+                      <strong className="text-lg font-extrabold text-[#0B3470] block font-mono mt-0.5">
+                        {money(spentBudget)}
+                      </strong>
+                    </div>
+                    <div className="p-2 rounded-xl bg-indigo-50 text-indigo-700">
+                      <TrendingUp className="w-5 h-5" />
+                    </div>
+                  </div>
                 </div>
-              </section>
+              </div>
 
-              {/* Metric Cards Grid (Light Mode) */}
+              {/* Metric Cards Grid */}
               <section className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-                <MetricCard title="Total Sites" value={filteredSites.length} detail={`${activeSites} live · ${planningSites} planning`} href="/organization/sites" />
-                <MetricCard title="Overall Progress" value={siteProgress === null ? 'N/A' : `${siteProgress}%`} detail="Stage-weighted rollup" href="/organization/sites" tone="green" />
-                <MetricCard title="Active Workforce" value={activeWorkforce || 140} detail={`${managers.length} managers mapped`} href="/organization/team" tone="orange" />
-                <MetricCard title="Pending Approvals" value={pendingApprovals} detail="Tier 2 action required" href="/organization/approvals" tone="red" />
-                <MetricCard title="Project Spend" value={money(spentBudget)} detail={`${money(plannedBudget)} budget`} href="/organization/finance" tone="orange" />
-                <MetricCard title="Budget Utilization" value={plannedBudget ? `${Math.round((spentBudget / plannedBudget) * 100)}%` : '68%'} detail="Actual vs planned budget" href="/organization/finance" tone="green" />
+                <MetricCard
+                  title="Total Sites"
+                  value={filteredSites.length}
+                  detail={`${activeSites} live · ${planningSites} planning`}
+                  href="/organization/sites"
+                  icon={Building2}
+                  tone="blue"
+                />
+                <MetricCard
+                  title="Overall Progress"
+                  value={siteProgress === null ? 'N/A' : `${siteProgress}%`}
+                  detail="Stage-weighted rollup"
+                  href="/organization/sites"
+                  icon={Activity}
+                  tone="green"
+                />
+                <MetricCard
+                  title="Active Workforce"
+                  value={activeWorkforce || 140}
+                  detail={`${managers.length} managers mapped`}
+                  href="/organization/team"
+                  icon={Users}
+                  tone="orange"
+                />
+                <MetricCard
+                  title="Pending HQ Approvals"
+                  value={pendingApprovals}
+                  detail="Tier 2 action required"
+                  href="/organization/approvals"
+                  icon={ShieldCheck}
+                  tone="red"
+                  badge={pendingApprovals > 0 ? `${pendingApprovals} Pending` : null}
+                />
+                <MetricCard
+                  title="Total Spend"
+                  value={money(spentBudget)}
+                  detail={`${money(plannedBudget)} budget`}
+                  href="/organization/finance"
+                  icon={Wallet}
+                  tone="indigo"
+                />
+                <MetricCard
+                  title="Budget Utilization"
+                  value={plannedBudget ? `${Math.round((spentBudget / plannedBudget) * 100)}%` : '68%'}
+                  detail="Actual vs sanctioned limit"
+                  href="/organization/finance"
+                  icon={TrendingUp}
+                  tone="green"
+                />
               </section>
 
-              {/* Operations & Projects Split Grid (Light Mode) */}
+              {/* Operations & Projects Split Grid */}
               <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Progress Portfolio Table */}
                 <div className="lg:col-span-2 p-6 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-4">
-                  <SectionHeading eyebrow="PROJECT PORTFOLIO" title="Construction Site Milestones" href="/organization/sites" />
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                    <div>
+                      <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">PROJECT PORTFOLIO</p>
+                      <h2 className="text-base font-bold text-slate-900 tracking-tight">Construction Site Milestones & Telemetry</h2>
+                    </div>
+                    <Link to="/organization/sites" className="text-xs font-semibold text-blue-600 hover:text-blue-700">
+                      View all sites →
+                    </Link>
+                  </div>
+
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs text-slate-700">
-                      <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
+                      <thead className="bg-slate-50/80 text-slate-500 font-semibold border-b border-slate-100">
                         <tr>
                           <th className="p-3">Project / Location</th>
-                          <th className="p-3">Stage</th>
+                          <th className="p-3">Stage & Risk Alerts</th>
                           <th className="p-3">Progress</th>
-                          <th className="p-3 text-right">Budget</th>
+                          <th className="p-3 text-right">Sanctioned Budget</th>
                           <th className="p-3 text-center">Status</th>
                         </tr>
                       </thead>
@@ -561,13 +741,39 @@ export default function OrganizationDashboard() {
                         {searchedSites.slice(0, 5).map((site) => (
                           <tr key={site.id} className="hover:bg-slate-50/80 transition-colors">
                             <td className="p-3">
-                              <strong className="text-slate-900 block">{value(site, ['projectName', 'siteName', 'name'], site.id)}</strong>
-                              <small className="text-slate-400">{value(site, ['siteLocation', 'location'], 'Site registered')}</small>
+                              <div className="flex items-start gap-2.5">
+                                <div className="w-8 h-8 rounded-lg bg-blue-50 text-[#0B3470] font-bold text-xs flex items-center justify-center shrink-0 mt-0.5 border border-blue-100">
+                                  <Building2 className="w-4 h-4" />
+                                </div>
+                                <div>
+                                  <strong className="text-slate-900 block font-bold">
+                                    {value(site, ['projectName', 'siteName', 'name'], site.id)}
+                                  </strong>
+                                  <small className="text-slate-400">
+                                    {value(site, ['siteLocation', 'location'], 'Site registered')}
+                                  </small>
+                                </div>
+                              </div>
                             </td>
-                            <td className="p-3 font-medium text-slate-700">{value(site, ['projectStage', 'stage'], 'Foundation')}</td>
-                            <td className="p-3"><ProgressBar percent={progressOf(site)} /></td>
-                            <td className="p-3 text-right font-bold text-emerald-700">{money(number(site, ['budget', 'estimatedBudget']))}</td>
-                            <td className="p-3 text-center"><StatusBadge status={statusOf(site)} /></td>
+                            <td className="p-3">
+                              <div className="space-y-1">
+                                <span className="font-medium text-slate-800">
+                                  {value(site, ['projectStage', 'stage'], 'Foundation')}
+                                </span>
+                                <div className="mt-0.5">
+                                  <ProjectAlertBadge project={site} showDetails={true} />
+                                </div>
+                              </div>
+                            </td>
+                            <td className="p-3 min-w-[140px]">
+                              <ProgressBar percent={progressOf(site)} />
+                            </td>
+                            <td className="p-3 text-right font-bold text-emerald-700">
+                              {money(number(site, ['projectBudget', 'budget', 'estimatedBudget']))}
+                            </td>
+                            <td className="p-3 text-center">
+                              <StatusBadge status={statusOf(site)} />
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -575,26 +781,72 @@ export default function OrganizationDashboard() {
                   </div>
                 </div>
 
-                {/* Stage Distribution */}
-                <div className="p-6 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-4">
-                  <SectionHeading eyebrow="STAGE DISTRIBUTION" title="Execution Pipeline" />
-                  <div className="space-y-3">
-                    {stageNames.map((stage) => {
-                      const stageSites = filteredSites.filter((s) => String(value(s, ['projectStage', 'stage'], '')).toLowerCase() === stage.toLowerCase())
-                      const progressValues = stageSites.map(progressOf).filter((p) => p !== null)
-                      const p = progressValues.length ? Math.round(progressValues.reduce((t, i) => t + i, 0) / progressValues.length) : 0
-                      return (
-                        <div key={stage} className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-1.5">
-                          <div className="flex justify-between text-xs">
-                            <span className="font-semibold text-slate-800">{stage}</span>
-                            <span className="text-slate-500">{stageSites.length} sites ({p}%)</span>
+                {/* Right Sidebar Column: Execution Pipeline & Quick Governance */}
+                <div className="space-y-6">
+                  {/* Stage Distribution */}
+                  <div className="p-6 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-4">
+                    <SectionHeading eyebrow="STAGE DISTRIBUTION" title="Execution Pipeline" />
+                    <div className="space-y-3">
+                      {stageNames.map((stage) => {
+                        const stageSites = filteredSites.filter((s) => String(value(s, ['projectStage', 'stage'], '')).toLowerCase() === stage.toLowerCase())
+                        const progressValues = stageSites.map(progressOf).filter((p) => p !== null)
+                        const p = progressValues.length ? Math.round(progressValues.reduce((t, i) => t + i, 0) / progressValues.length) : 0
+                        return (
+                          <div key={stage} className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-1.5">
+                            <div className="flex justify-between text-xs">
+                              <span className="font-semibold text-slate-800">{stage}</span>
+                              <span className="text-slate-500 font-medium">{stageSites.length} sites ({p}%)</span>
+                            </div>
+                            <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                              <div className="bg-[#0B3470] h-1.5 rounded-full transition-all duration-500" style={{ width: `${p}%` }} />
+                            </div>
                           </div>
-                          <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
-                            <div className="bg-[#0B3470] h-1.5 rounded-full" style={{ width: `${p}%` }} />
-                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Executive Governance Quick Hub */}
+                  <div className="p-6 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-3">
+                    <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">GOVERNANCE & CONTROLS</p>
+                    <h3 className="text-sm font-bold text-slate-900">Executive Modules</h3>
+
+                    <div className="space-y-2 pt-1">
+                      <Link
+                        to="/organization/approvals"
+                        className="flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-blue-50/60 border border-slate-200/70 transition-colors group"
+                      >
+                        <div className="flex items-center gap-2.5 text-xs font-bold text-slate-800 group-hover:text-blue-900">
+                          <ShieldCheck className="w-4 h-4 text-blue-600" />
+                          <span>Tier-2 HQ Approvals</span>
                         </div>
-                      )
-                    })}
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-900">
+                          {pendingApprovals} Pending
+                        </span>
+                      </Link>
+
+                      <Link
+                        to="/organization/petty-cash"
+                        className="flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-emerald-50/60 border border-slate-200/70 transition-colors group"
+                      >
+                        <div className="flex items-center gap-2.5 text-xs font-bold text-slate-800 group-hover:text-emerald-900">
+                          <Wallet className="w-4 h-4 text-emerald-600" />
+                          <span>Petty Cash Governance</span>
+                        </div>
+                        <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-emerald-700" />
+                      </Link>
+
+                      <Link
+                        to="/organization/reports"
+                        className="flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-purple-50/60 border border-slate-200/70 transition-colors group"
+                      >
+                        <div className="flex items-center gap-2.5 text-xs font-bold text-slate-800 group-hover:text-purple-900">
+                          <BarChart3 className="w-4 h-4 text-purple-600" />
+                          <span>Executive Reports & Audit</span>
+                        </div>
+                        <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-purple-700" />
+                      </Link>
+                    </div>
                   </div>
                 </div>
               </section>

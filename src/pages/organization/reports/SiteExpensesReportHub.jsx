@@ -52,6 +52,14 @@ export default function SiteExpensesReportHub({
     if (initialStage) setSelectedStage(initialStage)
   }, [initialStage])
 
+  React.useEffect(() => {
+    if (initialFromDate) setFromDate(initialFromDate)
+  }, [initialFromDate])
+
+  React.useEffect(() => {
+    if (initialToDate) setToDate(initialToDate)
+  }, [initialToDate])
+
   // Date Range state
   const defaultFrom = useMemo(() => {
     const d = new Date()
@@ -286,13 +294,14 @@ export default function SiteExpensesReportHub({
   }
 
   const handleExportSummaryCSV = () => {
+    const kpis = lifetimeSummary?.kpis || { budget: 0, received: 0, spent: 0, cashInHand: 0, budgetRemaining: 0, usagePercent: 0 }
     const rows = [
-      ['Total Approved Budget', lifetimeSummary.kpis.budget],
-      ['Total Milestone Inflow Received', lifetimeSummary.kpis.received],
-      ['Total Actual Spend to Date', lifetimeSummary.kpis.spent],
-      ['Net Working Cash in Hand', lifetimeSummary.kpis.cashInHand],
-      ['Contract Budget Remaining Cushion', lifetimeSummary.kpis.budgetRemaining],
-      ['Budget Utilization Rate', `${lifetimeSummary.kpis.usagePercent}%`],
+      ['Total Approved Budget', kpis.budget],
+      ['Total Milestone Inflow Received', kpis.received],
+      ['Total Actual Spend to Date', kpis.spent],
+      ['Net Working Cash in Hand', kpis.cashInHand],
+      ['Contract Budget Remaining Cushion', kpis.budgetRemaining],
+      ['Budget Utilization Rate', `${kpis.usagePercent}%`],
     ]
     exportToCSV(`Site_Summary_${selectedSite?.projectName || 'Site'}`, ['Metric', 'Amount (INR)'], rows)
   }
@@ -790,23 +799,23 @@ export default function SiteExpensesReportHub({
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-2">
               <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Contract Budget</span>
-              <strong className="text-2xl font-extrabold text-slate-900 font-mono block">{money(lifetimeSummary.kpis.budget)}</strong>
+              <strong className="text-2xl font-extrabold text-slate-900 font-mono block">{money(lifetimeSummary?.kpis?.budget || 0)}</strong>
               <small className="text-slate-400 text-[11px]">Total contractual baseline</small>
             </div>
             <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-2">
               <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">Invoiced Inflow</span>
-              <strong className="text-2xl font-extrabold text-emerald-700 font-mono block">{money(lifetimeSummary.kpis.received)}</strong>
+              <strong className="text-2xl font-extrabold text-emerald-700 font-mono block">{money(lifetimeSummary?.kpis?.received || 0)}</strong>
               <small className="text-slate-400 text-[11px]">Customer payments deposited</small>
             </div>
             <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-2">
               <span className="text-[11px] font-bold text-rose-700 uppercase tracking-wider block">Consolidated Outflows</span>
-              <strong className="text-2xl font-extrabold text-rose-600 font-mono block">{money(lifetimeSummary.kpis.spent)}</strong>
+              <strong className="text-2xl font-extrabold text-rose-600 font-mono block">{money(lifetimeSummary?.kpis?.spent || 0)}</strong>
               <small className="text-slate-400 text-[11px]">All project expenses to date</small>
             </div>
             <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-2">
               <span className="text-[11px] font-bold text-purple-700 uppercase tracking-wider block">Operating Cash in Hand</span>
-              <strong className={`text-2xl font-extrabold font-mono block ${lifetimeSummary.kpis.cashInHand >= 0 ? 'text-purple-700' : 'text-rose-600'}`}>
-                {money(lifetimeSummary.kpis.cashInHand)}
+              <strong className={`text-2xl font-extrabold font-mono block ${(lifetimeSummary?.kpis?.cashInHand || 0) >= 0 ? 'text-purple-700' : 'text-rose-600'}`}>
+                {money(lifetimeSummary?.kpis?.cashInHand || 0)}
               </strong>
               <small className="text-slate-400 text-[11px]">Received minus spent</small>
             </div>
@@ -817,16 +826,16 @@ export default function SiteExpensesReportHub({
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
                 <strong className="text-sm font-bold text-slate-900 block">Overall Budget Utilization</strong>
-                <span className="text-xs text-slate-500">Remaining Budget Cushion: <strong>{money(lifetimeSummary.kpis.budgetRemaining)}</strong></span>
+                <span className="text-xs text-slate-500">Remaining Budget Cushion: <strong>{money(lifetimeSummary?.kpis?.budgetRemaining || 0)}</strong></span>
               </div>
-              <span className={`px-3 py-1 rounded-full text-xs font-bold border ${lifetimeSummary.kpis.usagePercent >= 85 ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
-                {lifetimeSummary.kpis.usagePercent}% Consumed
+              <span className={`px-3 py-1 rounded-full text-xs font-bold border ${(lifetimeSummary?.kpis?.usagePercent || 0) >= 85 ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
+                {lifetimeSummary?.kpis?.usagePercent || 0}% Consumed
               </span>
             </div>
             <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden border border-slate-200">
               <div
-                className={`h-3 rounded-full transition-all duration-500 ${lifetimeSummary.kpis.usagePercent >= 85 ? 'bg-rose-500' : 'bg-[#0B3470]'}`}
-                style={{ width: `${Math.min(100, lifetimeSummary.kpis.usagePercent)}%` }}
+                className={`h-3 rounded-full transition-all duration-500 ${(lifetimeSummary?.kpis?.usagePercent || 0) >= 85 ? 'bg-rose-500' : 'bg-[#0B3470]'}`}
+                style={{ width: `${Math.min(100, lifetimeSummary?.kpis?.usagePercent || 0)}%` }}
               />
             </div>
           </div>

@@ -20,8 +20,9 @@ import OrganizationReportsHub from './reports/OrganizationReportsHub'
 import OrgFinancePage from './finance/OrgFinancePage'
 import SiteFinancialDetailsPage from './finance/SiteFinancialDetailsPage'
 import PettyCashGovernance from './pettycash/PettyCashGovernance'
+import OrganizationApprovalsCenter from './approvals/OrganizationApprovalsCenter'
 
-export { OrgFinancePage, SiteFinancialDetailsPage, PettyCashGovernance }
+export { OrgFinancePage, SiteFinancialDetailsPage, PettyCashGovernance, OrganizationApprovalsCenter }
 
 function displayValue(record, fields, fallback = 'Not available') {
   return fields.map((field) => record?.[field]).find((item) => item !== undefined && item !== null && item !== '') ?? fallback
@@ -991,6 +992,10 @@ export default function OrganizationModule(props) {
     case 'team':
     case 'users':
       return <TeamManagement managers={props.managers} sites={props.sites} />
+    case 'approvals':
+    case 'approval':
+    case 'authorizations':
+      return <OrganizationApprovalsCenter {...props} />
     case 'petty-cash':
       return <PettyCashGovernance {...props} />
     case 'reports':

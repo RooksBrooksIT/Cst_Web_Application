@@ -297,14 +297,136 @@ export async function deleteWorker(orgId, workerId) {
 // 3. WORKER-SITE MAPPING & CROSS-SITE TRANSFERS (/organisation/{orgId}/workerSiteMapping)
 // ================================================================================================
 
+/**
+ * Carefully merges and cleans up any existing duplicate documents in /workerSiteMapping collection.
+ * Ensures only 1 document exists per siteId, preserving all valid worker mappings.
+ */
+export async function cleanupDuplicateWorkerSiteMappings(orgId) {
+  if (!orgId) return
+  try {
+    const colRef = collection(db, 'organisation', orgId, 'workerSiteMapping')
+    const snap = await getDocs(colRef)
+    if (snap.empty) return
+
+    const siteGroupMap = {}
+
+    snap.docs.forEach((d) => {
+      const data = d.data()
+      const docId = d.id.trim()
+      const canonicalSiteId = (data.siteId || data.site || docId).trim()
+      if (!canonicalSiteId) return
+
+      if (!siteGroupMap[canonicalSiteId]) {
+        siteGroupMap[canonicalSiteId] = []
+      }
+      siteGroupMap[canonicalSiteId].push({ id: docId, ref: d.ref, data })
+    })
+
+    const batch = writeBatch(db)
+    let hasChanges = false
+
+    for (const [canonicalSiteId, docs] of Object.entries(siteGroupMap)) {
+      if (docs.length === 1 && docs[0].id === canonicalSiteId) {
+        // Also ensure workers array inside single doc is deduplicated
+        const rawWorkers = docs[0].data.workers || []
+        const wMap = {}
+        rawWorkers.forEach((w) => {
+          const wId = (w.workerId || w.id || '').toString().trim()
+          if (wId) wMap[wId.toLowerCase()] = w
+        })
+        const deduped = Object.values(wMap)
+        if (deduped.length !== rawWorkers.length) {
+          batch.update(docs[0].ref, {
+            workers: deduped,
+            totalWorkersMapped: deduped.length,
+            updatedAt: serverTimestamp(),
+          })
+          hasChanges = true
+        }
+        continue
+      }
+
+      const canonicalDocRef = doc(db, 'organisation', orgId, 'workerSiteMapping', canonicalSiteId)
+      const workerMap = {}
+      let bestSiteName = canonicalSiteId
+      let bestSupervisor = 'Unassigned'
+
+      docs.forEach(({ data }) => {
+        if (data.siteName || data.projectName) {
+          bestSiteName = data.siteName || data.projectName
+        }
+        if (data.supervisor && data.supervisor !== 'Unassigned') {
+          bestSupervisor = data.supervisor
+        }
+        const rawWorkers = data.workers || []
+        rawWorkers.forEach((w) => {
+          const wId = (w.workerId || w.id || '').toString().trim()
+          if (!wId) return
+          if (!workerMap[wId.toLowerCase()]) {
+            workerMap[wId.toLowerCase()] = {
+              workerId: wId,
+              workerName: w.workerName || w.name || 'Worker',
+              workerDesignation: w.workerDesignation || w.designation || w.trade || 'Worker',
+              workerSalary: String(w.workerSalary || w.salary || w.dailyWageRate || 800),
+              workerPhone: w.workerPhone || w.phone || '',
+              siteId: canonicalSiteId,
+              siteName: bestSiteName,
+              assignmentStatus: w.assignmentStatus || 'Active',
+              mappingDate: w.mappingDate || new Date().toLocaleDateString('en-GB'),
+            }
+          }
+        })
+      })
+
+      const deduplicatedWorkers = Object.values(workerMap)
+
+      const consolidatedData = {
+        site: canonicalSiteId,
+        siteId: canonicalSiteId,
+        siteName: bestSiteName,
+        projectName: bestSiteName,
+        supervisor: bestSupervisor,
+        totalWorkersMapped: deduplicatedWorkers.length,
+        workers: deduplicatedWorkers,
+        updatedAt: serverTimestamp(),
+      }
+
+      batch.set(canonicalDocRef, consolidatedData, { merge: true })
+      hasChanges = true
+
+      docs.forEach(({ id, ref }) => {
+        if (id !== canonicalSiteId) {
+          batch.delete(ref)
+          const mirrorRef = doc(db, 'organisation', orgId, 'workerSiteMap', id)
+          batch.delete(mirrorRef)
+        }
+      })
+    }
+
+    if (hasChanges) {
+      await batch.commit()
+    }
+  } catch (err) {
+    console.error('Error in cleanupDuplicateWorkerSiteMappings:', err)
+  }
+}
+
 export function subscribeSiteWorkerMapping(orgId, siteId, onData, onError) {
   if (!orgId || !siteId) return () => {}
-  const docRef = doc(db, 'organisation', orgId, 'workerSiteMapping', siteId)
+  const cleanSiteId = siteId.trim()
+  const docRef = doc(db, 'organisation', orgId, 'workerSiteMapping', cleanSiteId)
   return onSnapshot(
     docRef,
     (snap) => {
       if (snap.exists()) {
-        onData({ id: snap.id, ...snap.data() })
+        const data = snap.data()
+        const rawWorkers = data.workers || []
+        const wMap = {}
+        rawWorkers.forEach((w) => {
+          const wId = (w.workerId || w.id || '').toString().trim()
+          if (wId) wMap[wId.toLowerCase()] = w
+        })
+        onData({ id: snap.id, ...data, workers: Object.values(wMap) })
       } else {
         onData(null)
       }
@@ -317,18 +439,53 @@ export function subscribeSiteWorkerMapping(orgId, siteId, onData, onError) {
 
 export async function fetchSiteWorkerMapping(orgId, siteId) {
   if (!orgId || !siteId) return null
-  const docRef = doc(db, 'organisation', orgId, 'workerSiteMapping', siteId)
+  const cleanSiteId = siteId.trim()
+  const docRef = doc(db, 'organisation', orgId, 'workerSiteMapping', cleanSiteId)
   const snap = await getDoc(docRef)
-  return snap.exists() ? { id: snap.id, ...snap.data() } : null
+  if (snap.exists()) {
+    const data = snap.data()
+    const rawWorkers = data.workers || []
+    const wMap = {}
+    rawWorkers.forEach((w) => {
+      const wId = (w.workerId || w.id || '').toString().trim()
+      if (wId) wMap[wId.toLowerCase()] = w
+    })
+    return { id: snap.id, ...data, workers: Object.values(wMap) }
+  }
+  return null
 }
 
 export function subscribeAllSiteMappings(orgId, onData, onError) {
   if (!orgId) return () => {}
+  // Automatically trigger background cleanup of any legacy duplicates
+  cleanupDuplicateWorkerSiteMappings(orgId).catch(() => {})
+
   const colRef = collection(db, 'organisation', orgId, 'workerSiteMapping')
   return onSnapshot(
     colRef,
     (snap) => {
-      onData(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+      const rawDocs = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      const siteGroupMap = {}
+
+      rawDocs.forEach((d) => {
+        const sId = (d.siteId || d.site || d.id).trim()
+        if (!siteGroupMap[sId] || d.id === sId) {
+          siteGroupMap[sId] = d
+        }
+      })
+
+      // Ensure workers array in each document is deduplicated
+      const result = Object.values(siteGroupMap).map((d) => {
+        const rawWorkers = d.workers || []
+        const wMap = {}
+        rawWorkers.forEach((w) => {
+          const wId = (w.workerId || w.id || '').toString().trim()
+          if (wId) wMap[wId.toLowerCase()] = w
+        })
+        return { ...d, workers: Object.values(wMap) }
+      })
+
+      onData(result)
     },
     (err) => {
       if (onError) onError(err)
@@ -337,19 +494,48 @@ export function subscribeAllSiteMappings(orgId, onData, onError) {
 }
 
 export async function fetchWorkerSiteMappings(orgId) {
-  return fetchWithFallback(orgId, 'workerSiteMapping')
+  if (!orgId) return []
+  cleanupDuplicateWorkerSiteMappings(orgId).catch(() => {})
+  const mappings = await fetchWithFallback(orgId, 'workerSiteMapping')
+  const siteGroupMap = {}
+  mappings.forEach((d) => {
+    const sId = (d.siteId || d.site || d.id).trim()
+    if (!siteGroupMap[sId] || d.id === sId) {
+      siteGroupMap[sId] = d
+    }
+  })
+  return Object.values(siteGroupMap)
 }
 
 /**
- * Saves site worker allocation with automatic atomic cross-site transfer cleanup
+ * Saves site worker allocation using a SINGLE deterministic document ID (cleanSiteId).
+ * Deduplicates worker entries inside the workers array and cleans up any legacy duplicates.
  */
 export async function saveSiteWorkerMapping(orgId, siteId, siteName, supervisor, workersList) {
   if (!orgId || !siteId) throw new Error('orgId and siteId are required')
 
-  const batch = writeBatch(db)
   const cleanSiteId = siteId.trim()
   const cleanSiteName = siteName.trim()
-  const combinedKey = `${cleanSiteId}_${cleanSiteName}`
+  const canonicalDocRef = doc(db, 'organisation', orgId, 'workerSiteMapping', cleanSiteId)
+
+  // 1. Deduplicate workersList by workerId
+  const workerMap = {}
+  workersList.forEach((w) => {
+    const wId = (w.workerId || w.id || '').toString().trim()
+    if (!wId) return
+    workerMap[wId.toLowerCase()] = {
+      workerId: wId,
+      workerName: w.workerName || w.name || 'Worker',
+      workerDesignation: w.workerDesignation || w.designation || w.trade || 'Worker',
+      workerSalary: String(w.workerSalary || w.salary || w.dailyWageRate || 800),
+      workerPhone: w.workerPhone || w.phone || '',
+      siteId: cleanSiteId,
+      siteName: cleanSiteName,
+      assignmentStatus: w.assignmentStatus || 'Active',
+      mappingDate: w.mappingDate || new Date().toLocaleDateString('en-GB'),
+    }
+  })
+  const deduplicatedWorkers = Object.values(workerMap)
 
   const docData = {
     site: cleanSiteId,
@@ -357,35 +543,51 @@ export async function saveSiteWorkerMapping(orgId, siteId, siteName, supervisor,
     siteName: cleanSiteName,
     projectName: cleanSiteName,
     supervisor: supervisor || 'Unassigned',
-    totalWorkersMapped: workersList.length,
-    workers: workersList,
+    totalWorkersMapped: deduplicatedWorkers.length,
+    workers: deduplicatedWorkers,
     updatedAt: serverTimestamp(),
   }
 
-  // 1. Commit mapping to canonical keys across workerSiteMapping and mirror workerSiteMap
-  const targetKeys = [cleanSiteId, cleanSiteName, combinedKey]
-  for (const key of targetKeys) {
-    const ref1 = doc(db, 'organisation', orgId, 'workerSiteMapping', key)
-    const ref2 = doc(db, 'organisation', orgId, 'workerSiteMap', key)
-    batch.set(ref1, docData, { merge: true })
-    batch.set(ref2, docData, { merge: true })
-  }
+  const batch = writeBatch(db)
 
-  // 2. Clean up transferred workers from all other sites atomically
-  const addedIds = new Set(workersList.map((w) => (w.workerId || w.id || '').toLowerCase()).filter(Boolean))
-  const otherDocsSnap = await getDocs(collection(db, 'organisation', orgId, 'workerSiteMapping'))
+  // 2. Write to SINGLE deterministic document ID
+  batch.set(canonicalDocRef, docData, { merge: true })
 
-  for (const otherDoc of otherDocsSnap.docs) {
-    if (targetKeys.includes(otherDoc.id.trim())) continue
-    const data = otherDoc.data()
-    const rawWorkers = data.workers || []
+  // Keep single mirror document in workerSiteMap for legacy consumers
+  const mirrorRef = doc(db, 'organisation', orgId, 'workerSiteMap', cleanSiteId)
+  batch.set(mirrorRef, docData, { merge: true })
+
+  // 3. Find and delete any duplicate non-canonical documents for this site
+  const colRef = collection(db, 'organisation', orgId, 'workerSiteMapping')
+  const snap = await getDocs(colRef)
+  snap.docs.forEach((d) => {
+    const dId = d.id.trim()
+    const dData = d.data()
+    const dSiteId = (dData.siteId || dData.site || '').trim()
+
+    if (dId !== cleanSiteId && (dSiteId === cleanSiteId || dId === cleanSiteName || dId === `${cleanSiteId}_${cleanSiteName}`)) {
+      batch.delete(d.ref)
+      const oldMirror = doc(db, 'organisation', orgId, 'workerSiteMap', dId)
+      batch.delete(oldMirror)
+    }
+  })
+
+  // 4. Clean up transferred workers from all other sites atomically
+  const addedWorkerIds = new Set(deduplicatedWorkers.map((w) => w.workerId.toLowerCase()))
+  for (const otherDoc of snap.docs) {
+    const oId = otherDoc.id.trim()
+    const oData = otherDoc.data()
+    const oSiteId = (oData.siteId || oData.site || '').trim()
+
+    if (oId === cleanSiteId || oSiteId === cleanSiteId) continue
+
+    const rawWorkers = oData.workers || []
     let modified = false
-
     const filtered = rawWorkers.filter((w) => {
       const id = (w.workerId || w.id || '').toString().toLowerCase()
-      if (id && addedIds.has(id)) {
+      if (id && addedWorkerIds.has(id)) {
         modified = true
-        return false // Remove transferred worker
+        return false // Remove transferred worker from other site
       }
       return true
     })
@@ -399,16 +601,16 @@ export async function saveSiteWorkerMapping(orgId, siteId, siteName, supervisor,
     }
   }
 
-  // 3. Update assignedSiteId on individual worker records
-  for (const w of workersList) {
-    const wId = w.workerId || w.id
+  // 5. Update assignedSiteId on individual worker records in workersConfig
+  for (const w of deduplicatedWorkers) {
+    const wId = w.workerId
     if (wId) {
       const wRef = doc(db, 'organisation', orgId, 'workersConfig', wId)
-      batch.update(wRef, {
+      batch.set(wRef, {
         assignedSiteId: cleanSiteId,
         assignedSiteName: cleanSiteName,
         updatedAt: serverTimestamp(),
-      })
+      }, { merge: true })
     }
   }
 

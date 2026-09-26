@@ -175,26 +175,46 @@ export default function ProjectStageReportsHub({
       </div>
 
       {/* Stage KPI Banner */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
-          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Sites in {selectedStage}</span>
-          <strong className="text-2xl font-extrabold text-slate-900 block font-mono">{stageData.sitesCountInStage}</strong>
-          <small className="text-[11px] text-slate-400">Active sites in this milestone</small>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Active Stage</span>
+          <strong className="text-xl font-extrabold text-slate-900 block font-mono mt-0.5">{stageData.selectedStage}</strong>
+          <small className="text-[10px] text-slate-400">{stageData.sitesCountInStage} active sites in stage</small>
         </div>
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
-          <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider block">Stage Labour Outflow</span>
-          <strong className="text-2xl font-extrabold text-blue-700 font-mono block">{money(stageData.stageTotalLabour)}</strong>
-          <small className="text-[11px] text-slate-400">Headcount & wages in this stage</small>
+        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+          <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider block">Estimated Stage Budget</span>
+          <strong className="text-xl font-extrabold text-blue-700 font-mono block mt-0.5">{money(stageData.stageEstimatedBudget)}</strong>
+          <small className="text-[10px] text-slate-400">Sanctioned allocation</small>
         </div>
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
-          <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">Stage Materials</span>
-          <strong className="text-2xl font-extrabold text-emerald-700 font-mono block">{money(stageData.stageTotalMaterial)}</strong>
-          <small className="text-[11px] text-slate-400">Stage specific procurement</small>
+        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+          <span className="text-[10px] font-bold text-rose-700 uppercase tracking-wider block">Actual Stage Spend</span>
+          <strong className="text-xl font-extrabold text-rose-600 font-mono block mt-0.5">{money(stageData.grandStageSpend)}</strong>
+          <small className="text-[10px] text-slate-400">{stageData.stageCompletionPct}% budget consumed</small>
         </div>
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1 border-l-4 border-l-[#0B3470]">
-          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Total Stage Outflow</span>
-          <strong className="text-2xl font-extrabold text-[#0B3470] font-mono block">{money(stageData.grandStageSpend)}</strong>
-          <small className="text-[11px] text-slate-400">Across all portfolio sites</small>
+        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+          <span className="text-[10px] font-bold text-purple-700 uppercase tracking-wider block">Stage Variance</span>
+          <strong className={`text-xl font-extrabold font-mono block mt-0.5 ${stageData.stageVariance >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
+            {money(stageData.stageVariance)}
+          </strong>
+          <small className="text-[10px] text-slate-400">{stageData.stageVariance >= 0 ? 'Under budget cushion' : 'Over budget deficit'}</small>
+        </div>
+        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Schedule Alert Indicator</span>
+          <div className="mt-1">
+            <span
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${
+                stageData.alertTone === 'red'
+                  ? 'bg-rose-50 text-rose-700 border-rose-200'
+                  : stageData.alertTone === 'blue'
+                  ? 'bg-blue-50 text-blue-700 border-blue-200'
+                  : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-current animate-pulse" />
+              {stageData.scheduleAlert}
+            </span>
+          </div>
+          <small className="text-[10px] text-slate-400 block mt-1">Real-time schedule telemetry</small>
         </div>
       </div>
 
