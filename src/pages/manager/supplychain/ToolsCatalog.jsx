@@ -316,7 +316,7 @@ export default function ToolsCatalog({ orgId, sites = [], currentUser, onNotify 
             onClick={() => setActiveTab('register')}
             className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
               activeTab === 'register'
-                ? 'bg-white text-[#0B3470] shadow-xs'
+                ? 'bg-[#0B3470] text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
@@ -327,7 +327,7 @@ export default function ToolsCatalog({ orgId, sites = [], currentUser, onNotify 
             onClick={() => setActiveTab('directory')}
             className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
               activeTab === 'directory'
-                ? 'bg-white text-[#0B3470] shadow-xs'
+                ? 'bg-[#0B3470] text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >

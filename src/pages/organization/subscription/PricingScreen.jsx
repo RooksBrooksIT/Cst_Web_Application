@@ -96,10 +96,10 @@ export function PricingScreen({
             <button
               type="button"
               onClick={() => setUpgradeTiming('immediate')}
-              className={`px-3 py-1.5 rounded-xl font-bold transition-all ${
+              className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer ${
                 upgradeTiming === 'immediate'
                   ? 'bg-[#0B3470] text-white shadow-xs'
-                  : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+                  : 'text-slate-600 hover:text-slate-900 bg-transparent'
               }`}
             >
               Immediate Upgrade
@@ -107,10 +107,10 @@ export function PricingScreen({
             <button
               type="button"
               onClick={() => setUpgradeTiming('queued')}
-              className={`px-3 py-1.5 rounded-xl font-bold transition-all ${
+              className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer ${
                 upgradeTiming === 'queued'
                   ? 'bg-[#0B3470] text-white shadow-xs'
-                  : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+                  : 'text-slate-600 hover:text-slate-900 bg-transparent'
               }`}
             >
               Queued (On Expiry)

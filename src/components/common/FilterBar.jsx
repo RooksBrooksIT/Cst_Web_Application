@@ -32,15 +32,15 @@ export default function FilterBar({
                   key={tab.id}
                   type="button"
                   onClick={() => onTabChange(tab.id)}
-                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                     isActive
-                      ? 'bg-white text-blue-700 shadow-xs'
+                      ? 'bg-[#0B3470] text-white shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   {tab.label}
                   {tab.count !== undefined && (
-                    <span className={`ml-1.5 text-[10px] px-1.5 py-0.2 rounded-full ${isActive ? 'bg-blue-100 text-blue-800' : 'bg-slate-200 text-slate-600'}`}>
+                    <span className={`ml-1.5 text-[10px] px-1.5 py-0.2 rounded-full font-bold ${isActive ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'}`}>
                       {tab.count}
                     </span>
                   )}

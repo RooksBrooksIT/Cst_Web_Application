@@ -243,6 +243,7 @@ export default function OrganizationDashboard() {
     customerInvoices,
     dailySiteLogs,
     approvals,
+    supervisors,
     managers,
     expenses,
     pettyCash,
@@ -366,6 +367,7 @@ export default function OrganizationDashboard() {
   const navigation = [
     ['Dashboard', '/organization/dashboard', '⌂'],
     ['Sites', '/organization/sites', '▦'],
+    ['Staff & Workforce', '/organization/team', '👥'],
     ['Finance', '/organization/finance', '₹'],
     ['Approvals', '/organization/approvals', '✓'],
     ['Petty Cash', '/organization/petty-cash', '◈'],
@@ -534,6 +536,7 @@ export default function OrganizationDashboard() {
               customerInvoices={customerInvoices}
               dailySiteLogs={dailySiteLogs}
               approvals={approvals}
+              supervisors={supervisors || orgDashboardData.supervisors}
               managers={managers}
               expenses={expenses}
               pettyCash={pettyCash}
@@ -679,8 +682,8 @@ export default function OrganizationDashboard() {
                 />
                 <MetricCard
                   title="Active Workforce"
-                  value={activeWorkforce || 140}
-                  detail={`${managers.length} managers mapped`}
+                  value={activeWorkforce || ((workers?.length || 0) + (supervisors?.length || 0) + (managers?.length || 0)) || 140}
+                  detail={`${managers?.length || 0} managers · ${supervisors?.length || 0} supervisors · ${workers?.length || 0} workers`}
                   href="/organization/team"
                   icon={Users}
                   tone="orange"

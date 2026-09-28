@@ -445,8 +445,8 @@ export default function OrganizationApprovalsCenter({
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-                activeTab === tab.id ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                activeTab === tab.id ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               {tab.label}

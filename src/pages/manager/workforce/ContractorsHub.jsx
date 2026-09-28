@@ -273,10 +273,10 @@ export default function ContractorsHub({ orgId, sites = [], currentUser, onNotif
           <button
             onClick={() => setActiveTab('registry')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-              activeTab === 'registry' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              activeTab === 'registry' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Briefcase className="w-4 h-4 text-slate-500" />
+            <Briefcase className={`w-4 h-4 ${activeTab === 'registry' ? 'text-white' : 'text-slate-500'}`} />
             <span>Contractors Master ({contractors.length})</span>
           </button>
           <button
@@ -285,7 +285,7 @@ export default function ContractorsHub({ orgId, sites = [], currentUser, onNotif
               activeTab === 'entries' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <FileSpreadsheet className="w-4 h-4" />
+            <FileSpreadsheet className={`w-4 h-4 ${activeTab === 'entries' ? 'text-white' : 'text-slate-500'}`} />
             <span>Work Measurements ({entries.length})</span>
           </button>
         </div>

@@ -263,9 +263,9 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
             <button
               type="button"
               onClick={() => setViewMode('table')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 viewMode === 'table'
-                  ? 'bg-white text-[#0B3470] shadow-xs'
+                  ? 'bg-[#0B3470] text-white shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
               title="Table View"
@@ -276,9 +276,9 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
             <button
               type="button"
               onClick={() => setViewMode('cards')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 viewMode === 'cards'
-                  ? 'bg-white text-[#0B3470] shadow-xs'
+                  ? 'bg-[#0B3470] text-white shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
               title="List Feed View"

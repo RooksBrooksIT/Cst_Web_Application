@@ -366,7 +366,7 @@ export default function PettyCashGovernance({
                   className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-2 ${
                     isActive
                       ? 'bg-[#0B3470] text-white shadow-xs'
-                      : 'bg-slate-50 text-slate-600 hover:bg-slate-100 hover:text-slate-900 border border-slate-100'
+                      : 'text-slate-600 hover:text-slate-900 bg-transparent'
                   }`}
                 >
                   <span>{tab.icon}</span>
@@ -418,7 +418,7 @@ export default function PettyCashGovernance({
                 type="button"
                 onClick={() => setViewMode('cards')}
                 className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  viewMode === 'cards' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                  viewMode === 'cards' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 ▦ Cards
@@ -427,7 +427,7 @@ export default function PettyCashGovernance({
                 type="button"
                 onClick={() => setViewMode('table')}
                 className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  viewMode === 'table' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                  viewMode === 'table' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 ☰ Table

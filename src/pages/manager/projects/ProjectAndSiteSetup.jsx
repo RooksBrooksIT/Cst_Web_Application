@@ -519,7 +519,7 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
             }}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
               activeTab === 'create'
-                ? 'bg-white text-[#0B3470] shadow-xs'
+                ? 'bg-[#0B3470] text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
@@ -533,7 +533,7 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
             }}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
               activeTab === 'update'
-                ? 'bg-white text-[#0B3470] shadow-xs'
+                ? 'bg-[#0B3470] text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >

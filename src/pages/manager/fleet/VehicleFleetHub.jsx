@@ -251,19 +251,19 @@ export default function VehicleFleetHub({ orgId, sites = [], currentUser, onNoti
           <button
             onClick={() => setActiveTab('vehicles')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-              activeTab === 'vehicles' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              activeTab === 'vehicles' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Truck className="w-4 h-4 text-slate-500" />
+            <Truck className={`w-4 h-4 ${activeTab === 'vehicles' ? 'text-white' : 'text-slate-500'}`} />
             <span>Vehicles ({vehicles.length})</span>
           </button>
           <button
             onClick={() => setActiveTab('drivers')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-              activeTab === 'drivers' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              activeTab === 'drivers' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <UserCheck className="w-4 h-4 text-slate-500" />
+            <UserCheck className={`w-4 h-4 ${activeTab === 'drivers' ? 'text-white' : 'text-slate-500'}`} />
             <span>Drivers ({drivers.length})</span>
           </button>
           <button
@@ -272,7 +272,7 @@ export default function VehicleFleetHub({ orgId, sites = [], currentUser, onNoti
               activeTab === 'logs' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Fuel className="w-4 h-4" />
+            <Fuel className={`w-4 h-4 ${activeTab === 'logs' ? 'text-white' : 'text-slate-500'}`} />
             <span>Trip & Fuel Logs ({logs.length})</span>
           </button>
         </div>
@@ -313,9 +313,9 @@ export default function VehicleFleetHub({ orgId, sites = [], currentUser, onNoti
                 <button
                   type="button"
                   onClick={() => setViewMode('table')}
-                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     viewMode === 'table'
-                      ? 'bg-white text-[#0B3470] shadow-xs'
+                      ? 'bg-[#0B3470] text-white shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                   title="Table View"
@@ -326,9 +326,9 @@ export default function VehicleFleetHub({ orgId, sites = [], currentUser, onNoti
                 <button
                   type="button"
                   onClick={() => setViewMode('cards')}
-                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     viewMode === 'cards'
-                      ? 'bg-white text-[#0B3470] shadow-xs'
+                      ? 'bg-[#0B3470] text-white shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                   title="Cards View"
@@ -489,9 +489,9 @@ export default function VehicleFleetHub({ orgId, sites = [], currentUser, onNoti
                 <button
                   type="button"
                   onClick={() => setViewMode('table')}
-                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     viewMode === 'table'
-                      ? 'bg-white text-[#0B3470] shadow-xs'
+                      ? 'bg-[#0B3470] text-white shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                   title="Table View"
@@ -502,9 +502,9 @@ export default function VehicleFleetHub({ orgId, sites = [], currentUser, onNoti
                 <button
                   type="button"
                   onClick={() => setViewMode('cards')}
-                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     viewMode === 'cards'
-                      ? 'bg-white text-[#0B3470] shadow-xs'
+                      ? 'bg-[#0B3470] text-white shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                   title="Cards View"

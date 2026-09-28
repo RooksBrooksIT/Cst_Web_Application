@@ -295,7 +295,7 @@ export default function MaterialsCatalog({ orgId, currentUser, onNotify }) {
             onClick={() => setActiveTab(0)}
             className={`px-4 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
               activeTab === 0
-                ? 'bg-white text-[#0B3470] shadow-xs'
+                ? 'bg-[#0B3470] text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
@@ -305,7 +305,7 @@ export default function MaterialsCatalog({ orgId, currentUser, onNotify }) {
             onClick={() => setActiveTab(1)}
             className={`px-4 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
               activeTab === 1
-                ? 'bg-white text-[#0B3470] shadow-xs'
+                ? 'bg-[#0B3470] text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >

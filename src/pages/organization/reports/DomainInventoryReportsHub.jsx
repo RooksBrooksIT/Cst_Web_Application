@@ -173,7 +173,7 @@ export default function DomainInventoryReportsHub({
                 className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 ${
                   isActive
                     ? 'bg-[#0B3470] text-white shadow-xs'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
+                    : 'text-slate-600 hover:text-slate-900 bg-transparent'
                 }`}
               >
                 <span>{tab.icon}</span>

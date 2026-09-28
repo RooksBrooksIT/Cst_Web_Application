@@ -25,6 +25,7 @@ import {
   updateSupervisor,
   toggleSupervisorStatus,
   checkSupervisorUniqueness,
+  getNextSupervisorId,
 } from '../../../services/supervisorService.js'
 
 export default function SupervisorSetup({ orgId, sites = [], currentUser, onNotify }) {
@@ -33,6 +34,10 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
   const [loading, setLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('ALL') // 'ALL' | 'ACTIVE' | 'INACTIVE'
+
+  // Sequential Next Supervisor ID State (SUP001, SUP002, etc.)
+  const [nextSupervisorId, setNextSupervisorId] = useState('SUP001')
+  const [loadingNextId, setLoadingNextId] = useState(false)
 
   // Create form state
   const [formFullName, setFormFullName] = useState('')
@@ -56,6 +61,19 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
   const [editDesignation, setEditDesignation] = useState('')
   const [editNewPassword, setEditNewPassword] = useState('')
 
+  const refreshNextSupervisorId = async () => {
+    if (!orgId) return
+    setLoadingNextId(true)
+    try {
+      const nextId = await getNextSupervisorId(orgId)
+      setNextSupervisorId(nextId)
+    } catch (err) {
+      console.error('Failed to calculate next supervisor id:', err)
+    } finally {
+      setLoadingNextId(false)
+    }
+  }
+
   const loadData = async () => {
     if (!orgId) return
     setLoading(true)
@@ -72,7 +90,14 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
 
   useEffect(() => {
     loadData()
+    refreshNextSupervisorId()
   }, [orgId])
+
+  useEffect(() => {
+    if (activeTab === 'create') {
+      refreshNextSupervisorId()
+    }
+  }, [activeTab, orgId])
 
   // Debounced check for uniqueness
   useEffect(() => {
@@ -114,9 +139,10 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
 
     setSubmitting(true)
     try {
-      await createSupervisor(
+      const created = await createSupervisor(
         orgId,
         {
+          supervisorId: nextSupervisorId,
           fullName: formFullName.trim(),
           username: formUsername.trim(),
           phone: formPhone.trim(),
@@ -128,7 +154,10 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
         currentUser
       )
 
-      onNotify?.(`Supervisor account for "${formFullName}" created successfully!`, 'success')
+      onNotify?.(
+        `Supervisor account "${created.SupervisorId || nextSupervisorId}" for "${formFullName}" created successfully!`,
+        'success'
+      )
       // Reset form
       setFormFullName('')
       setFormUsername('')
@@ -138,6 +167,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
       setFormAssignedSites([])
       setActiveTab('directory')
       await loadData()
+      refreshNextSupervisorId()
     } catch (err) {
       console.error(err)
       onNotify?.(err.message || 'Failed to create supervisor', 'error')
@@ -147,9 +177,10 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
   }
 
   const handleToggleStatus = async (sup) => {
+    const targetId = sup.SupervisorId || sup.supervisorId || sup.id
     const newStatus = !(sup.isActive !== false && sup.status !== 'Inactive')
     try {
-      await toggleSupervisorStatus(orgId, sup.id || sup.supervisorId, newStatus)
+      await toggleSupervisorStatus(orgId, targetId, newStatus)
       onNotify?.(
         `Supervisor "${sup.fullName || sup.FullName}" marked as ${newStatus ? 'Active' : 'Inactive'}`,
         'info'
@@ -173,6 +204,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
     e.preventDefault()
     if (!editingSupervisor || !orgId) return
 
+    const targetId = editingSupervisor.SupervisorId || editingSupervisor.supervisorId || editingSupervisor.id
     setSubmitting(true)
     try {
       const updates = {
@@ -184,7 +216,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
         updates.password = editNewPassword.trim()
       }
 
-      await updateSupervisor(orgId, editingSupervisor.id || editingSupervisor.supervisorId, updates)
+      await updateSupervisor(orgId, targetId, updates)
       onNotify?.('Supervisor details updated', 'success')
       setEditingSupervisor(null)
       await loadData()
@@ -199,13 +231,18 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
   // Filtered supervisors
   const filteredSupervisors = useMemo(() => {
     return supervisors.filter((sup) => {
+      const supId = (sup.SupervisorId || sup.supervisorId || sup.id || '').toLowerCase()
       const name = (sup.fullName || sup.FullName || sup.name || '').toLowerCase()
       const uname = (sup.username || sup.UserName || '').toLowerCase()
       const phone = (sup.phone || sup.ContactNo || '').toLowerCase()
+      const q = searchQuery.toLowerCase().trim()
+
       const matchesSearch =
-        name.includes(searchQuery.toLowerCase()) ||
-        uname.includes(searchQuery.toLowerCase()) ||
-        phone.includes(searchQuery.toLowerCase())
+        !q ||
+        supId.includes(q) ||
+        name.includes(q) ||
+        uname.includes(q) ||
+        phone.includes(q)
 
       const isActive = sup.isActive !== false && sup.status !== 'Inactive'
       const matchesStatus =
@@ -227,7 +264,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
           </div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Supervisor Configuration</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Provision site supervisors with secure mobile credentials and manage their field active statuses.
+            Provision site supervisors with sequential IDs (SUP001, SUP002...) and manage mobile login credentials.
           </p>
         </div>
 
@@ -236,10 +273,10 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
           <button
             onClick={() => setActiveTab('directory')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-              activeTab === 'directory' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              activeTab === 'directory' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Users className="w-4 h-4 text-slate-500" />
+            <Users className={`w-4 h-4 ${activeTab === 'directory' ? 'text-white' : 'text-slate-500'}`} />
             <span>Staff Directory ({supervisors.length})</span>
           </button>
           <button
@@ -248,7 +285,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
               activeTab === 'create' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <UserPlus className="w-4 h-4" />
+            <UserPlus className={`w-4 h-4 ${activeTab === 'create' ? 'text-white' : 'text-slate-500'}`} />
             <span>Create Supervisor</span>
           </button>
         </div>
@@ -264,8 +301,38 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
             <div>
               <h2 className="text-lg font-bold text-slate-900">Provision New Supervisor Account</h2>
               <p className="text-xs text-slate-500">
-                Supervisor can use these credentials to sign in directly on the mobile app.
+                Supervisor will use these credentials to sign in directly on the mobile app.
               </p>
+            </div>
+          </div>
+
+          {/* Assigned Supervisor ID Banner */}
+          <div className="p-4 mb-6 bg-gradient-to-r from-blue-50/90 to-indigo-50/70 border border-blue-200/90 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-[#0B3470] text-white flex items-center justify-center font-mono font-bold text-sm shadow-xs">
+                ID
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                    Assigned Supervisor ID
+                  </span>
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100/90 border border-emerald-300/60 px-2 py-0.5 rounded-full">
+                    Sequential Format (SUP###)
+                  </span>
+                </div>
+                <p className="font-mono text-xl font-extrabold text-[#0B3470] tracking-wide mt-0.5">
+                  {loadingNextId ? 'Determining next ID...' : nextSupervisorId}
+                </p>
+              </div>
+            </div>
+            <div className="text-left sm:text-right text-xs bg-white/90 px-3.5 py-2 rounded-xl border border-blue-200/60 shadow-2xs">
+              <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">
+                Firestore Document ID
+              </span>
+              <span className="font-mono font-bold text-slate-800 text-xs">
+                {loadingNextId ? '...' : nextSupervisorId}
+              </span>
             </div>
           </div>
 
@@ -280,6 +347,23 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Supervisor ID (Auto Generated)
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    disabled
+                    value={nextSupervisorId}
+                    className="w-full px-3.5 py-2.5 text-sm bg-slate-100/80 border border-slate-200 rounded-xl text-[#0B3470] font-mono font-bold cursor-not-allowed select-none"
+                  />
+                  <span className="text-[10px] font-semibold text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 font-mono">
+                    Doc ID
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
                   Full Name *
                 </label>
                 <input
@@ -291,7 +375,9 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
                   className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20"
                 />
               </div>
+            </div>
 
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
                   Mobile Login Username *
@@ -310,9 +396,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
                   )}
                 </div>
               </div>
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
                   Contact Phone Number *
@@ -329,7 +413,9 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
                   />
                 </div>
               </div>
+            </div>
 
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
                   Email Address (Optional)
@@ -345,9 +431,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
                   />
                 </div>
               </div>
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
                   Mobile Login Password *
@@ -372,23 +456,23 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
                   </button>
                 </div>
               </div>
+            </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Designation / Role
-                </label>
-                <select
-                  value={formDesignation}
-                  onChange={(e) => setFormDesignation(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20"
-                >
-                  <option value="Site Supervisor">Site Supervisor</option>
-                  <option value="Senior Civil Supervisor">Senior Civil Supervisor</option>
-                  <option value="Junior Site Engineer">Junior Site Engineer</option>
-                  <option value="MEP Field Supervisor">MEP Field Supervisor</option>
-                  <option value="General Foreman">General Foreman</option>
-                </select>
-              </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                Designation / Role
+              </label>
+              <select
+                value={formDesignation}
+                onChange={(e) => setFormDesignation(e.target.value)}
+                className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20"
+              >
+                <option value="Site Supervisor">Site Supervisor</option>
+                <option value="Senior Civil Supervisor">Senior Civil Supervisor</option>
+                <option value="Junior Site Engineer">Junior Site Engineer</option>
+                <option value="MEP Field Supervisor">MEP Field Supervisor</option>
+                <option value="General Foreman">General Foreman</option>
+              </select>
             </div>
 
             {/* Assigned Sites Multi-Select */}
@@ -442,7 +526,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
                 disabled={submitting || Boolean(uniquenessError)}
                 className="px-6 py-2.5 bg-[#0B3470] hover:bg-[#082855] text-white text-sm font-semibold rounded-xl transition-all shadow-xs disabled:opacity-50 cursor-pointer"
               >
-                {submitting ? 'Creating Profile...' : 'Save & Issue Mobile Account'}
+                {submitting ? 'Creating Profile...' : `Save & Issue Account (${nextSupervisorId})`}
               </button>
             </div>
           </form>
@@ -460,7 +544,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search staff by name, phone, user..."
+                placeholder="Search by ID (e.g. SUP001), name, phone..."
                 className="w-full pl-9 pr-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20"
               />
             </div>
@@ -496,6 +580,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-50/75 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                      <th className="py-3.5 px-4">Supervisor ID</th>
                       <th className="py-3.5 px-4">Supervisor Profile</th>
                       <th className="py-3.5 px-4">Credentials & Contact</th>
                       <th className="py-3.5 px-4">Assigned Sites</th>
@@ -507,9 +592,16 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
                     {filteredSupervisors.map((sup) => {
                       const isActive = sup.isActive !== false && sup.status !== 'Inactive'
                       const assigned = Array.isArray(sup.assignedSites) ? sup.assignedSites : []
+                      const supId = sup.SupervisorId || sup.supervisorId || sup.id
 
                       return (
-                        <tr key={sup.id || sup.supervisorId} className="hover:bg-slate-50/60 transition-colors">
+                        <tr key={supId} className="hover:bg-slate-50/60 transition-colors">
+                          <td className="py-3.5 px-4 whitespace-nowrap">
+                            <span className="inline-flex items-center px-2.5 py-1 rounded-lg font-mono text-xs font-bold text-[#0B3470] bg-blue-50/90 border border-blue-200/80 shadow-2xs">
+                              {supId}
+                            </span>
+                          </td>
+
                           <td className="py-3.5 px-4">
                             <div className="flex items-center gap-3">
                               <div className="w-9 h-9 rounded-xl bg-blue-100/70 text-blue-700 font-bold text-xs flex items-center justify-center">
@@ -609,9 +701,14 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
               <div>
-                <h3 className="text-base font-bold text-slate-900">
-                  Edit {editingSupervisor.fullName || editingSupervisor.FullName}
-                </h3>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-mono text-xs font-bold px-2 py-0.5 bg-blue-50 text-[#0B3470] rounded-md border border-blue-200">
+                    {editingSupervisor.SupervisorId || editingSupervisor.supervisorId || editingSupervisor.id}
+                  </span>
+                  <h3 className="text-base font-bold text-slate-900">
+                    {editingSupervisor.fullName || editingSupervisor.FullName}
+                  </h3>
+                </div>
                 <p className="text-xs text-slate-500 font-mono">@{editingSupervisor.username || editingSupervisor.UserName}</p>
               </div>
               <button onClick={() => setEditingSupervisor(null)} className="p-1 text-slate-400 hover:text-slate-600">

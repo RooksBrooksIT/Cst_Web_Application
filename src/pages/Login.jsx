@@ -179,15 +179,15 @@ export default function Login() {
                   onClick={() => handleTypeChange('Organization')}
                   className={`py-2.5 px-3 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
                     loginType === 'Organization'
-                      ? 'bg-white text-[#0B3470] shadow-sm font-bold border border-slate-200/80'
-                      : 'text-slate-600 hover:text-slate-900 font-medium hover:bg-white/60'
+                      ? 'bg-[#0B3470] text-white shadow-sm font-bold'
+                      : 'text-slate-600 hover:text-slate-900 font-medium'
                   }`}
                 >
                   <div className="flex items-center gap-1.5">
                     <span className="text-sm">🏢</span>
                     <span className="text-xs sm:text-sm font-bold">Organization</span>
                   </div>
-                  <span className={`text-[10px] leading-tight ${loginType === 'Organization' ? 'text-blue-600 font-semibold' : 'text-slate-400'}`}>
+                  <span className={`text-[10px] leading-tight ${loginType === 'Organization' ? 'text-blue-200 font-medium' : 'text-slate-400'}`}>
                     Admin Portal
                   </span>
                 </button>
@@ -197,15 +197,15 @@ export default function Login() {
                   onClick={() => handleTypeChange('Manager')}
                   className={`py-2.5 px-3 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
                     loginType === 'Manager'
-                      ? 'bg-white text-[#0B3470] shadow-sm font-bold border border-slate-200/80'
-                      : 'text-slate-600 hover:text-slate-900 font-medium hover:bg-white/60'
+                      ? 'bg-[#0B3470] text-white shadow-sm font-bold'
+                      : 'text-slate-600 hover:text-slate-900 font-medium'
                   }`}
                 >
                   <div className="flex items-center gap-1.5">
                     <span className="text-sm">👷</span>
                     <span className="text-xs sm:text-sm font-bold">Manager</span>
                   </div>
-                  <span className={`text-[10px] leading-tight ${loginType === 'Manager' ? 'text-blue-600 font-semibold' : 'text-slate-400'}`}>
+                  <span className={`text-[10px] leading-tight ${loginType === 'Manager' ? 'text-blue-200 font-medium' : 'text-slate-400'}`}>
                     Site Operations
                   </span>
                 </button>

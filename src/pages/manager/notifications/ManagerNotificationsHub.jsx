@@ -194,7 +194,7 @@ export default function ManagerNotificationsHub({
             className={`px-4 py-2 rounded-xl font-medium transition-all cursor-pointer ${
               filterType === tab.id
                 ? 'bg-[#0B3470] text-white shadow-xs'
-                : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                : 'text-slate-600 hover:text-slate-900 bg-transparent'
             }`}
           >
             {tab.label}

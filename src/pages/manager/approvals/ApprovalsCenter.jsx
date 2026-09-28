@@ -309,10 +309,10 @@ export default function ApprovalsCenter({
                   key={tab.id}
                   type="button"
                   onClick={() => setSubTab(tab.id)}
-                  className={`px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+                  className={`px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
                     active
-                      ? 'bg-white text-[#0B3470] shadow-xs border border-slate-200/80 -mb-px'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                      ? 'bg-[#0B3470] text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   {tab.label}

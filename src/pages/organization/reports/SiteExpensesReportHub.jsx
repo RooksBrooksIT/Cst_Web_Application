@@ -337,7 +337,7 @@ export default function SiteExpensesReportHub({
                 className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                   activeSubTab === tab.id
                     ? 'bg-[#0B3470] text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                    : 'text-slate-600 hover:text-slate-900 bg-transparent'
                 }`}
               >
                 <span>{tab.icon}</span>

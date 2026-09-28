@@ -458,7 +458,7 @@ export default function MasterConfigurations({ orgId, onNotify }) {
               type="button"
               onClick={() => setViewMode('tabs')}
               className={`p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer ${
-                viewMode === 'tabs' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                viewMode === 'tabs' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
               title="Tabbed view"
             >
@@ -469,7 +469,7 @@ export default function MasterConfigurations({ orgId, onNotify }) {
               type="button"
               onClick={() => setViewMode('cards')}
               className={`p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer ${
-                viewMode === 'cards' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                viewMode === 'cards' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
               title="5-Pillar Grid view"
             >
@@ -495,7 +495,7 @@ export default function MasterConfigurations({ orgId, onNotify }) {
                   className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl font-medium text-sm transition-all whitespace-nowrap cursor-pointer ${
                     isActive
                       ? 'bg-[#0B3470] text-white shadow-xs'
-                      : 'bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900 border border-slate-200/80'
+                      : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-400'}`} />

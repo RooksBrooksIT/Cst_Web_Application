@@ -574,7 +574,7 @@ export default function OrgFinancePage({
                 onClick={() => setViewMode('table')}
                 className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   viewMode === 'table'
-                    ? 'bg-white text-[#0B3470] shadow-xs'
+                    ? 'bg-[#0B3470] text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
                 title="Desktop Table View"
@@ -586,7 +586,7 @@ export default function OrgFinancePage({
                 onClick={() => setViewMode('grid')}
                 className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   viewMode === 'grid'
-                    ? 'bg-white text-[#0B3470] shadow-xs'
+                    ? 'bg-[#0B3470] text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
                 title="Grid Cards View"
@@ -634,7 +634,7 @@ export default function OrgFinancePage({
                 className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
                   isActive
                     ? 'bg-[#0B3470] text-white shadow-2xs font-bold'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
+                    : 'text-slate-600 hover:text-slate-900 bg-transparent'
                 }`}
               >
                 {tab.label}

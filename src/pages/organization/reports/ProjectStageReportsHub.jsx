@@ -164,7 +164,7 @@ export default function ProjectStageReportsHub({
                 className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
                   selectedStage === stg
                     ? 'bg-[#0B3470] text-white shadow-xs'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
+                    : 'text-slate-600 hover:text-slate-900 bg-transparent'
                 }`}
               >
                 {stg}
@@ -224,7 +224,7 @@ export default function ProjectStageReportsHub({
           type="button"
           onClick={() => setActiveSubTab('summary')}
           className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-            activeSubTab === 'summary' ? 'bg-[#0B3470] text-white shadow-xs' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+            activeSubTab === 'summary' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900 bg-transparent'
           }`}
         >
           Stage Summary by Site
@@ -233,7 +233,7 @@ export default function ProjectStageReportsHub({
           type="button"
           onClick={() => setActiveSubTab('detail')}
           className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-            activeSubTab === 'detail' ? 'bg-[#0B3470] text-white shadow-xs' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+            activeSubTab === 'detail' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900 bg-transparent'
           }`}
         >
           Itemized Stage Expenses

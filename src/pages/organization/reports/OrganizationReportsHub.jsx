@@ -352,7 +352,7 @@ export default function OrganizationReportsHub(props) {
                 className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-2 ${
                   isActive
                     ? 'bg-[#0B3470] text-white shadow-xs'
-                    : 'bg-slate-50 text-slate-600 hover:bg-slate-100 hover:text-slate-900 border border-slate-100'
+                    : 'text-slate-600 hover:text-slate-900 bg-transparent'
                 }`}
               >
                 <span>{cat.icon}</span>
@@ -376,8 +376,8 @@ export default function OrganizationReportsHub(props) {
                 onClick={() => handleSubReportChange(sub.id)}
                 className={`px-3 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
                   isSubActive
-                    ? 'bg-blue-50 text-blue-800 border border-blue-200 font-bold'
-                    : 'text-slate-600 hover:bg-slate-100'
+                    ? 'bg-[#0B3470] text-white shadow-xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900 bg-transparent'
                 }`}
               >
                 {sub.label}

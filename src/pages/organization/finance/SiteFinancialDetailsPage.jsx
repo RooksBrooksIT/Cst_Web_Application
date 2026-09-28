@@ -465,7 +465,7 @@ export default function SiteFinancialDetailsPage({
 
       {/* 6. Standard Web Tabbed Interface */}
       <div className="space-y-4">
-        <div className="flex border-b border-slate-200 gap-2 overflow-x-auto">
+        <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl overflow-x-auto w-fit">
           {[
             { id: 'summary', label: 'Financial Health & Breakdown', icon: '📊' },
             { id: 'income', label: `Client Inflow Payments (${sitePaymentItems.length})`, icon: '💵' },
@@ -475,10 +475,10 @@ export default function SiteFinancialDetailsPage({
               key={t.id}
               type="button"
               onClick={() => setActiveTab(t.id)}
-              className={`px-4 py-3 text-xs font-bold flex items-center gap-2 border-b-2 transition-all whitespace-nowrap cursor-pointer ${
+              className={`px-3.5 py-2 text-xs font-bold flex items-center gap-2 rounded-lg transition-all whitespace-nowrap cursor-pointer ${
                 activeTab === t.id
-                  ? 'border-[#0B3470] text-[#0B3470] bg-blue-50/50'
-                  : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
+                  ? 'bg-[#0B3470] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 bg-transparent'
               }`}
             >
               <span>{t.icon}</span>

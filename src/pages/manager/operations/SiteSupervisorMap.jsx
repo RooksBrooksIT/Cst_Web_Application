@@ -73,7 +73,9 @@ export default function SiteSupervisorMap({ orgId, sites = [], currentUser, onNo
     setSubmitting(true)
     try {
       const site = sites.find((s) => s.id === formSiteId)
-      const sup = supervisors.find((s) => (s.id || s.supervisorId) === formSupervisorId)
+      const sup = supervisors.find(
+        (s) => (s.SupervisorId || s.supervisorId || s.id) === formSupervisorId
+      )
 
       await mapSupervisorToSite(
         orgId,
@@ -127,11 +129,15 @@ export default function SiteSupervisorMap({ orgId, sites = [], currentUser, onNo
     return mappings.filter((m) => {
       const siteName = (m.siteName || m.projectName || '').toLowerCase()
       const supName = (m.supervisorName || m.supervisor || '').toLowerCase()
+      const supId = (m.SupervisorId || m.supervisorId || m['Supervisor ID'] || '').toLowerCase()
       const stage = (m.projectStage || '').toLowerCase()
+      const q = searchQuery.toLowerCase().trim()
       const matchesSearch =
-        siteName.includes(searchQuery.toLowerCase()) ||
-        supName.includes(searchQuery.toLowerCase()) ||
-        stage.includes(searchQuery.toLowerCase())
+        !q ||
+        siteName.includes(q) ||
+        supName.includes(q) ||
+        supId.includes(q) ||
+        stage.includes(q)
 
       const matchesSite = selectedSiteFilter === 'ALL' || m.siteId === selectedSiteFilter
 
@@ -157,7 +163,10 @@ export default function SiteSupervisorMap({ orgId, sites = [], currentUser, onNo
         <button
           onClick={() => {
             if (sites.length > 0 && !formSiteId) setFormSiteId(sites[0].id)
-            if (supervisors.length > 0 && !formSupervisorId) setFormSupervisorId(supervisors[0].id || supervisors[0].supervisorId)
+            if (supervisors.length > 0 && !formSupervisorId)
+              setFormSupervisorId(
+                supervisors[0].SupervisorId || supervisors[0].supervisorId || supervisors[0].id
+              )
             setShowAddModal(true)
           }}
           className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-[#0B3470] hover:bg-[#082855] text-white text-sm font-semibold rounded-xl transition-all shadow-xs cursor-pointer"
@@ -243,9 +252,18 @@ export default function SiteSupervisorMap({ orgId, sites = [], currentUser, onNo
                         <div className="w-7 h-7 rounded-full bg-emerald-100 text-emerald-700 font-bold text-xs flex items-center justify-center">
                           <UserCheck className="w-3.5 h-3.5" />
                         </div>
-                        <span className="font-medium text-slate-800">
-                          {item.supervisorName || item.supervisor}
-                        </span>
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-medium text-slate-800">
+                              {item.supervisorName || item.supervisor}
+                            </span>
+                            {(item.SupervisorId || item.supervisorId || item['Supervisor ID']) && (
+                              <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-[#0B3470] border border-blue-200">
+                                {item.SupervisorId || item.supervisorId || item['Supervisor ID']}
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     </td>
 
@@ -322,11 +340,14 @@ export default function SiteSupervisorMap({ orgId, sites = [], currentUser, onNo
                   className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20"
                 >
                   <option value="">Select Supervisor...</option>
-                  {supervisors.map((sup) => (
-                    <option key={sup.id || sup.supervisorId} value={sup.id || sup.supervisorId}>
-                      {sup.fullName || sup.FullName || sup.name} (@{sup.username || sup.UserName})
-                    </option>
-                  ))}
+                  {supervisors.map((sup) => {
+                    const sId = sup.SupervisorId || sup.supervisorId || sup.id
+                    return (
+                      <option key={sId} value={sId}>
+                        [{sId}] {sup.fullName || sup.FullName || sup.name} (@{sup.username || sup.UserName})
+                      </option>
+                    )
+                  })}
                 </select>
               </div>
 

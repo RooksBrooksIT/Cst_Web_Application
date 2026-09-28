@@ -21,8 +21,9 @@ import OrgFinancePage from './finance/OrgFinancePage'
 import SiteFinancialDetailsPage from './finance/SiteFinancialDetailsPage'
 import PettyCashGovernance from './pettycash/PettyCashGovernance'
 import OrganizationApprovalsCenter from './approvals/OrganizationApprovalsCenter'
+import TeamManagement from './team/TeamManagement'
 
-export { OrgFinancePage, SiteFinancialDetailsPage, PettyCashGovernance, OrganizationApprovalsCenter }
+export { OrgFinancePage, SiteFinancialDetailsPage, PettyCashGovernance, OrganizationApprovalsCenter, TeamManagement }
 
 function displayValue(record, fields, fallback = 'Not available') {
   return fields.map((field) => record?.[field]).find((item) => item !== undefined && item !== null && item !== '') ?? fallback
@@ -693,190 +694,8 @@ export function MaterialCatalogManagement({ materials = [] }) {
 
 // ------------------------------------------------------------------------------------------------
 // 5. TEAM & USER GOVERNANCE
+// Handled by enterprise TeamManagement component in ./team/TeamManagement
 // ------------------------------------------------------------------------------------------------
-export function TeamManagement({ managers = [], sites = [] }) {
-  const { orgId } = useAuth()
-  const [search, setSearch] = useState('')
-  const [isInviteOpen, setIsInviteOpen] = useState(false)
-  const [inviteResult, setInviteResult] = useState(null)
-  const [saving, setSaving] = useState(false)
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    phone: '',
-    role: 'manager',
-    assignedProjects: [],
-  })
-
-  async function handleInvite(e) {
-    e.preventDefault()
-    if (!orgId) return
-    setSaving(true)
-    try {
-      const res = await createInvitationCode(orgId, formData)
-      setInviteResult(res)
-    } catch (err) {
-      alert('Error creating invite: ' + err.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const columns = [
-    {
-      header: 'Staff Name',
-      accessor: 'fullName',
-      render: (row) => (
-        <div>
-          <strong className="block text-slate-900">{row.fullName || row.FullName || row.name || row.userName || 'Team Member'}</strong>
-          <small className="text-slate-400 font-mono">{row.id}</small>
-        </div>
-      ),
-    },
-    {
-      header: 'Email / Contact',
-      accessor: 'email',
-      render: (row) => (
-        <div>
-          <span className="block text-slate-800">{row.email || row.Email || 'No email registered'}</span>
-          <small className="text-slate-500">{row.phone || row.phoneNumber || row.ContactNo || ''}</small>
-        </div>
-      ),
-    },
-    {
-      header: 'Assigned Role',
-      accessor: 'role',
-      align: 'center',
-      render: (row) => <StatusBadge status={row.role || row.Designation || 'Operations Manager'} />,
-    },
-    {
-      header: 'Status',
-      accessor: 'status',
-      align: 'center',
-      render: (row) => <StatusBadge status={row.status || 'Active'} />,
-    },
-  ]
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <p className="text-xs font-bold text-blue-600 uppercase tracking-widest">Organization / Team Governance</p>
-          <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Staff, Managers & Field Roles</h1>
-          <p className="text-xs text-slate-500 mt-1">Manage corporate personnel, site assignments, and referral onboarding links.</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            setInviteResult(null)
-            setIsInviteOpen(true)
-          }}
-          className="px-4 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white shadow-xs transition-colors"
-        >
-          ＋ Invite Team Member
-        </button>
-      </div>
-
-      <FilterBar
-        searchQuery={search}
-        onSearchChange={setSearch}
-        placeholder="Search team members by name, email, role..."
-      />
-
-      <DataTable
-        columns={columns}
-        data={managers}
-        searchQuery={search}
-        searchFields={['fullName', 'FullName', 'name', 'userName', 'email', 'Email', 'role']}
-        emptyMessage="No team members listed. Click 'Invite Team Member' to onboard staff."
-      />
-
-      <Modal isOpen={isInviteOpen} onClose={() => setIsInviteOpen(false)} title="Generate Referral Onboarding Invitation">
-        {inviteResult ? (
-          <div className="space-y-4 text-center py-4">
-            <div className="w-12 h-12 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center mx-auto text-xl font-bold">
-              ✓
-            </div>
-            <h3 className="text-sm font-bold text-slate-900">Invitation Code Generated Successfully!</h3>
-            <p className="text-xs text-slate-600">Share this 8-digit referral code with the invited member to join during registration:</p>
-            <div className="p-3 bg-slate-100 rounded-xl font-mono text-xl font-extrabold text-blue-800 tracking-widest select-all">
-              {inviteResult.code}
-            </div>
-            <button
-              type="button"
-              onClick={() => setIsInviteOpen(false)}
-              className="w-full py-2.5 rounded-xl font-bold bg-[#0B3470] text-white text-xs"
-            >
-              Done
-            </button>
-          </div>
-        ) : (
-          <form onSubmit={handleInvite} className="space-y-4">
-            <label className="block text-xs font-medium text-slate-700">
-              Staff Member Name *
-              <input
-                required
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="e.g. Ramesh K. Sharma"
-                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
-              />
-            </label>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block text-xs font-medium text-slate-700">
-                Official Email
-                <input
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  placeholder="ramesh@ebricks.com"
-                  className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
-                />
-              </label>
-              <label className="block text-xs font-medium text-slate-700">
-                Contact Phone
-                <input
-                  value={formData.phone}
-                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                  placeholder="+91 9876543210"
-                  className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
-                />
-              </label>
-            </div>
-            <label className="block text-xs font-medium text-slate-700">
-              System Role
-              <select
-                value={formData.role}
-                onChange={(e) => setFormData({ ...formData, role: e.target.value })}
-                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
-              >
-                <option value="manager">Operations / Project Manager</option>
-                <option value="supervisor">Site Supervisor</option>
-                <option value="customer">Client / Customer</option>
-              </select>
-            </label>
-            <div className="flex gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setIsInviteOpen(false)}
-                className="w-1/2 py-2.5 rounded-xl font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={saving}
-                className="w-1/2 py-2.5 rounded-xl font-bold bg-[#0B3470] hover:bg-blue-800 text-white text-xs shadow-sm transition-colors"
-              >
-                {saving ? 'Generating...' : '✓ Generate Code'}
-              </button>
-            </div>
-          </form>
-        )}
-      </Modal>
-    </div>
-  )
-}
 
 // ------------------------------------------------------------------------------------------------
 // 6. PETTY CASH GOVERNANCE
@@ -991,7 +810,17 @@ export default function OrganizationModule(props) {
       return <MaterialCatalogManagement materials={props.materials || props.inventory} />
     case 'team':
     case 'users':
-      return <TeamManagement managers={props.managers} sites={props.sites} />
+    case 'staff':
+    case 'workforce':
+      return (
+        <TeamManagement
+          managers={props.managers}
+          supervisors={props.supervisors}
+          workers={props.workers}
+          sites={props.sites}
+          projects={props.projects}
+        />
+      )
     case 'approvals':
     case 'approval':
     case 'authorizations':
