@@ -22,6 +22,7 @@ import SiteFinancialDetailsPage from './finance/SiteFinancialDetailsPage'
 import PettyCashGovernance from './pettycash/PettyCashGovernance'
 import OrganizationApprovalsCenter from './approvals/OrganizationApprovalsCenter'
 import TeamManagement from './team/TeamManagement'
+import OrganizationInventoryHub from './inventory/OrganizationInventoryHub'
 
 export { OrgFinancePage, SiteFinancialDetailsPage, PettyCashGovernance, OrganizationApprovalsCenter, TeamManagement }
 
@@ -303,13 +304,6 @@ export function SiteManagement({ sites = [], managers = [], loading, error }) {
             ])}
             title="Projects Portfolio Master"
           />
-          <button
-            type="button"
-            onClick={handleOpenCreate}
-            className="px-4 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white shadow-xs transition-colors"
-          >
-            ＋ Add Project Site
-          </button>
         </div>
       </div>
 
@@ -331,7 +325,7 @@ export function SiteManagement({ sites = [], managers = [], loading, error }) {
         data={filteredSites}
         searchQuery={search}
         searchFields={['name', 'projectName', 'code', 'siteCode', 'clientName', 'siteLocation']}
-        emptyMessage="No construction projects registered. Click 'Add Project Site' to create one."
+        emptyMessage="No construction projects registered."
       />
 
       {/* Project Modal */}
@@ -807,7 +801,10 @@ export default function OrganizationModule(props) {
       return <SiteManagement sites={props.sites} managers={props.managers} loading={props.loading} error={props.error} />
     case 'materials':
     case 'inventory':
-      return <MaterialCatalogManagement materials={props.materials || props.inventory} />
+    case 'tools':
+    case 'assets':
+    case 'equipment':
+      return <OrganizationInventoryHub {...props} />
     case 'team':
     case 'users':
     case 'staff':

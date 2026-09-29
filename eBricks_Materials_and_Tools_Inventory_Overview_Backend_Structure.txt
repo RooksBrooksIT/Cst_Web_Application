@@ -1,0 +1,411 @@
+================================================================================
+EBRICKS WEB APPLICATION - MATERIALS & TOOLS INVENTORY OVERVIEW BACKEND STRUCTURE
+================================================================================
+Application: eBricks White Label Construction Management System
+Module Target: Organization Module -> Inventory & Assets Hub (/organization/inventory)
+Role Target: Organization Admin, HQ Management, Financial Controllers & Warehouse Managers
+Date: September 28, 2026
+Version: 1.0 (Canonical Inventory & Assets Overview Page Specification)
+================================================================================
+
+1. EXECUTIVE OVERVIEW & PAGE ARCHITECTURE
+--------------------------------------------------------------------------------
+The Inventory & Assets Overview Page (/organization/inventory) serves as the 
+executive control center for all materials, equipment, tools, and site allocations 
+across the enterprise. It consolidates real-time stock levels, asset statuses, 
+low-stock warnings, pending transfer requisitions, and overall stock valuations into 
+a unified, high-performance web dashboard.
+
+Key Design Principles:
+  1. Multi-Tenant Organization Isolation:
+     All queries strictly execute under `/organisation/{orgId}/data/{collectionName}`.
+
+  2. Unified Inventory & Assets Portal:
+     Combines Consumable Materials tracking and Non-Consumable Tools/Machinery tracking 
+     into a single navigation entity (`Inventory & Assets`).
+
+  3. Single-Source Hierarchy Integration:
+     Organization HQ Central Warehouse ➔ Construction Sites (`siteId`) ➔ Project Stages (`projectId`).
+
+  4. Real-Time Aggregation & Alerts:
+     Leverages Firestore reactive subscriptions to immediately reflect inventory 
+     movements, low stock warnings, and transit statuses.
+
+--------------------------------------------------------------------------------
+2. OVERVIEW PAGE KPI CARDS & DATA METRICS
+--------------------------------------------------------------------------------
+
+The top section of the Overview Page renders 8 high-level Executive Summary Cards:
+
+  +--------------------------------------------------------------------------+
+  | CARD 1: Total Inventory Stock Value (₹)                                 |
+  | Formula: Sum(HQ Material Value) + Sum(All Sites Material Value)          |
+  | Query  : /organisation/{orgId}/data/materialsAvailability               |
+  | Logic  : Sum(availableQuantity * unitPrice) across all location records  |
+  +--------------------------------------------------------------------------+
+
+  +--------------------------------------------------------------------------+
+  | CARD 2: Total HQ Central Warehouse Stock Value (₹)                      |
+  | Query  : /organisation/{orgId}/data/materialsAvailability               |
+  | Filter : siteId == "HQ" || isCompanyWarehouse == true                   |
+  | Logic  : Sum(availableQuantity * unitPrice)                              |
+  +--------------------------------------------------------------------------+
+
+  +--------------------------------------------------------------------------+
+  | CARD 3: Low Stock Alert Items Count                                     |
+  | Query  : /organisation/{orgId}/data/materialsAvailability               |
+  | Filter : availableQuantity <= minReorderLevel                           |
+  | Badge  : Red Warning Badge highlighting urgent reorder items             |
+  +--------------------------------------------------------------------------+
+
+  +--------------------------------------------------------------------------+
+  | CARD 4: Total Owned Equipment & Machinery Assets Count                  |
+  | Query  : /organisation/{orgId}/data/tools                               |
+  | Filter : isSerialized == true || ownershipType == "OWNED"               |
+  | Logic  : Count of active equipment registry documents                    |
+  +--------------------------------------------------------------------------+
+
+  +--------------------------------------------------------------------------+
+  | CARD 5: Active Equipment Currently Deployed on Sites                    |
+  | Query  : /organisation/{orgId}/data/tools                               |
+  | Filter : status == "active_on_site" && currentLocationType == "SITE"    |
+  | Logic  : Count of machines currently operating across active sites       |
+  +--------------------------------------------------------------------------+
+
+  +--------------------------------------------------------------------------+
+  | CARD 6: Equipment Available at HQ Central Warehouse                      |
+  | Query  : /organisation/{orgId}/data/tools                               |
+  | Filter : status == "at_company_warehouse"                               |
+  | Logic  : Count of ready-to-allocate machines stored at HQ                |
+  +--------------------------------------------------------------------------+
+
+  +--------------------------------------------------------------------------+
+  | CARD 7: Tools & Equipment Under Maintenance / Repair                    |
+  | Query  : /organisation/{orgId}/data/tools                               |
+  | Filter : status == "under_maintenance" || condition == "DAMAGED"        |
+  | Badge  : Amber / Red Alert Badge for broken/servicing equipment          |
+  +--------------------------------------------------------------------------+
+
+  +--------------------------------------------------------------------------+
+  | CARD 8: Pending Requisitions & Transfers Awaiting Approval              |
+  | Query 1: /organisation/{orgId}/data/siteMaterialsRequest (status == "pending_org_approval")
+  | Query 2: /organisation/{orgId}/data/siteToolsRequest (status == "pending_org_approval")
+  | Logic  : Sum of pending requests requiring Organization HQ action        |
+  +--------------------------------------------------------------------------+
+
+--------------------------------------------------------------------------------
+3. PRIMARY FIRESTORE COLLECTIONS & BACKEND DATA STRUCTURE
+--------------------------------------------------------------------------------
+
+All collections are scoped under: `/organisation/{orgId}/data/{collection}`
+
+================================================================================
+COLLECTION 1: Master Materials Catalog
+Path: /organisation/{orgId}/data/materials/{materialId}
+Description: Global definitions for all material items managed by the Organization.
+================================================================================
+Fields & Data Schema:
+{
+  "materialId": "MAT_CEMENT_OPC53",              // String (Primary Key)
+  "materialName": "Cement OPC 53 Grade",         // String
+  "category": "Civil & Structural",             // String (Civil, Electrical, Plumbing, Finishing, Safety)
+  "subCategory": "Binding Materials",            // String
+  "unit": "bags",                               // String (bags, tons, kg, meters, nos, cu.m)
+  "unitPrice": 380.00,                          // Number (Standard Cost in INR)
+  "minReorderLevel": 100,                       // Number (Low stock trigger threshold)
+  "description": "50kg UltraTech OPC 53 Bag",    // String
+  "hsnCode": "2523",                            // String
+  "gstPercentage": 28.0,                        // Number
+  "isActive": true,                             // Boolean
+  "createdAt": "2026-01-10T10:00:00.000Z",      // ISO Date String
+  "updatedAt": "2026-09-28T11:00:00.000Z"       // ISO Date String
+}
+
+================================================================================
+COLLECTION 2: Material Stock & Availability Ledger (HQ & Sites)
+Path: /organisation/{orgId}/data/materialsAvailability/{docId}
+Doc ID Format: {materialId}_{siteId} (e.g. "MAT_CEMENT_OPC53_HQ", "MAT_CEMENT_OPC53_ST001")
+Description: Live stock balances for each material at HQ Warehouse and each Site.
+================================================================================
+Fields & Data Schema:
+{
+  "docId": "MAT_CEMENT_OPC53_ST001",             // String (Composite Key)
+  "materialId": "MAT_CEMENT_OPC53",             // String
+  "materialName": "Cement OPC 53 Grade",        // String
+  "siteId": "ST001",                            // String ("HQ" or site ID)
+  "siteName": "Pothys Villa Project Site",       // String
+  "isCompanyWarehouse": false,                  // Boolean (True for HQ Warehouse)
+  "unit": "bags",                               // String
+  "unitPrice": 380.00,                          // Number
+  "totalReceived": 500,                         // Number (Cumulative inward stock)
+  "consumedQuantity": 320,                      // Number (Consumed in work)
+  "transferredOutQuantity": 30,                 // Number (Transferred out)
+  "availableQuantity": 150,                     // Number (Current Available Stock = received - consumed - transferredOut)
+  "reservedQuantity": 0,                        // Number (Reserved for pending transfers)
+  "damagedQuantity": 0,                         // Number (Damaged / Wasted)
+  "minReorderLevel": 100,                       // Number
+  "stockValue": 57000.00,                       // Number (availableQuantity * unitPrice)
+  "lastRestockedAt": "2026-09-25T14:30:00.000Z",// ISO Date String
+  "updatedAt": "2026-09-28T09:15:00.000Z"        // ISO Date String
+}
+
+================================================================================
+COLLECTION 3: Master Tools & Equipment Registry
+Path: /organisation/{orgId}/data/tools/{toolId}
+Description: Master registry of all enterprise tools, machinery, and equipment.
+================================================================================
+Fields & Data Schema:
+{
+  "toolId": "TOOL_CONCRETE_MIXER_01",           // String (Primary Key)
+  "toolName": "10/7 Cu.Ft Diesel Concrete Mixer",// String
+  "category": "Heavy Machinery",                // String (Heavy Machinery, Power Tools, Hand Tools, Measurement)
+  "subCategory": "Concrete Equipment",          // String
+  "isSerialized": true,                         // Boolean (True for high-value machines with serial/asset tag)
+  "assetTagId": "EQ-CM-2024-03",                // String (Unique Barcode / Asset Tag)
+  "serialNumber": "CM-ENG-889412",              // String
+  "ownershipType": "OWNED",                     // String ("OWNED" vs "RENTED")
+  "vendorName": "L&T Construction Equipment",   // String
+  "purchasePrice": 185000.00,                   // Number
+  "dailyRentalRate": 1200.00,                   // Number
+  "currentLocationType": "SITE",                // String ("COMPANY_WAREHOUSE", "SITE", "REPAIR_CENTER")
+  "currentSiteId": "ST001",                     // String
+  "currentSiteName": "Pothys Villa Project Site",// String
+  "assignedProjectId": "PR001_Pothys",          // String
+  "assignedSupervisorId": "SUP001",             // String
+  "status": "active_on_site",                   // String ("at_company_warehouse", "in_transit", "active_on_site", "under_maintenance", "damaged")
+  "condition": "OPERATIONAL",                   // String ("OPERATIONAL", "SERVICING_REQUIRED", "DAMAGED")
+  "lastServicedDate": "2026-08-15",             // Date String (YYYY-MM-DD)
+  "nextServiceDueDate": "2026-11-15",           // Date String (YYYY-MM-DD)
+  "createdAt": "2026-01-15T10:00:00.000Z",      // ISO Date String
+  "updatedAt": "2026-09-28T09:00:00.000Z"       // ISO Date String
+}
+
+================================================================================
+COLLECTION 4: Tools Inventory & Site Quantity Balance Ledger
+Path: /organisation/{orgId}/data/toolsInventory/{docId}
+Doc ID Format: {toolId}_{locationId} (e.g. "TOOL_HAMMER_5KG_HQ", "TOOL_HAMMER_5KG_ST001")
+Description: Location-wise count balances for non-serialized / bulk hand tools.
+================================================================================
+Fields & Data Schema:
+{
+  "docId": "TOOL_HAMMER_5KG_ST001",             // String (Composite Key)
+  "toolId": "TOOL_HAMMER_5KG",                  // String
+  "toolName": "5kg Heavy Duty Sledgehammer",    // String
+  "siteId": "ST001",                            // String
+  "siteName": "Pothys Villa Project Site",       // String
+  "isCompanyWarehouse": false,                  // Boolean
+  "isSerialized": false,                        // Boolean
+  "totalQuantity": 15,                          // Number (Total count at location)
+  "activeQuantity": 12,                         // Number (In active use)
+  "maintenanceQuantity": 2,                     // Number (In local repair)
+  "damagedQuantity": 1,                         // Number (Decommissioned)
+  "updatedAt": "2026-09-28T09:00:00.000Z"        // ISO Date String
+}
+
+================================================================================
+COLLECTION 5: Material & Tool Transfer Manifests
+Path: /organisation/{orgId}/data/materialTransfer/{transferId}
+Path: /organisation/{orgId}/data/toolsMovement/{movementId}
+Description: Dispatch and transit tracking documents between HQ and Sites.
+================================================================================
+Fields & Data Schema:
+{
+  "transferId": "MTRF_20260928_099",             // String (Primary Key)
+  "requestId": "MREQ_20260928_001",             // String (Linked Requisition ID)
+  "transferType": "HQ_TO_SITE",                // String ("HQ_TO_SITE", "SITE_TO_SITE", "SITE_TO_HQ")
+  "fromSiteId": "HQ",                           // String
+  "fromSiteName": "Company Central Warehouse",  // String
+  "toSiteId": "ST001",                          // String
+  "toSiteName": "Pothys Villa Project Site",    // String
+  "toProjectId": "PR001_Pothys",                // String
+  "itemId": "MAT_CEMENT_OPC53",                 // String
+  "itemName": "Cement OPC 53 Grade",            // String
+  "itemType": "MATERIAL",                       // String ("MATERIAL" vs "TOOL")
+  "quantityTransferred": 100,                   // Number
+  "quantityReceived": 100,                      // Number
+  "shortageQuantity": 0,                        // Number
+  "unit": "bags",                               // String
+  "totalValue": 38000.00,                       // Number
+  "vehicleNumber": "TN 38 CX 4589",             // String
+  "driverName": "Murugan K",                    // String
+  "gatePassId": "GP_88412",                     // String
+  "dispatchedBy": "Warehouse Mgr Ramesh",       // String
+  "dispatchedAt": "2026-09-28T09:30:00.000Z",    // ISO Date String
+  "receivedBy": "John Supervisor",              // String
+  "receivedAt": "2026-09-28T10:30:00.000Z",        // ISO Date String
+  "status": "COMPLETED",                        // String ("IN_TRANSIT", "COMPLETED", "DISCREPANCY")
+  "createdAt": "2026-09-28T09:30:00.000Z"        // ISO Date String
+}
+
+================================================================================
+COLLECTION 6: Inventory Audit & Movement History
+Path: /organisation/{orgId}/data/materialmovementhistory/{historyId}
+Description: Immutable real-time ledger of all stock transactions and consumption logs.
+================================================================================
+Fields & Data Schema:
+{
+  "historyId": "MMH_20260928_7741",              // String (Primary Key)
+  "itemId": "MAT_CEMENT_OPC53",                 // String
+  "itemName": "Cement OPC 53 Grade",            // String
+  "itemType": "MATERIAL",                       // String ("MATERIAL" vs "TOOL")
+  "movementType": "SITE_CONSUMPTION",          // String ("PURCHASE_INWARD", "DISPATCH_OUTWARD", "SITE_RECEIPT", "SITE_CONSUMPTION", "RETURN_INWARD", "WASTAGE_WRITE_OFF")
+  "siteId": "ST001",                            // String
+  "projectId": "PR001_Pothys",                  // String
+  "projectStage": "Framing",                    // String
+  "quantity": 20,                               // Number
+  "previousAvailableStock": 170,                // Number
+  "newAvailableStock": 150,                     // Number
+  "performedByName": "John Supervisor",         // String
+  "performedByRole": "Supervisor",              // String
+  "timestamp": "2026-09-28T11:00:00.000Z"        // ISO Date String
+}
+
+--------------------------------------------------------------------------------
+4. OVERVIEW PAGE TAB SECTIONS & BACKEND QUERY MAPPING
+--------------------------------------------------------------------------------
+
+The Overview Page UI is structured into 4 Primary View Tabs:
+
+[TAB 1: MATERIALS STOCK OVERVIEW & WAREHOUSE MATRIX]
+  - Displays: Material Catalog Table, Company Warehouse Balance, Site Stock Balances, Low Stock Warning Badges.
+  - Queries:
+      a) Fetch All Materials Master Catalog:
+         Collection: `/organisation/{orgId}/data/materials`
+         Filter    : `where('isActive', '==', true)`
+      b) Fetch All Material Stock Ledger Entries:
+         Collection: `/organisation/{orgId}/data/materialsAvailability`
+         Filter    : Selected Site Filter (e.g. `siteId == selectedSiteId` or "All")
+
+[TAB 2: TOOLS & MACHINERY ASSET REGISTRY]
+  - Displays: Serialized Machinery Status Grid, Asset Tags, Current Site Location, Maintenance Due Dates, Rental vs Owned Breakdown.
+  - Queries:
+      a) Fetch All Equipment Master Records:
+         Collection: `/organisation/{orgId}/data/tools`
+         Filter    : Optional category / site / status filter
+      b) Fetch Bulk Tool Quantities:
+         Collection: `/organisation/{orgId}/data/toolsInventory`
+
+[TAB 3: REQUISITIONS & TRANSFER ALLOCATION HUB]
+  - Displays: Pending Supervisor Requests, Manager Clearance Queue, Active In-Transit Vehicles, Completed Transfer Manifests.
+  - Queries:
+      a) Material Requests:
+         Collection: `/organisation/{orgId}/data/siteMaterialsRequest`
+         Filter    : `orderBy('createdAt', 'desc')`
+      b) Tool Requests:
+         Collection: `/organisation/{orgId}/data/siteToolsRequest`
+         Filter    : `orderBy('createdAt', 'desc')`
+      c) Active In-Transit Movements:
+         Collection: `/organisation/{orgId}/data/materialTransfer`
+         Filter    : `where('status', '==', 'IN_TRANSIT')`
+
+[TAB 4: INVENTORY MOVEMENT AUDIT & HISTORY LEDGER]
+  - Displays: Real-time chronological transaction stream (Purchases, Dispatches, Receipts, Usage Logs).
+  - Query:
+      Collection: `/organisation/{orgId}/data/materialmovementhistory`
+      Filter    : `orderBy('timestamp', 'desc')`, `limit(50)`
+
+--------------------------------------------------------------------------------
+5. FRONTEND STATE MANAGEMENT & SERVICE CONTROLLER BLUEPRINT
+--------------------------------------------------------------------------------
+
+The Web Application service layer (`services/inventoryService.js`) implements the 
+following backend interface methods:
+
+```javascript
+// 1. Fetch Real-time Executive Overview KPIs
+export const subscribeInventoryOverviewKPIs = (orgId, onUpdate) => {
+  const materialsRef = collection(db, 'organisation', orgId, 'data', 'materialsAvailability');
+  const toolsRef = collection(db, 'organisation', orgId, 'data', 'tools');
+  const matReqRef = collection(db, 'organisation', orgId, 'data', 'siteMaterialsRequest');
+
+  // Reactively list stock & aggregate totals client-side for zero latency
+  return onSnapshot(materialsRef, (snapshot) => {
+    let totalStockValue = 0;
+    let hqStockValue = 0;
+    let lowStockCount = 0;
+
+    snapshot.docs.forEach((doc) => {
+      const data = doc.data();
+      const available = data.availableQuantity || 0;
+      const price = data.unitPrice || 0;
+      const minLevel = data.minReorderLevel || 0;
+
+      const itemVal = available * price;
+      totalStockValue += itemVal;
+
+      if (data.siteId === 'HQ' || data.isCompanyWarehouse) {
+        hqStockValue += itemVal;
+      }
+
+      if (available <= minLevel && minLevel > 0) {
+        lowStockCount++;
+      }
+    });
+
+    onUpdate({
+      totalStockValue,
+      hqStockValue,
+      lowStockCount
+    });
+  });
+};
+
+// 2. Fetch Low Stock Warning List
+export const fetchLowStockAlerts = async (orgId) => {
+  const ref = collection(db, 'organisation', orgId, 'data', 'materialsAvailability');
+  const snapshot = await getDocs(ref);
+  const alerts = [];
+  snapshot.forEach(doc => {
+    const data = doc.data();
+    if ((data.availableQuantity || 0) <= (data.minReorderLevel || 0)) {
+      alerts.push(data);
+    }
+  });
+  return alerts;
+};
+
+// 3. Fetch Equipment Status Distribution
+export const fetchEquipmentStatusSummary = async (orgId) => {
+  const ref = collection(db, 'organisation', orgId, 'data', 'tools');
+  const snapshot = await getDocs(ref);
+  const summary = {
+    totalCount: 0,
+    atWarehouse: 0,
+    activeOnSite: 0,
+    underMaintenance: 0
+  };
+
+  snapshot.forEach(doc => {
+    const data = doc.data();
+    summary.totalCount++;
+    if (data.status === 'at_company_warehouse') summary.atWarehouse++;
+    if (data.status === 'active_on_site') summary.activeOnSite++;
+    if (data.status === 'under_maintenance' || data.condition === 'DAMAGED') summary.underMaintenance++;
+  });
+
+  return summary;
+};
+```
+
+--------------------------------------------------------------------------------
+6. SUMMARY & IMPLEMENTATION CHECKLIST
+--------------------------------------------------------------------------------
+
+[ ] 1. Navigation Alignment:
+    - Updated navigation menu in `Dashboard.jsx` to render single unified entry:
+      `['Inventory & Assets', '/organization/inventory', '📦']`.
+
+[ ] 2. Firestore Collections & Indexes:
+    - Verify composite indexes for `/organisation/{orgId}/data/materialsAvailability` 
+      (`siteId` ASC, `availableQuantity` ASC).
+    - Verify composite indexes for `/organisation/{orgId}/data/tools` 
+      (`status` ASC, `currentLocationType` ASC).
+
+[ ] 3. Dashboard Integration:
+    - Render 8 KPI tiles at top of `/organization/inventory`.
+    - Provide 4 tab views (Materials Ledger, Tools Registry, Transfers Hub, Audit Logs).
+    - Implement real-time `onSnapshot` subscriptions for zero-lag stock updates.
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

@@ -96,32 +96,27 @@ function ProgressBar({ percent }) {
   )
 }
 
-function MetricCard({ title, value: metricValue, detail, href, icon: Icon, tone = 'blue', badge }) {
+function MetricCard({ title, value: metricValue, detail, icon: Icon, tone = 'blue', badge }) {
   const toneMap = {
-    blue: { bg: 'bg-blue-50 text-[#0B3470]', border: 'hover:border-blue-300', ring: 'hover:ring-blue-500/10' },
-    green: { bg: 'bg-emerald-50 text-emerald-700', border: 'hover:border-emerald-300', ring: 'hover:ring-emerald-500/10' },
-    orange: { bg: 'bg-amber-50 text-amber-700', border: 'hover:border-amber-300', ring: 'hover:ring-amber-500/10' },
-    red: { bg: 'bg-rose-50 text-rose-700', border: 'hover:border-rose-300', ring: 'hover:ring-rose-500/10' },
-    indigo: { bg: 'bg-indigo-50 text-indigo-700', border: 'hover:border-indigo-300', ring: 'hover:ring-indigo-500/10' },
+    blue: { bg: 'bg-blue-50 text-[#0B3470]' },
+    green: { bg: 'bg-emerald-50 text-emerald-700' },
+    orange: { bg: 'bg-amber-50 text-amber-700' },
+    red: { bg: 'bg-rose-50 text-rose-700' },
+    indigo: { bg: 'bg-indigo-50 text-indigo-700' },
   }
   const theme = toneMap[tone] || toneMap.blue
 
   return (
-    <Link
-      to={href}
-      className={`group relative p-5 rounded-2xl bg-white border border-slate-200/80 shadow-xs hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 flex flex-col justify-between ${theme.border} ${theme.ring}`}
+    <div
+      className="relative p-5 rounded-2xl bg-white border border-slate-200/80 shadow-xs flex flex-col justify-between"
     >
       <div className="flex items-start justify-between gap-2">
         <span className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm shadow-xs ${theme.bg}`}>
           {Icon ? <Icon className="w-5 h-5" /> : '▦'}
         </span>
-        {badge ? (
+        {badge && (
           <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-100 text-rose-800 animate-pulse">
             {badge}
-          </span>
-        ) : (
-          <span className="text-[11px] font-bold text-slate-400 group-hover:text-blue-600 transition-colors flex items-center gap-0.5">
-            Inspect <ChevronRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
           </span>
         )}
       </div>
@@ -130,7 +125,7 @@ function MetricCard({ title, value: metricValue, detail, href, icon: Icon, tone 
         <strong className="text-2xl md:text-3xl font-extrabold text-slate-900 block tracking-tight">{metricValue}</strong>
         <small className="text-[11px] text-slate-400 block line-clamp-1 font-medium">{detail}</small>
       </div>
-    </Link>
+    </div>
   )
 }
 
@@ -224,6 +219,8 @@ export default function OrganizationDashboard() {
   const [isNotifOpen, setIsNotifOpen] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
+  const orgDashboardData = useOrganizationDashboard(orgId)
+  const dashboardData = orgDashboardData
   const {
     projects,
     sites,
@@ -235,6 +232,8 @@ export default function OrganizationDashboard() {
     contractors,
     contractorBills,
     workers,
+    workersConfig,
+    workerSiteMapping,
     workerAttendance,
     tools,
     vehicles,
@@ -252,7 +251,12 @@ export default function OrganizationDashboard() {
     subscription,
     loading,
     error,
-  } = useOrganizationDashboard(orgId)
+    siteMaterialsRequest,
+    siteToolsRequest,
+    siteSupervisorProjectStageSchedule,
+    siteSupervisorEntries,
+    vehicleMovements,
+  } = orgDashboardData
   const [selectedProjectId, setSelectedProjectId] = useState('all')
   const [globalQuery, setGlobalQuery] = useState('')
 
@@ -277,8 +281,6 @@ export default function OrganizationDashboard() {
     )
   }, [filteredSites, globalQuery])
 
-  const validProgress = filteredSites.map(progressOf).filter((progress) => progress !== null)
-  const siteProgress = validProgress.length ? Math.round(validProgress.reduce((total, p) => total + p, 0) / validProgress.length) : null
   const plannedBudget = filteredSites.reduce(
     (total, site) =>
       total +
@@ -335,29 +337,88 @@ export default function OrganizationDashboard() {
   const activeSites = filteredSites.filter((site) => ['active', 'in progress', 'ongoing', 'live'].includes(statusOf(site).toLowerCase())).length
   const completedSites = filteredSites.filter((site) => statusOf(site).toLowerCase() === 'completed').length
   const planningSites = filteredSites.filter((site) => statusOf(site).toLowerCase() === 'planning').length
-  const orgDashboardData = useOrganizationDashboard(orgId)
   const pendingApprovals = useMemo(() => {
     const all = [
-      ...(orgDashboardData.siteMaterialsRequest || []),
-      ...(orgDashboardData.siteToolsRequest || []),
-      ...(orgDashboardData.siteSupervisorProjectStageSchedule || []),
-      ...(orgDashboardData.pettyCashRequests || []),
-      ...(orgDashboardData.siteSupervisorEntries || []),
-      ...(orgDashboardData.vehicleMovements || []),
+      ...(siteMaterialsRequest || []),
+      ...(siteToolsRequest || []),
+      ...(siteSupervisorProjectStageSchedule || []),
+      ...(pettyCashRequests || []),
+      ...(siteSupervisorEntries || []),
+      ...(vehicleMovements || []),
     ]
     return all.filter((item) => {
       const st = String(item.status || item.approvalStatus || '').toLowerCase()
       return ['pending_org_approval', 'pending_organization_approval', 'manager_verified'].includes(st)
     }).length
   }, [
-    orgDashboardData.siteMaterialsRequest,
-    orgDashboardData.siteToolsRequest,
-    orgDashboardData.siteSupervisorProjectStageSchedule,
-    orgDashboardData.pettyCashRequests,
-    orgDashboardData.siteSupervisorEntries,
-    orgDashboardData.vehicleMovements,
+    siteMaterialsRequest,
+    siteToolsRequest,
+    siteSupervisorProjectStageSchedule,
+    pettyCashRequests,
+    siteSupervisorEntries,
+    vehicleMovements,
   ])
-  const activeWorkforce = filteredSites.reduce((total, site) => total + number(site, ['activeWorkforce', 'workersDeployed', 'workforce']), 0)
+
+  const activeWorkforce = useMemo(() => {
+    if (!filteredSites || filteredSites.length === 0) {
+      return 0
+    }
+
+    let totalFromSites = 0
+    let hasSiteSpecificData = false
+
+    filteredSites.forEach((site) => {
+      const sId = String(site.id || site.siteId || '').trim().toLowerCase()
+      const sName = String(site.projectName || site.siteName || site.name || '').trim().toLowerCase()
+
+      const directCount = number(site, ['activeWorkforce', 'workersDeployed', 'workforce'])
+
+      const mappingDoc = (workerSiteMapping || []).find((m) => {
+        const mId = String(m.siteId || m.id || '').trim().toLowerCase()
+        const mName = String(m.siteName || m.name || '').trim().toLowerCase()
+        return (sId && mId && (sId === mId || mId.includes(sId) || sId.includes(mId))) ||
+               (sName && mName && (sName === mName || mName.includes(sName) || sName.includes(mName)))
+      })
+      const mappedCount = mappingDoc
+        ? Array.isArray(mappingDoc.workers)
+          ? mappingDoc.workers.length
+          : Number(mappingDoc.totalWorkersMapped) || 0
+        : 0
+
+      const attendanceDocs = (workerAttendance || []).filter((a) => {
+        const aId = String(a.siteId || a.id || '').trim().toLowerCase()
+        const aName = String(a.siteName || a.name || '').trim().toLowerCase()
+        return (sId && aId && (sId === aId || aId.includes(sId) || sId.includes(aId))) ||
+               (sName && aName && (sName === aName || aName.includes(sName) || sName.includes(aName)))
+      })
+      const attendanceCount = attendanceDocs.reduce((max, a) => {
+        const cnt = Number(a?.totalWorkersOnSite || a?.totalMappedPresent || a?.headcount || a?.presentCount || 0) ||
+          (Array.isArray(a?.workers) ? a.workers.filter((w) => w.status === 'present' || w.status === 'P' || w.isPresent).length : 0)
+        return Math.max(max, cnt)
+      }, 0)
+
+      const siteWorkforce = Math.max(directCount, mappedCount, attendanceCount)
+      if (siteWorkforce > 0) {
+        hasSiteSpecificData = true
+        totalFromSites += siteWorkforce
+      }
+    })
+
+    if (hasSiteSpecificData) {
+      return totalFromSites
+    }
+
+    if (selectedProjectId === 'all') {
+      const registeredCount = (workersConfig && workersConfig.length > 0)
+        ? workersConfig.length
+        : (workers && workers.length > 0 ? workers.length : 0)
+      if (registeredCount > 0) {
+        return registeredCount
+      }
+    }
+
+    return 0
+  }, [filteredSites, workerSiteMapping, workerAttendance, workersConfig, workers, selectedProjectId])
 
   const organizationName = value(userData, ['organizationName', 'orgName', 'companyName'], 'Your Organization')
   const currentDate = new Intl.DateTimeFormat('en-IN', { dateStyle: 'full' }).format(new Date())
@@ -368,6 +429,7 @@ export default function OrganizationDashboard() {
     ['Dashboard', '/organization/dashboard', '⌂'],
     ['Sites', '/organization/sites', '▦'],
     ['Staff & Workforce', '/organization/team', '👥'],
+    ['Inventory & Assets', '/organization/inventory', '📦'],
     ['Finance', '/organization/finance', '₹'],
     ['Approvals', '/organization/approvals', '✓'],
     ['Petty Cash', '/organization/petty-cash', '◈'],
@@ -517,11 +579,11 @@ export default function OrganizationDashboard() {
               sites={sites}
               materials={materials}
               materialRequests={materialRequests}
-              siteMaterialsRequest={orgDashboardData.siteMaterialsRequest}
-              siteToolsRequest={orgDashboardData.siteToolsRequest}
-              siteSupervisorProjectStageSchedule={orgDashboardData.siteSupervisorProjectStageSchedule}
-              siteSupervisorEntries={orgDashboardData.siteSupervisorEntries}
-              vehicleMovements={orgDashboardData.vehicleMovements}
+              siteMaterialsRequest={siteMaterialsRequest}
+              siteToolsRequest={siteToolsRequest}
+              siteSupervisorProjectStageSchedule={siteSupervisorProjectStageSchedule}
+              siteSupervisorEntries={siteSupervisorEntries}
+              vehicleMovements={vehicleMovements}
               pettyCashAccounts={pettyCashAccounts}
               pettyCashRequests={pettyCashRequests}
               pettyCashExpenses={pettyCashExpenses}
@@ -536,7 +598,7 @@ export default function OrganizationDashboard() {
               customerInvoices={customerInvoices}
               dailySiteLogs={dailySiteLogs}
               approvals={approvals}
-              supervisors={supervisors || orgDashboardData.supervisors}
+              supervisors={supervisors}
               managers={managers}
               expenses={expenses}
               pettyCash={pettyCash}
@@ -549,7 +611,7 @@ export default function OrganizationDashboard() {
           ) : (
             <>
               {/* Modern Organization Header & Control Bar */}
-              <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
+              <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs">
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -587,13 +649,13 @@ export default function OrganizationDashboard() {
                       </select>
                     </div>
 
-                    <Link
+                    {/* <Link
                       to="/organization/sites"
                       className="px-3.5 py-2 rounded-xl bg-[#0B3470] hover:bg-[#082654] text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
                     >
                       <Plus className="w-4 h-4" />
                       <span>Add Site</span>
-                    </Link>
+                    </Link> */}
 
                     <Link
                       to="/organization/approvals"
@@ -609,82 +671,21 @@ export default function OrganizationDashboard() {
                     </Link>
                   </div>
                 </div>
-
-                {/* Compact KPI Summary Strip */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-3 border-t border-slate-100">
-                  <div className="p-3.5 rounded-xl bg-slate-50/80 border border-slate-200/80 flex items-center justify-between">
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Portfolio Sites</span>
-                      <strong className="text-lg font-extrabold text-slate-900 block font-mono mt-0.5">
-                        {filteredSites.length} <span className="text-xs font-semibold text-slate-500 font-sans">Sites</span>
-                      </strong>
-                    </div>
-                    <div className="p-2 rounded-xl bg-blue-50 text-[#0B3470]">
-                      <Building2 className="w-5 h-5" />
-                    </div>
-                  </div>
-
-                  <div className="p-3.5 rounded-xl bg-slate-50/80 border border-slate-200/80 flex items-center justify-between">
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Active Workforce</span>
-                      <strong className="text-lg font-extrabold text-emerald-700 block font-mono mt-0.5">
-                        {activeWorkforce || 140} <span className="text-xs font-semibold text-slate-500 font-sans">Workers</span>
-                      </strong>
-                    </div>
-                    <div className="p-2 rounded-xl bg-emerald-50 text-emerald-700">
-                      <Users className="w-5 h-5" />
-                    </div>
-                  </div>
-
-                  <div className="p-3.5 rounded-xl bg-slate-50/80 border border-slate-200/80 flex items-center justify-between">
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Pending Authorizations</span>
-                      <strong className="text-lg font-extrabold text-amber-700 block font-mono mt-0.5">
-                        {pendingApprovals} <span className="text-xs font-semibold text-slate-500 font-sans">Action Req.</span>
-                      </strong>
-                    </div>
-                    <div className="p-2 rounded-xl bg-amber-50 text-amber-700">
-                      <Clock className="w-5 h-5" />
-                    </div>
-                  </div>
-
-                  <div className="p-3.5 rounded-xl bg-slate-50/80 border border-slate-200/80 flex items-center justify-between">
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Budget Spend</span>
-                      <strong className="text-lg font-extrabold text-[#0B3470] block font-mono mt-0.5">
-                        {money(spentBudget)}
-                      </strong>
-                    </div>
-                    <div className="p-2 rounded-xl bg-indigo-50 text-indigo-700">
-                      <TrendingUp className="w-5 h-5" />
-                    </div>
-                  </div>
-                </div>
               </div>
 
               {/* Metric Cards Grid */}
-              <section className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+              <section className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
                 <MetricCard
                   title="Total Sites"
                   value={filteredSites.length}
                   detail={`${activeSites} live · ${planningSites} planning`}
-                  href="/organization/sites"
                   icon={Building2}
                   tone="blue"
                 />
                 <MetricCard
-                  title="Overall Progress"
-                  value={siteProgress === null ? 'N/A' : `${siteProgress}%`}
-                  detail="Stage-weighted rollup"
-                  href="/organization/sites"
-                  icon={Activity}
-                  tone="green"
-                />
-                <MetricCard
                   title="Active Workforce"
-                  value={activeWorkforce || ((workers?.length || 0) + (supervisors?.length || 0) + (managers?.length || 0)) || 140}
-                  detail={`${managers?.length || 0} managers · ${supervisors?.length || 0} supervisors · ${workers?.length || 0} workers`}
-                  href="/organization/team"
+                  value={`${activeWorkforce} Workers`}
+                  detail={`${managers?.length || 0} managers · ${supervisors?.length || 0} supervisors · ${activeWorkforce} active workers`}
                   icon={Users}
                   tone="orange"
                 />
@@ -692,7 +693,6 @@ export default function OrganizationDashboard() {
                   title="Pending HQ Approvals"
                   value={pendingApprovals}
                   detail="Tier 2 action required"
-                  href="/organization/approvals"
                   icon={ShieldCheck}
                   tone="red"
                   badge={pendingApprovals > 0 ? `${pendingApprovals} Pending` : null}
@@ -701,15 +701,13 @@ export default function OrganizationDashboard() {
                   title="Total Spend"
                   value={money(spentBudget)}
                   detail={`${money(plannedBudget)} budget`}
-                  href="/organization/finance"
                   icon={Wallet}
                   tone="indigo"
                 />
                 <MetricCard
                   title="Budget Utilization"
-                  value={plannedBudget ? `${Math.round((spentBudget / plannedBudget) * 100)}%` : '68%'}
+                  value={plannedBudget ? `${Math.round((spentBudget / plannedBudget) * 100)}%` : '0%'}
                   detail="Actual vs sanctioned limit"
-                  href="/organization/finance"
                   icon={TrendingUp}
                   tone="green"
                 />

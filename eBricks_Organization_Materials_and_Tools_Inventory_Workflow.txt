@@ -1,0 +1,621 @@
+================================================================================
+EBRICKS WEB APPLICATION - MATERIALS & TOOLS INVENTORY WORKFLOW SPECIFICATION
+================================================================================
+Application: eBricks White Label Construction Management System
+Module Target: Organization Module (Inventory & Asset Management)
+Role Target: Organization Admin / HQ Management, Warehouse Manager, Site Managers, Site Supervisors
+Date: September 28, 2026
+Version: 1.0 (Canonical Organization Materials & Tools Inventory Architecture)
+================================================================================
+
+1. EXECUTIVE OVERVIEW & INVENTORY ARCHITECTURE
+--------------------------------------------------------------------------------
+The eBricks Materials and Tools Inventory Workflow governs the end-to-end lifecycle 
+of physical construction assets, materials, equipment, and machinery across an enterprise. 
+The system bridges Headquarters (HQ Central Warehouse) purchasing and storage with 
+field construction sites and individual project execution stages.
+
+Key Architectural Pillars:
+  1. Multi-Tenant Organization Isolation:
+     All inventory data strictly resides under:
+     /organisation/{orgId}/data/{collectionName}
+
+  2. eBricks Structural Hierarchy (Organization -> Sites -> Projects):
+     - Organization Level (HQ): Central Catalog Master, HQ Warehouse Stock, Global Purchases, 
+       Organization-wide Allocation & Audit Control.
+     - Site Level (siteId): Physical work location holding active allocated inventory, 
+       site tool cribs, and local consumption.
+     - Project Level (projectId): Specific sub-entity under a site used for job costing, 
+       budget tracking, and stage-wise material utilization.
+
+  3. Dual Inventory Lifecycle Models:
+     - Consumable Materials: Tracked by unit quantity (e.g., bags, tons, meters). Quantities 
+       decrease as materials are consumed in daily site work or project stages.
+     - Non-Consumable Tools & Machinery: Tracked by asset count, individual serial numbers/tags, 
+       current location, operational condition, and custody transfers (returnable assets).
+
+  4. Real-Time Transactional Integrity:
+     Stock calculations utilize atomic updates (Firestore FieldValue.increment or transactions) 
+     and status transition guards to prevent negative stock, ghost allocations, or lost items.
+
+--------------------------------------------------------------------------------
+2. ORGANIZATION -> SITES -> PROJECTS STRUCTURAL INTEGRATION
+--------------------------------------------------------------------------------
+
+To avoid duplicate collections and redundant data entry across Organization, Sites, 
+and Projects, eBricks applies a unified single-source data model:
+
+  +--------------------------------------------------------------------------+
+  |                     ORGANIZATION HQ WAREHOUSE                            |
+  | Collection: /organisation/{orgId}/data/materials                         |
+  | Collection: /organisation/{orgId}/data/tools                             |
+  | - Holds Master Item Specs, Default Prices, Global Stock Quantities       |
+  +--------------------------------------------------------------------------+
+                                     |
+                                     | Stock Dispatch / Transfer Request
+                                     v
+  +--------------------------------------------------------------------------+
+  |                          CONSTRUCTION SITE                               |
+  | Sub-document/Field: siteMaterialsAvailability / toolsInventory           |
+  | Filter Tags       : siteId == "ST001", siteName == "Metro Station"      |
+  | - Holds Site Available Quantities, Received Quantities, Site Stock Crib  |
+  +--------------------------------------------------------------------------+
+                                     |
+                                     | Allocation / Consumption Tagging
+                                     v
+  +--------------------------------------------------------------------------+
+  |                          PROJECT STAGE WORK                              |
+  | Tagged Fields     : projectId == "PR001", projectStage == "Foundation"   |
+  | - Records exact material consumption and tool usage against project      |
+  |   budgets & stage progress reports without duplicating stock entities    |
+  +--------------------------------------------------------------------------+
+
+Data Relationship Mapping Rules:
+  - An Organization (`orgId`) owns all Master Materials and Master Tools records.
+  - A Site (`siteId`) belongs to an Organization (`orgId`) and holds site-level stock balances.
+  - A Project (`projectId`) belongs to a Site (`siteId`). Material consumption and tool deployment 
+    logs explicitly include both `siteId` and `projectId` for precise financial reporting.
+
+--------------------------------------------------------------------------------
+3. MATERIALS INVENTORY WORKFLOW & STOCK CALCULATION LOGIC
+--------------------------------------------------------------------------------
+
+A. Material Categories & Master Catalog Management:
+   - Materials are classified into standardized construction categories:
+     1. Civil & Structural (Cement, Rebar Steel, Ready-Mix Concrete, Bricks, Aggregates, Sand)
+     2. Plumbing & Piping (PVC Pipes, CPVC Fittings, Valves, Water Tanks)
+     3. Electrical & Wiring (Conduits, Copper Wires, Switches, Distribution Boards)
+     4. Finishing & Joinery (Tiles, Paint, Primer, Plywood, Hardware, Glass)
+     5. Safety & Miscellaneous (Safety Nets, Scaffolding Clips, Curing Compound)
+
+B. Stock Breakdown & Calculation Formulas:
+
+   1. Company Warehouse Stock (HQ Available Stock):
+      `Company Available Stock` = Total Purchases Received at HQ 
+                                - Total Dispatched Quantities to Sites 
+                                + Total Unused Stock Returned to HQ 
+                                - Total Damaged/Wasted Quantity at HQ
+
+   2. Site Inventory Stock (Site Available Stock):
+      `Site Available Stock` = Total Received Quantities from HQ or Inter-Site Transfers
+                             - Total Consumed Quantities (via Daily Supervisor Work Logs)
+                             - Total Quantities Transferred to Other Sites
+                             - Total Quantities Returned to HQ
+                             - Total Recorded Site Wastage/Damage
+
+   3. Total Enterprise Stock (Global Stock):
+      `Total Enterprise Stock` = Company Available Stock + Sum(All Active Site Available Stocks)
+
+C. Real-Time Consumption Logic:
+   - When a Site Supervisor submits a Daily Work Log (`siteSupervisorEntries`) indicating material 
+     usage (e.g., 20 bags of Cement used for "Plastering" under `projectId`), the system:
+       a) Decrements `availableQuantity` in site material stock by 20.
+       b) Increments `consumedQuantity` in site material stock by 20.
+       c) Appends a consumption log entry to `materialmovementhistory`.
+       d) Updates the site's daily expense summary in `totalSiteExpensesPerDay`.
+
+--------------------------------------------------------------------------------
+4. TOOLS & MACHINERY INVENTORY WORKFLOW & STATUS TRACKING
+--------------------------------------------------------------------------------
+
+A. Dual Tracking Model for Tools & Equipment:
+
+   1. Bulk / Small Tools (Quantity-based Tracking):
+      - Items like Hand Trowels, Hammers, Chisels, Safety Helmets, Measuring Tapes.
+      - Tracked by total count: `totalQuantity`, `availableAtCompany`, `allocatedToSites`, `damagedCount`.
+
+   2. Heavy / High-Value Equipment (Serialized Asset Tracking):
+      - Items like Concrete Mixers, Earth Movers (JCB/Excavator), Diesel Generators, 
+        Tower Cranes, Needle Vibrators, Demolition Hammers, Total Station Laser Scanners.
+      - Tracked as discrete asset entities with unique `assetTagId` or `serialNumber`.
+
+B. Tool Asset Lifecycle & State Machine Transitions:
+
+   [State 1: AT_COMPANY_WAREHOUSE]
+     - Asset is stored in HQ Warehouse, ready for allocation.
+     - Condition: "OPERATIONAL" | "NEEDS_SERVICING"
+
+   [State 2: PENDING_DISPATCH / IN_TRANSIT]
+     - HQ Admin or Warehouse Manager approves requisition and dispatches asset.
+     - Transit manifest generated with vehicle/driver details.
+
+   [State 3: ACTIVE_ON_SITE]
+     - Destination Site Supervisor confirms receipt.
+     - Tagged with active `siteId`, `projectId`, and `assignedSupervisorId`.
+
+   [State 4: RETURN_PENDING]
+     - Site completes work package and initiates return request to HQ or transfer request to another site.
+
+   [State 5: UNDER_MAINTENANCE / REPAIR]
+     - Equipment suffers breakdown or requires routine servicing. Sent to vendor or central workshop.
+
+   [State 6: DECOMMISSIONED / SCRAPPED]
+     - Asset damaged beyond economical repair or sold off. Removed from active enterprise availability.
+
+State Transition Diagram:
+  (AT_COMPANY_WAREHOUSE) ---> [IN_TRANSIT] ---> (ACTIVE_ON_SITE)
+            ^                                         |
+            |------------ [IN_TRANSIT] <--------------| (RETURN / TRANSFER)
+            |                                         |
+            v                                         v
+   (UNDER_MAINTENANCE) <------------------------ (DAMAGED / REPAIR)
+            |
+            v
+   (DECOMMISSIONED)
+
+--------------------------------------------------------------------------------
+5. SITE-WISE ALLOCATION, REQUISITION & TRANSFER FLOW
+--------------------------------------------------------------------------------
+
+The inventory transfer workflow governs movements between Company Warehouse and Sites, 
+or directly between two Construction Sites (Inter-Site Transfer).
+
+A. Supported Inventory Movement Types:
+   1. `HQ_TO_SITE`       : Standard allocation from HQ Central Stock to Site.
+   2. `SITE_TO_SITE`     : Inter-site balance transfer (e.g., Site A excess steel to Site B).
+   3. `SITE_TO_HQ`       : Surplus material or tool return from Site back to HQ Central Warehouse.
+   4. `SITE_TO_REPAIR`   : Machinery sent from Site directly to Repair/Service Center.
+
+B. Step-by-Step 5-Stage Requisition & Transfer Flow:
+
+   Stage 1: Requisition Creation (Site Supervisor)
+     - Supervisor selects required materials/tools, specifies required quantity, required date, 
+       and target `siteId` & `projectId`.
+     - System checks local stock and creates requisition document in:
+       `/organisation/{orgId}/data/siteMaterialsRequest` or `/organisation/{orgId}/data/siteToolsRequest`
+     - Status: `pending_manager_review` (Step 1).
+
+   Stage 2: Technical Verification (Manager)
+     - Site/Project Manager reviews technical necessity and stage requirement.
+     - Manager verifies work phase needs 50 bags of cement and approves request.
+     - Status: `pending_org_approval` (Step 2).
+
+   Stage 3: HQ Financial Authorization & Stock Reservation (Organization Admin / HQ)
+     - Organization HQ Admin checks HQ Warehouse stock availability (`availableQuantity`).
+     - If stock is sufficient, HQ authorizes requisition and reserves stock.
+     - Assigns transport details (Driver Name, Vehicle Number, Gate Pass ID).
+     - Status: `pending_manager_clearance` (Step 3).
+
+   Stage 4: Warehouse Dispatch & Dispatch Clearance (Warehouse Manager / Manager)
+     - Warehouse Manager physically loads materials/tools onto dispatch vehicle.
+     - System deducts stock from Sender (`availableQuantity -= quantity`) and tags stock as `IN_TRANSIT`.
+     - Transfer record written to `/organisation/{orgId}/data/materialTransfer` or `toolsMovement`.
+     - Status: `approved` / `in_transit` (Step 4).
+
+   Stage 5: Receiver Physical Acknowledgment & Automatic Stock Credit (Site Supervisor)
+     - Goods arrive at target Construction Site.
+     - Supervisor verifies physical items against transport gate pass, enters received quantity, 
+       and logs any damaged/shortage count.
+     - Supervisor signs digital receipt.
+     - System automatically:
+         a) Credits target site stock (`siteMaterials` / `toolsInventory` available quantity += receivedQty).
+         b) If damage/shortage reported, creates discrepancy log.
+         c) Marks transfer document status as `COMPLETED` / `received` (Step 5).
+
+--------------------------------------------------------------------------------
+6. FIRESTORE COLLECTION STRUCTURE, DOCUMENT IDs & FIELD SCHEMAS
+--------------------------------------------------------------------------------
+
+All collections reside under the tenant isolation path:
+`/organisation/{orgId}/data/{collectionName}/{docId}`
+
+================================================================================
+COLLECTION 1: Master Materials Catalog
+Path: /organisation/{orgId}/data/materials/{materialId}
+Doc ID: Standard canonical string (e.g., "MAT_CEMENT_OPC53", "MAT_STEEL_12MM")
+================================================================================
+{
+  "materialId": "MAT_CEMENT_OPC53",
+  "materialName": "Cement OPC 53 Grade",
+  "category": "Civil & Structural",
+  "subCategory": "Binding Materials",
+  "unit": "bags",                                // Primary Unit of Measure (bags, tons, kg, meters)
+  "unitPrice": 380.00,                          // Standard Purchase Price per Unit (INR)
+  "minReorderLevel": 100,                       // Low stock threshold for HQ alert
+  "description": "50kg UltraTech OPC 53 Grade Cement Bag",
+  "hsnCode": "2523",
+  "gstPercentage": 28.0,
+  "isActive": true,
+  "createdAt": "2026-01-10T10:00:00.000Z",
+  "updatedAt": "2026-09-28T11:00:00.000Z"
+}
+
+================================================================================
+COLLECTION 2: Material Stock & Site Availability Ledger
+Path: /organisation/{orgId}/data/materialsAvailability/{docId}
+Doc ID: Composite key: {materialId}_{siteId} (e.g., "MAT_CEMENT_OPC53_HQ", "MAT_CEMENT_OPC53_ST001")
+================================================================================
+{
+  "docId": "MAT_CEMENT_OPC53_ST001",
+  "materialId": "MAT_CEMENT_OPC53",
+  "materialName": "Cement OPC 53 Grade",
+  "siteId": "ST001",                            // "HQ" for Company Central Warehouse, or specific site ID
+  "siteName": "Pothys Villa Project Site",
+  "isCompanyWarehouse": false,                  // True if HQ Central Warehouse record
+  "unit": "bags",
+  "totalReceived": 500,                         // Cumulative quantity received at this location
+  "consumedQuantity": 320,                      // Total consumed in site work
+  "transferredOutQuantity": 30,                 // Transferred out to other sites/HQ
+  "availableQuantity": 150,                     // Net Available Stock = (totalReceived - consumedQuantity - transferredOutQuantity)
+  "reservedQuantity": 0,                        // Quantity reserved for pending dispatches
+  "damagedQuantity": 0,                         // Recorded damaged stock at location
+  "lastRestockedAt": "2026-09-25T14:30:00.000Z",
+  "lastConsumedAt": "2026-09-28T09:15:00.000Z",
+  "updatedAt": "2026-09-28T09:15:00.000Z"
+}
+
+================================================================================
+COLLECTION 3: Material Requisitions & Site Requests
+Path: /organisation/{orgId}/data/siteMaterialsRequest/{requestId}
+Doc ID: Requisition Code (e.g., "MREQ_20260928_001")
+================================================================================
+{
+  "requestId": "MREQ_20260928_001",
+  "siteId": "ST001",
+  "siteName": "Pothys Villa Project Site",
+  "projectId": "PR001_Pothys",
+  "projectName": "Pothys Villa Main Structure",
+  "supervisorId": "SUP001",
+  "supervisorName": "John Supervisor",
+  "managerId": "MGR001",
+  "managerName": "Alex Manager",
+  "requestType": "MATERIAL_REQUISITION",
+  "urgencyLevel": "HIGH",                      // LOW, MEDIUM, HIGH, EMERGENCY
+  "requiredByDate": "2026-09-30",
+  "items": [
+    {
+      "materialId": "MAT_CEMENT_OPC53",
+      "materialName": "Cement OPC 53 Grade",
+      "requestedQuantity": 100,
+      "approvedQuantity": 100,
+      "dispatchedQuantity": 100,
+      "receivedQuantity": 100,
+      "unit": "bags",
+      "estimatedCost": 38000.00
+    }
+  ],
+  "totalEstimatedCost": 38000.00,
+  "status": "received",                         // pending_manager_review -> pending_org_approval -> pending_manager_clearance -> approved -> received
+  "statusDisplay": "Received & Credited to Site",
+  "currentStep": 4,
+  "rejectionReason": "",
+  "orgApprovedBy": "HQ Admin",
+  "approvalHistory": [
+    {
+      "step": "1. Supervisor Submission",
+      "action": "Request Submitted",
+      "actorRole": "Supervisor",
+      "actorName": "John Supervisor",
+      "actorId": "SUP001",
+      "remarks": "Required for 2nd floor roof slab casting",
+      "timestamp": "2026-09-28T08:00:00.000Z"
+    }
+  ],
+  "createdAt": "2026-09-28T08:00:00.000Z",
+  "updatedAt": "2026-09-28T10:30:00.000Z"
+}
+
+================================================================================
+COLLECTION 4: Material Transfer Orders & Delivery Manifests
+Path: /organisation/{orgId}/data/materialTransfer/{transferId}
+Doc ID: Transfer Manifest ID (e.g., "MTRF_20260928_099")
+================================================================================
+{
+  "transferId": "MTRF_20260928_099",
+  "requestId": "MREQ_20260928_001",
+  "transferType": "HQ_TO_SITE",                // HQ_TO_SITE, SITE_TO_SITE, SITE_TO_HQ
+  "fromSiteId": "HQ",
+  "fromSiteName": "Company Central Warehouse",
+  "toSiteId": "ST001",
+  "toSiteName": "Pothys Villa Project Site",
+  "toProjectId": "PR001_Pothys",
+  "materialId": "MAT_CEMENT_OPC53",
+  "materialName": "Cement OPC 53 Grade",
+  "quantityTransferred": 100,
+  "quantityReceived": 100,
+  "shortageQuantity": 0,
+  "unit": "bags",
+  "unitPrice": 380.00,
+  "totalValue": 38000.00,
+  "vehicleNumber": "TN 38 CX 4589",
+  "driverName": "Murugan K",
+  "driverPhone": "+91 9842100112",
+  "gatePassId": "GP_88412",
+  "dispatchedBy": "Warehouse Mgr Ramesh",
+  "dispatchedAt": "2026-09-28T09:30:00.000Z",
+  "receivedBy": "John Supervisor",
+  "receivedAt": "2026-09-28T10:30:00.000Z",
+  "status": "COMPLETED",                        // IN_TRANSIT, COMPLETED, DISCREPANCY
+  "createdAt": "2026-09-28T09:30:00.000Z"
+}
+
+================================================================================
+COLLECTION 5: Material Movement & Audit History Ledger
+Path: /organisation/{orgId}/data/materialmovementhistory/{historyId}
+Doc ID: Auto-generated Firestore ID
+================================================================================
+{
+  "historyId": "MMH_20260928_7741",
+  "materialId": "MAT_CEMENT_OPC53",
+  "materialName": "Cement OPC 53 Grade",
+  "movementType": "SITE_CONSUMPTION",          // PURCHASE_INWARD, DISPATCH_OUTWARD, SITE_RECEIPT, SITE_CONSUMPTION, RETURN_INWARD, WASTAGE_WRITE_OFF
+  "sourceLocationId": "ST001",
+  "destinationLocationId": "PROJECT_WORK",
+  "siteId": "ST001",
+  "projectId": "PR001_Pothys",
+  "projectStage": "Framing",
+  "quantity": 20,
+  "unit": "bags",
+  "previousAvailableStock": 170,
+  "newAvailableStock": 150,
+  "performedById": "SUP001",
+  "performedByName": "John Supervisor",
+  "performedByRole": "Supervisor",
+  "referenceId": "LOG_20260928_45",            // Link to siteSupervisorEntries docId or transferId
+  "remarks": "Consumed 20 bags cement for column casting",
+  "timestamp": "2026-09-28T11:00:00.000Z"
+}
+
+================================================================================
+COLLECTION 6: Master Tools & Equipment Registry
+Path: /organisation/{orgId}/data/tools/{toolId}
+Doc ID: Standard tool ID (e.g., "TOOL_CONCRETE_MIXER_01", "TOOL_DRILL_BOSCH")
+================================================================================
+{
+  "toolId": "TOOL_CONCRETE_MIXER_01",
+  "toolName": "10/7 Cu.Ft Diesel Concrete Mixer Machine",
+  "category": "Heavy Machinery",
+  "subCategory": "Concrete Equipment",
+  "isSerialized": true,                         // True for machinery/equipment with unique serial/asset tag
+  "assetTagId": "EQ-CM-2024-03",
+  "serialNumber": "CM-ENG-889412",
+  "ownershipType": "OWNED",                     // OWNED vs RENTED
+  "vendorName": "L&T Construction Equipment",
+  "purchasePrice": 185000.00,
+  "dailyRentalRate": 1200.00,
+  "currentLocationType": "SITE",                // COMPANY_WAREHOUSE, SITE, REPAIR_CENTER
+  "currentSiteId": "ST001",
+  "currentSiteName": "Pothys Villa Project Site",
+  "assignedProjectId": "PR001_Pothys",
+  "assignedSupervisorId": "SUP001",
+  "status": "active_on_site",                   // at_company_warehouse, in_transit, active_on_site, under_maintenance, damaged
+  "condition": "OPERATIONAL",                   // OPERATIONAL, SERVICING_REQUIRED, DAMAGED
+  "lastServicedDate": "2026-08-15",
+  "nextServiceDueDate": "2026-11-15",
+  "createdAt": "2026-01-15T10:00:00.000Z",
+  "updatedAt": "2026-09-28T09:00:00.000Z"
+}
+
+================================================================================
+COLLECTION 7: Tools Inventory & Site Asset Balance Ledger
+Path: /organisation/{orgId}/data/toolsInventory/{docId}
+Doc ID: Composite key: {toolId}_{locationId} (e.g., "TOOL_HAMMER_5KG_HQ", "TOOL_HAMMER_5KG_ST001")
+================================================================================
+{
+  "docId": "TOOL_HAMMER_5KG_ST001",
+  "toolId": "TOOL_HAMMER_5KG",
+  "toolName": "5kg Heavy Duty Sledgehammer",
+  "siteId": "ST001",
+  "siteName": "Pothys Villa Project Site",
+  "isCompanyWarehouse": false,
+  "isSerialized": false,                        // Bulk non-serialized tools
+  "totalQuantity": 15,                          // Total assigned to site
+  "activeQuantity": 12,                         // Currently operational on site
+  "maintenanceQuantity": 2,                     // Under local repair
+  "damagedQuantity": 1,                         // Broken / decommissioned
+  "lastAssignedAt": "2026-09-20T10:00:00.000Z",
+  "updatedAt": "2026-09-28T09:00:00.000Z"
+}
+
+================================================================================
+COLLECTION 8: Site Tools Requisition Requests
+Path: /organisation/{orgId}/data/siteToolsRequest/{requestId}
+Doc ID: Requisition Code (e.g., "TREQ_20260928_012")
+================================================================================
+{
+  "requestId": "TREQ_20260928_012",
+  "siteId": "ST001",
+  "siteName": "Pothys Villa Project Site",
+  "projectId": "PR001_Pothys",
+  "projectName": "Pothys Villa Main Structure",
+  "supervisorId": "SUP001",
+  "supervisorName": "John Supervisor",
+  "managerId": "MGR001",
+  "managerName": "Alex Manager",
+  "requestType": "TOOLS_REQUISITION",
+  "requiredFromDate": "2026-10-01",
+  "requiredToDate": "2026-10-15",
+  "items": [
+    {
+      "toolId": "TOOL_CONCRETE_MIXER_01",
+      "toolName": "10/7 Cu.Ft Diesel Concrete Mixer Machine",
+      "isSerialized": true,
+      "assetTagId": "EQ-CM-2024-03",
+      "quantityRequested": 1,
+      "rentalCostPerDay": 1200.00
+    }
+  ],
+  "status": "approved",                         // pending_manager_review -> pending_org_approval -> pending_manager_clearance -> approved -> received
+  "statusDisplay": "Approved & Dispatched",
+  "currentStep": 4,
+  "createdAt": "2026-09-28T08:30:00.000Z",
+  "updatedAt": "2026-09-28T10:00:00.000Z"
+}
+
+================================================================================
+COLLECTION 9: Tool Movements & Transfer Manifests
+Path: /organisation/{orgId}/data/toolsMovement/{movementId}
+Doc ID: Transfer Manifest ID (e.g., "TMOV_20260928_401")
+================================================================================
+{
+  "movementId": "TMOV_20260928_401",
+  "requestId": "TREQ_20260928_012",
+  "movementType": "ALLOCATION",                 // ALLOCATION (HQ->Site), INTER_SITE_TRANSFER, RETURN (Site->HQ), REPAIR_DISPATCH
+  "fromLocationId": "HQ",
+  "fromLocationName": "Company Central Warehouse",
+  "toLocationId": "ST001",
+  "toLocationName": "Pothys Villa Project Site",
+  "toProjectId": "PR001_Pothys",
+  "toolId": "TOOL_CONCRETE_MIXER_01",
+  "toolName": "10/7 Cu.Ft Diesel Concrete Mixer Machine",
+  "isSerialized": true,
+  "assetTagId": "EQ-CM-2024-03",
+  "quantity": 1,
+  "transportVehicle": "TN 38 AX 1122",
+  "dispatchedBy": "Warehouse Manager Ramesh",
+  "dispatchedAt": "2026-09-28T09:45:00.000Z",
+  "receivedBy": "John Supervisor",
+  "receivedAt": "2026-09-28T11:15:00.000Z",
+  "status": "COMPLETED",                        // IN_TRANSIT, COMPLETED, RETURNED
+  "remarks": "Handed over with full tank diesel & operating manual",
+  "createdAt": "2026-09-28T09:45:00.000Z"
+}
+
+================================================================================
+COLLECTION 10: Tool Maintenance & Return Inspection Logs
+Path: /organisation/{orgId}/data/toolsReturn/{returnId}
+Doc ID: Return Log ID (e.g., "TRET_20260928_005")
+================================================================================
+{
+  "returnId": "TRET_20260928_005",
+  "movementId": "TMOV_20260928_401",
+  "toolId": "TOOL_CONCRETE_MIXER_01",
+  "toolName": "10/7 Cu.Ft Diesel Concrete Mixer Machine",
+  "assetTagId": "EQ-CM-2024-03",
+  "returnedFromSiteId": "ST001",
+  "returnedFromSiteName": "Pothys Villa Project Site",
+  "returnedToLocation": "HQ_WAREHOUSE",
+  "returnedBySupervisor": "John Supervisor",
+  "receivedByWarehouseManager": "Ramesh Warehouse Mgr",
+  "returnCondition": "GOOD_OPERATIONAL",        // GOOD_OPERATIONAL, SERVICING_REQUIRED, DAMAGED_REPAIR_NEEDED
+  "damageDescription": "Minor clutch cable tightness required",
+  "repairCostEstimate": 0.0,
+  "returnDate": "2026-09-28T11:30:00.000Z",
+  "status": "ACCEPTED_AT_WAREHOUSE"
+}
+
+--------------------------------------------------------------------------------
+7. VALIDATION RULES, CONCURRENCY & INTEGRITY CHECKS
+--------------------------------------------------------------------------------
+
+A. Stock Availability Validation Rules:
+   1. Sufficient HQ Stock Guard:
+      - Before authorizing an HQ -> Site material dispatch, the system verifies:
+        `HQ availableQuantity >= requestedQuantity`
+      - If `availableQuantity < requestedQuantity`, dispatch is blocked with error:
+        "Insufficient stock at HQ Central Warehouse. Available: X, Requested: Y."
+
+   2. Sufficient Site Stock Guard for Inter-Site Transfers & Consumption:
+      - Inter-site transfer from Site A to Site B requires:
+        `Site A availableQuantity >= transferQuantity`
+      - Daily consumption log requires:
+        `Site availableQuantity >= consumedQuantity`
+
+B. Concurrency & Transactional Safety Rules:
+   - All stock increment/decrement operations MUST execute inside Firestore Transactions 
+     (`FirebaseFirestore.instance.runTransaction(...)`) or atomic `FieldValue.increment(...)`.
+   - Never compute stock in frontend code as `newStock = oldStock - quantity` and write back 
+     with a simple `.update()`, as concurrent updates will cause race conditions and lost stock updates.
+
+C. State Machine Enforcement Rules:
+   - Disallow skipping lifecycle steps. A transfer cannot enter `COMPLETED` status unless 
+     it has previously transitioned through `IN_TRANSIT` / `approved`.
+   - A tool tagged as `active_on_site` at Site A cannot be assigned to Site B without 
+     a completed transfer manifest or return record.
+
+D. Discrepancy & Damaged Cargo Handling:
+   - When Receiver Supervisor inputs `receivedQuantity < dispatchedQuantity` in Stage 5:
+       a) Receiver stock is credited strictly with `receivedQuantity`.
+       b) A `discrepancyLog` object is appended to the transfer document.
+       c) An automatic high-priority notification is dispatched to HQ Warehouse Manager and Org Admin:
+          "⚠️ Transfer Discrepancy Alert: Manifest #MTRF_... short by X units."
+
+--------------------------------------------------------------------------------
+8. REAL-TIME STOCK UPDATES & FRONTEND IMPLEMENTATION WORKFLOW
+--------------------------------------------------------------------------------
+
+A. Frontend Reactive Architecture (eBricks Web Application):
+   - eBricks web UI uses real-time Firestore reactive listeners (`onSnapshot` / `StreamBuilder` / RxJS).
+   - Whenever stock changes due to dispatch, transfer receipt, or daily work log consumption, 
+     the Inventory Dashboard tiles and Site Stock Tables instantly re-render without page refresh.
+
+B. Key UI Screens & Component Mapping:
+
+   1. Inventory Master Hub Page:
+      - Component: `OrganizationInventoryHub.jsx` / `organization_inventory_screen.dart`
+      - Tabs:
+        * Tab 1: Material Catalog & Stock Ledger (HQ Stock vs Site Stock Matrix)
+        * Tab 2: Tools & Machinery Registry (Serialized Equipment Status Grid)
+        * Tab 3: Stock Transfer & Allocation Management (Create Request, Dispatch, Receive)
+        * Tab 4: Inventory Movement Audit Log & History Ledger
+
+   2. Stock Allocation Modal / Form:
+      - Component: `CreateMaterialTransferModal.jsx`
+      - Select Sender Location (HQ / Site A), Recipient Site, Material, and Quantity.
+      - Displays live available stock badge of selected Sender location.
+
+   3. Supervisor Receipt Confirmation Modal:
+      - Component: `ReceiveInventoryModal.jsx`
+      - Allows Supervisor to inspect physical items, input actual received count, note damage, 
+        and submit digital signature/acknowledgment.
+
+C. Stock Update Event Trigger Matrix:
+
+  +-----------------------+------------------------+-----------------------+-----------------------+
+  | System Event          | HQ Stock Action        | Site Stock Action     | Movement History Log  |
+  +-----------------------+------------------------+-----------------------+-----------------------+
+  | Supplier Inward Purchase | HQ Stock += Qty     | No Change             | PURCHASE_INWARD       |
+  | HQ to Site Dispatch   | HQ Available -= Qty    | Site In-Transit += Qty| DISPATCH_OUTWARD      |
+  | Site Physical Receipt | No Change              | Site Available += Qty | SITE_RECEIPT          |
+  | Site Daily Usage Log  | No Change              | Site Available -= Qty | SITE_CONSUMPTION      |
+  | Site to HQ Return     | HQ Available += Qty    | Site Available -= Qty | RETURN_INWARD         |
+  | Damaged Write-off     | HQ/Site Stock -= Qty   | HQ/Site Stock -= Qty  | WASTAGE_WRITE_OFF     |
+  +-----------------------+------------------------+-----------------------+-----------------------+
+
+--------------------------------------------------------------------------------
+9. SUMMARY & IMPLEMENTATION CHECKLIST FOR EBRICKS DEVELOPMENT TEAM
+--------------------------------------------------------------------------------
+
+[ ] 1. Database Setup:
+    - Verify collections: `materials`, `materialsAvailability`, `siteMaterialsRequest`, 
+      `materialTransfer`, `materialmovementhistory`, `tools`, `toolsInventory`, 
+      `siteToolsRequest`, `toolsMovement`, `toolsReturn`.
+
+[ ] 2. Firestore Security Rules:
+    - Ensure multi-tenant security rules under `/organisation/{orgId}/data/{collectionName}/{docId}` 
+      allow read/write for authenticated users belonging to `orgId`.
+
+[ ] 3. Transactional Services:
+    - Implement atomic `runTransaction` helper functions for:
+      a) `dispatchMaterial(orgId, transferId)`
+      b) `receiveMaterial(orgId, transferId, receivedQty)`
+      c) `consumeMaterial(orgId, siteId, projectId, materialId, qty)`
+      d) `transferTool(orgId, movementId)`
+
+[ ] 4. Real-time Listeners:
+    - Attach Firestore `onSnapshot` listeners on `materialsAvailability` and `toolsInventory` 
+      to power live dashboards in eBricks Web Application.
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

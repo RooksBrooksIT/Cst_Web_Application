@@ -22,6 +22,7 @@ import ExportButton from '../../../components/common/ExportButton'
 import { createInvitationCode, fetchOrgUsers } from '../../../services/userService'
 import { subscribeSupervisors, fetchSupervisors } from '../../../services/supervisorService'
 import { subscribeWorkers, fetchWorkers } from '../../../services/workforceService'
+import { subscribeManagers, fetchManagers, createManager } from '../../../services/managerService'
 import { collection, onSnapshot } from 'firebase/firestore'
 import { db } from '../../../services/firebase'
 
@@ -31,12 +32,12 @@ import { db } from '../../../services/firebase'
  */
 function normalizeWorkforceMember(item, explicitCategory = null, sites = [], workerSiteMap = {}, supervisorSiteMap = {}) {
   const id = String(
+    item.ManagerId ||
+    item.managerId ||
     item.SupervisorId ||
     item.supervisorId ||
     item.workerId ||
     item.WorkerId ||
-    item.ManagerId ||
-    item.managerId ||
     item.id ||
     item.uid ||
     ''
@@ -146,6 +147,7 @@ function normalizeWorkforceMember(item, explicitCategory = null, sites = [], wor
     phone,
     roleCategory, // 'manager' | 'supervisor' | 'worker'
     designation,
+    department: (item.department || item.Department || '').trim(),
     assignedSites, // string[]
     status,
     raw: item,
@@ -323,6 +325,7 @@ export default function TeamManagement({
   const { orgId } = useAuth()
 
   // Real-time backend states
+  const [fetchedManagers, setFetchedManagers] = useState([])
   const [fetchedSupervisors, setFetchedSupervisors] = useState([])
   const [fetchedWorkers, setFetchedWorkers] = useState([])
   const [fetchedUsers, setFetchedUsers] = useState([])
@@ -353,13 +356,67 @@ export default function TeamManagement({
     assignedProjects: [],
   })
 
+  // Manager Creation Modal State
+  const [isManagerModalOpen, setIsManagerModalOpen] = useState(false)
+  const [managerFormData, setManagerFormData] = useState({
+    fullName: '',
+    username: '',
+    password: '',
+    phone: '',
+    email: '',
+    department: 'Operations',
+    designation: 'Site Manager',
+  })
+  const [managerSubmitLoading, setManagerSubmitLoading] = useState(false)
+  const [managerError, setManagerError] = useState('')
+  const [managerSuccess, setManagerSuccess] = useState('')
+
+  async function handleCreateManagerSubmit(e) {
+    e.preventDefault()
+    if (!orgId) return
+    setManagerSubmitLoading(true)
+    setManagerError('')
+    setManagerSuccess('')
+
+    try {
+      const created = await createManager(orgId, managerFormData)
+      setManagerSuccess(`Manager "${created.FullName}" created successfully (ID: ${created.ManagerId}).`)
+      setManagerFormData({
+        fullName: '',
+        username: '',
+        password: '',
+        phone: '',
+        email: '',
+        department: 'Operations',
+        designation: 'Site Manager',
+      })
+      setTimeout(() => {
+        setIsManagerModalOpen(false)
+        setManagerSuccess('')
+      }, 1500)
+    } catch (err) {
+      setManagerError(err.message || 'Failed to create Manager account.')
+    } finally {
+      setManagerSubmitLoading(false)
+    }
+  }
+
   // 1. Live Subscriptions & Fallback Fetching from Firestore
   useEffect(() => {
     if (!orgId) return
 
     let cancelled = false
 
-    // A. Subscribe to Supervisors
+    // A. Subscribe to Managers (/organisation/{orgId}/manager)
+    const unsubManagers = subscribeManagers(
+      orgId,
+      (data) => {
+        if (!cancelled && data) setFetchedManagers(data)
+      },
+      (err) => console.warn('Managers subscription fallback:', err)
+    )
+
+    // B. Subscribe to Supervisors
     const unsubSupervisors = subscribeSupervisors(
       orgId,
       (data) => {
@@ -368,7 +425,7 @@ export default function TeamManagement({
       (err) => console.warn('Supervisors subscription fallback:', err)
     )
 
-    // B. Subscribe to Workers
+    // C. Subscribe to Workers
     const unsubWorkers = subscribeWorkers(
       orgId,
       (data) => {
@@ -377,7 +434,7 @@ export default function TeamManagement({
       (err) => console.warn('Workers subscription fallback:', err)
     )
 
-    // C. Subscribe to Worker-Site Mapping
+    // D. Subscribe to Worker-Site Mapping
     let unsubWorkerSiteMap = () => {}
     try {
       unsubWorkerSiteMap = onSnapshot(
@@ -404,7 +461,7 @@ export default function TeamManagement({
       console.warn('Could not attach workerSiteMapping listener:', e)
     }
 
-    // D. Subscribe to Supervisor-Site Mapping
+    // E. Subscribe to Supervisor-Site Mapping
     let unsubSupMap = () => {}
     try {
       unsubSupMap = onSnapshot(
@@ -426,7 +483,7 @@ export default function TeamManagement({
       console.warn('Could not attach siteSupervisorMap listener:', e)
     }
 
-    // E. Initial direct fetch of org users (catches root users & subcollections)
+    // F. Initial direct fetch of org users (catches root users & subcollections)
     fetchOrgUsers(orgId)
       .then((users) => {
         if (!cancelled && users && users.length > 0) {
@@ -437,6 +494,7 @@ export default function TeamManagement({
 
     return () => {
       cancelled = true
+      unsubManagers?.()
       unsubSupervisors?.()
       unsubWorkers?.()
       unsubWorkerSiteMap?.()
@@ -449,11 +507,13 @@ export default function TeamManagement({
     if (!orgId) return
     setIsRefreshing(true)
     try {
-      const [sups, wrks, users] = await Promise.allSettled([
+      const [mgrs, sups, wrks, users] = await Promise.allSettled([
+        fetchManagers(orgId),
         fetchSupervisors(orgId),
         fetchWorkers(orgId),
         fetchOrgUsers(orgId),
       ])
+      if (mgrs.status === 'fulfilled' && mgrs.value) setFetchedManagers(mgrs.value)
       if (sups.status === 'fulfilled' && sups.value) setFetchedSupervisors(sups.value)
       if (wrks.status === 'fulfilled' && wrks.value) setFetchedWorkers(wrks.value)
       if (users.status === 'fulfilled' && users.value) setFetchedUsers(users.value)
@@ -494,8 +554,9 @@ export default function TeamManagement({
       }
     }
 
-    // A. Ingest Managers
-    ;(propManagers || []).forEach((m) => register(m, null))
+    // A. Ingest Managers (from manager collection, props, and org users)
+    ;(propManagers || []).forEach((m) => register(m, 'manager'))
+    ;(fetchedManagers || []).forEach((m) => register(m, 'manager'))
     ;(fetchedUsers || []).forEach((u) => register(u, null))
 
     // B. Ingest Supervisors
@@ -519,6 +580,7 @@ export default function TeamManagement({
     propManagers,
     propSupervisors,
     propWorkers,
+    fetchedManagers,
     fetchedSupervisors,
     fetchedWorkers,
     fetchedUsers,
@@ -699,6 +761,19 @@ export default function TeamManagement({
         <div className="flex items-center gap-2.5 flex-wrap">
           <button
             type="button"
+            onClick={() => {
+              setManagerError('')
+              setManagerSuccess('')
+              setIsManagerModalOpen(true)
+            }}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white transition-colors shadow-xs cursor-pointer"
+          >
+            <UserPlus className="w-3.5 h-3.5" />
+            <span>+ Create Manager</span>
+          </button>
+
+          <button
+            type="button"
             onClick={handleRefresh}
             disabled={isRefreshing}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100 transition-colors shadow-2xs"
@@ -714,19 +789,6 @@ export default function TeamManagement({
             data={exportData}
             title="Complete Corporate & Field Workforce Roster"
           />
-
-          <button
-            type="button"
-            onClick={() => {
-              setInviteResult(null)
-              setCopiedCode(false)
-              setIsInviteOpen(true)
-            }}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white shadow-xs hover:shadow transition-all"
-          >
-            <UserPlus className="w-4 h-4" />
-            <span>＋ Invite Team Member</span>
-          </button>
         </div>
       </div>
 
@@ -997,7 +1059,7 @@ export default function TeamManagement({
                       <p className="text-xs text-slate-500">
                         {searchQuery || activeRoleFilter !== 'ALL' || selectedSiteFilter !== 'ALL'
                           ? 'No personnel match the current filter or search criteria. Try resetting filters.'
-                          : 'No staff, managers, supervisors, or workers currently registered. Click "Invite Team Member" to onboard personnel.'}
+                          : 'No staff, managers, supervisors, or workers currently registered.'}
                       </p>
                       {(searchQuery || activeRoleFilter !== 'ALL' || selectedSiteFilter !== 'ALL' || selectedStatusFilter !== 'ALL') && (
                         <button
@@ -1295,6 +1357,137 @@ export default function TeamManagement({
             </div>
           </form>
         )}
+      </Modal>
+
+      {/* Direct Manager Account Creation Modal */}
+      <Modal
+        isOpen={isManagerModalOpen}
+        onClose={() => {
+          setIsManagerModalOpen(false)
+          setManagerError('')
+          setManagerSuccess('')
+        }}
+        title="Create New Organization Manager Account"
+      >
+        <form onSubmit={handleCreateManagerSubmit} className="space-y-4">
+          {managerError && (
+            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl font-bold flex items-start gap-2">
+              <span className="text-sm">⚠️</span>
+              <div>{managerError}</div>
+            </div>
+          )}
+
+          {managerSuccess && (
+            <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-xl font-bold flex items-center gap-2">
+              <span className="text-sm">✓</span>
+              <div>{managerSuccess}</div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="block text-xs font-medium text-slate-700">
+              Full Name *
+              <input
+                required
+                value={managerFormData.fullName}
+                onChange={(e) => setManagerFormData({ ...managerFormData, fullName: e.target.value })}
+                placeholder="e.g. Sharan Rooks"
+                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
+              />
+            </label>
+
+            <label className="block text-xs font-medium text-slate-700">
+              Username *
+              <input
+                required
+                value={managerFormData.username}
+                onChange={(e) => setManagerFormData({ ...managerFormData, username: e.target.value })}
+                placeholder="e.g. Sharan123"
+                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
+              />
+              <span className="text-[10px] text-slate-400 block mt-0.5">Global case-insensitive unique login ID</span>
+            </label>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="block text-xs font-medium text-slate-700">
+              Account Password *
+              <input
+                type="password"
+                required
+                value={managerFormData.password}
+                onChange={(e) => setManagerFormData({ ...managerFormData, password: e.target.value })}
+                placeholder="••••••••"
+                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
+              />
+            </label>
+
+            <label className="block text-xs font-medium text-slate-700">
+              Contact Number *
+              <input
+                required
+                value={managerFormData.phone}
+                onChange={(e) => setManagerFormData({ ...managerFormData, phone: e.target.value })}
+                placeholder="8489044572"
+                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
+              />
+            </label>
+          </div>
+
+          <label className="block text-xs font-medium text-slate-700">
+            Official Email Address
+            <input
+              type="email"
+              value={managerFormData.email}
+              onChange={(e) => setManagerFormData({ ...managerFormData, email: e.target.value })}
+              placeholder="sharan.rooks@gmail.com"
+              className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
+            />
+          </label>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="block text-xs font-medium text-slate-700">
+              Department
+              <input
+                value={managerFormData.department}
+                onChange={(e) => setManagerFormData({ ...managerFormData, department: e.target.value })}
+                placeholder="Operations"
+                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
+              />
+            </label>
+
+            <label className="block text-xs font-medium text-slate-700">
+              Designation
+              <input
+                value={managerFormData.designation}
+                onChange={(e) => setManagerFormData({ ...managerFormData, designation: e.target.value })}
+                placeholder="Site Manager"
+                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
+              />
+            </label>
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setIsManagerModalOpen(false)
+                setManagerError('')
+                setManagerSuccess('')
+              }}
+              className="w-1/2 py-2.5 rounded-xl font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={managerSubmitLoading}
+              className="w-1/2 py-2.5 rounded-xl font-bold bg-[#0B3470] hover:bg-blue-800 text-white text-xs shadow-sm transition-colors flex items-center justify-center gap-2"
+            >
+              {managerSubmitLoading ? 'Saving Manager...' : '✓ Create Manager Account'}
+            </button>
+          </div>
+        </form>
       </Modal>
     </div>
   )

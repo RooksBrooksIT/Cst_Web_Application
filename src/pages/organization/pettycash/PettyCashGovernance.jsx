@@ -260,14 +260,6 @@ export default function PettyCashGovernance({
 
         {/* Global Toolbar */}
         <div className="flex items-center gap-2.5 flex-wrap">
-          <button
-            type="button"
-            onClick={() => setIsNewRequestOpen(true)}
-            className="px-4 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-all shadow-xs cursor-pointer flex items-center gap-2"
-          >
-            <span>＋</span>
-            <span>New Float Request</span>
-          </button>
           <ExportButton
             filename="petty_cash_portfolio_ledger"
             headers={['Site Name', 'Custodian', 'Allocated (INR)', 'Received (INR)', 'Spent (INR)', 'Available (INR)', 'Reserved (INR)', 'Status']}
@@ -444,7 +436,7 @@ export default function PettyCashGovernance({
             <div className="p-12 text-center bg-white border border-slate-200/90 rounded-2xl shadow-xs space-y-2">
               <span className="text-3xl">🏢</span>
               <h4 className="text-sm font-bold text-slate-800">No Site Float Accounts Found</h4>
-              <p className="text-xs text-slate-400">Initialize a float request to activate petty cash for this site.</p>
+              <p className="text-xs text-slate-400">No petty cash accounts currently configured.</p>
             </div>
           ) : viewMode === 'cards' ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
