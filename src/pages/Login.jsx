@@ -319,7 +319,7 @@ export default function Login() {
 
         {/* Footer */}
         <footer className="w-full max-w-md mx-auto pt-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-500 border-t border-slate-200/80">
-          <span>© 2026 eBricks CST Application</span>
+          <span>© 2026 eBricks Application</span>
           <div className="flex gap-3 text-slate-400">
             <span className="hover:text-slate-600 cursor-pointer">Privacy Policy</span>
             <span>·</span>

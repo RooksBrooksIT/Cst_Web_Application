@@ -14,8 +14,6 @@ import {
   RefreshCw,
   HelpCircle,
   X,
-  LayoutGrid,
-  ListFilter,
   ShieldAlert,
   Info,
 } from 'lucide-react'
@@ -30,7 +28,6 @@ import {
 
 export default function MasterConfigurations({ orgId, onNotify }) {
   const [activeTab, setActiveTab] = useState('category')
-  const [viewMode, setViewMode] = useState('tabs') // 'tabs' or 'cards'
   const [searchQuery, setSearchQuery] = useState('')
   const [loadingMap, setLoadingMap] = useState({})
   const [actionLoading, setActionLoading] = useState(false)
@@ -441,81 +438,49 @@ export default function MasterConfigurations({ orgId, onNotify }) {
           </p>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 shrink-0">
           {/* How Configuration Works Help Button */}
           <button
             type="button"
             onClick={() => setShowHelpModal(true)}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-50 hover:bg-blue-100 text-[#0B3470] text-xs font-semibold rounded-xl border border-blue-200/80 transition-all cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-50 hover:bg-blue-100 text-[#0B3470] text-xs font-semibold rounded-xl border border-blue-200/80 transition-all cursor-pointer shadow-2xs"
           >
             <HelpCircle className="w-4 h-4 text-blue-600" />
             <span>How Configuration Works</span>
           </button>
-
-          {/* View Mode Switcher */}
-          <div className="bg-slate-100 p-1 rounded-xl flex items-center gap-1 border border-slate-200">
-            <button
-              type="button"
-              onClick={() => setViewMode('tabs')}
-              className={`p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer ${
-                viewMode === 'tabs' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-              title="Tabbed view"
-            >
-              <ListFilter className="w-4 h-4" />
-              <span className="hidden sm:inline">Tabs</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('cards')}
-              className={`p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer ${
-                viewMode === 'cards' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-              title="5-Pillar Grid view"
-            >
-              <LayoutGrid className="w-4 h-4" />
-              <span className="hidden sm:inline">5 Pillars</span>
-            </button>
-          </div>
         </div>
       </div>
 
       {/* Global Search & Navigation Tabs */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-        {viewMode === 'tabs' ? (
-          <div className="flex items-center gap-2 overflow-x-auto w-full sm:w-auto pb-1">
-            {sectionList.map((s) => {
-              const Icon = s.icon
-              const isActive = activeTab === s.key
-              return (
-                <button
-                  key={s.key}
-                  type="button"
-                  onClick={() => setActiveTab(s.key)}
-                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl font-medium text-sm transition-all whitespace-nowrap cursor-pointer ${
-                    isActive
-                      ? 'bg-[#0B3470] text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
+        <div className="flex items-center gap-2 overflow-x-auto w-full sm:w-auto pb-1">
+          {sectionList.map((s) => {
+            const Icon = s.icon
+            const isActive = activeTab === s.key
+            return (
+              <button
+                key={s.key}
+                type="button"
+                onClick={() => setActiveTab(s.key)}
+                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl font-medium text-sm transition-all whitespace-nowrap cursor-pointer ${
+                  isActive
+                    ? 'bg-[#0B3470] text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                <span>{s.meta.title}</span>
+                <span
+                  className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                    isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
                   }`}
                 >
-                  <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                  <span>{s.meta.title}</span>
-                  <span
-                    className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                      isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
-                    }`}
-                  >
-                    {s.data.length}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-            <span>5 Master Pillars Architecture</span>
-          </div>
-        )}
+                  {s.data.length}
+                </span>
+              </button>
+            )
+          })}
+        </div>
 
         {/* Search Input */}
         <div className="relative w-full sm:w-72 shrink-0">
@@ -539,13 +504,7 @@ export default function MasterConfigurations({ orgId, onNotify }) {
       </div>
 
       {/* Main Content Area */}
-      {viewMode === 'tabs' ? (
-        <div className="grid grid-cols-1 gap-6">{renderSectionCard(activeSection)}</div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {sectionList.map((s) => renderSectionCard(s))}
-        </div>
-      )}
+      <div className="grid grid-cols-1 gap-6">{renderSectionCard(activeSection)}</div>
 
       {/* ========================================================================= */}
       {/* EDIT MODAL: In-place Firestore Update (Preserves Document ID)             */}
@@ -733,7 +692,7 @@ export default function MasterConfigurations({ orgId, onNotify }) {
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900">How Project Configuration Works</h3>
-                  <p className="text-xs text-slate-500">CST White Label Architecture & Lifecycle Flow</p>
+                  <p className="text-xs text-slate-500">eBricks Architecture & Lifecycle Flow</p>
                 </div>
               </div>
               <button
@@ -747,7 +706,7 @@ export default function MasterConfigurations({ orgId, onNotify }) {
 
             <div className="space-y-4 mt-4 text-xs text-slate-600">
               <p>
-                In the CST White Label ecosystem, configuration operates at two distinct layers:
+                In the eBricks ecosystem, configuration operates at two distinct layers:
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

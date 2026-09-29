@@ -1,0 +1,383 @@
+================================================================================
+EBRICKS APPLICATION - MANAGER DAILY SITE ENTRY: FLOW & BACKEND STRUCTURE
+================================================================================
+Application: eBricks White Label Construction ERP Platform
+Module: Manager Module -> Manager Daily Site Entry
+File: lib/screens/manager/manager_site_entry_page.dart
+Document Type: Technical Flow & Backend Architecture Specification
+Date: September 29, 2026
+Version: 2.0 (Canonical In-Place Update & Edit Architecture)
+================================================================================
+
+1. EXECUTIVE SUMMARY & CORE BUSINESS OBJECTIVE
+--------------------------------------------------------------------------------
+The Manager Daily Site Entry module provides managers with a dedicated, authoritative
+interface to review, audit, verify, and correct Daily Site Entries submitted by
+site supervisors.
+
+Core Business Rules:
+  1. Supervisor One-Time Creation:
+     A Site Supervisor can create/submit a Daily Site Entry for a site and date only once.
+  2. Manager Edit Access:
+     If any value entered by the Supervisor is incorrect, missing, or mismatched
+     (materials used, worker designations, worker counts, daily salaries, food/fuel/
+     transportation expenses, notes), the Manager has full edit access to correct it.
+  3. Strict Single-Record Integrity (No Duplicates):
+     The Manager updates the existing backend document in-place. No duplicate documents,
+     no duplicate entries, and no disconnected collections (such as separate Manager
+     collections) are created.
+  4. Non-Destructive Field Preservation:
+     All original Supervisor fields (including supervisor ID, name, stage, original
+     timestamps, notes, and unedited entries) are strictly preserved unless explicitly
+     modified by the Manager.
+  5. Immediate System-Wide Propagation:
+     Any change made by the Manager is instantly synced across all financial totals,
+     site summary reports, material inventory records, and project dashboards.
+
+================================================================================
+2. FRONTEND ARCHITECTURE & COMPONENT HIERARCHY
+================================================================================
+The frontend is implemented as a Flutter StatefulWidget (`ManagerSiteEntryPage`) in:
+  lib/screens/manager/manager_site_entry_page.dart
+
+A. State Management & Controllers:
+----------------------------------
+  - Controllers:
+    * materialQtyController         : TextEditingController (Default: '0')
+    * labourQtyController           : TextEditingController (Default: '0')
+    * foodCost                      : TextEditingController (Default: '0')
+    * transportCost                 : TextEditingController (Default: '0')
+    * fuelCost                      : TextEditingController (Default: '0')
+    * morningStatusController       : TextEditingController (Supervisor/Manager Morning Note)
+    * afternoonStatusController     : TextEditingController (Supervisor/Manager Afternoon Note)
+    * _customMaterialNameController : TextEditingController
+    * _customMaterialQtyController  : TextEditingController
+    * _customMaterialPriceController: TextEditingController
+    * _customLabourNameController   : TextEditingController
+    * _customLabourSalaryController : TextEditingController
+    * _customLabourQtyController    : TextEditingController
+
+  - State Variables:
+    * materials                     : List<Map<String, dynamic>>
+    * labours                       : List<Map<String, dynamic>>
+    * selectedSiteId                : String? (Canonical ID, e.g., 'ST001_pothys')
+    * selectedDate                  : DateTime? (Default: DateTime.now())
+    * supervisorName, supervisorId  : String? (Loaded from site map or entry)
+    * siteLocation, projectStage    : String?
+    * projectName                   : String?
+    * isUpdateMode                  : bool (true when editing an existing record)
+    * _updateDocId                  : String? (Firestore Doc ID being updated)
+    * _updateCollection             : String? (Collection being updated: 'siteSupervisorEntries')
+    * _selectedUpdateDate           : DateTime? (Date of the loaded record)
+    * _existingEntryOriginalData    : Map<String, dynamic>? (Snapshot of original data)
+    * _existingEntryForCurrentDate  : Map<String, dynamic>? (Auto-detected entry for chosen date)
+    * isSaving                      : bool (Loading indicator state)
+
+B. UI Layout & Section Hierarchy:
+---------------------------------
+  1. Top AppBar / Navigation:
+     - Header: "Manager Daily Site Entry" with themed dark accent gradient.
+     - Back button navigating to the manager dashboard.
+
+  2. Site & Date Information Card:
+     - Site Dropdown: Canonical list of sites mapped to supervisors.
+     - Metadata Display: Supervisor Name, Location, Project Stage.
+     - Date Display: Shows current calendar date with a "Change" button.
+     - Auto-Detector Hook: Changing site or date triggers an asynchronous check
+       for any existing supervisor entry on that date.
+
+  3. Update Existing Entry Card:
+     - Normal State:
+       * Primary Action: "Select Existing Entry" button with history icon.
+       * Smart Alert Banner: If an entry already exists for the chosen site & date,
+         displays an alert: "Entry exists for YYYY-MM-DD [Review & Edit]".
+     - Active Update Mode:
+       * Green Success Badge: "Editing Entry: YYYY-MM-DD (Supervisor: Name)".
+       * Actions: "Select Existing Entry" and "Exit Update" (resets form cleanly).
+
+  4. Material Details Card:
+     - Search & Dropdown: Live searchable list of organization materials.
+     - Quantity Field: Input with increment/numeric keyboard.
+     - Add Button: Inserts material into the `materials` list.
+     - Custom Material Accordion: Allows adding non-catalog site materials.
+
+  5. Labour Details Card:
+     - Search & Dropdown: Pre-configured labour roles/designations.
+     - Count Field: Worker headcount.
+     - Add Button: Inserts labour into the `labours` list.
+     - Custom Labour Accordion: Allows adding temporary/specialist designations.
+
+  6. Other Expenses Card:
+     - Direct numeric fields for Food (₹), Transport (₹), and Fuel (₹).
+     - Reactive calculation of Total Expenses = Food + Transport + Fuel.
+
+  7. Today's Summary Card & DataTable:
+     - Real-time Total Calculation:
+       Total = Σ(Material Qty * Unit Price) + Σ(Labour Count * Salary) + Expenses.
+     - Interactive Table:
+       Columns: [Item, Qty/Count, Amount, Actions]
+       * Material Rows: Displays material name, quantity, total price, and action buttons.
+       * Labour Rows: Displays designation, worker count, total wage, and action buttons.
+       * Expense Rows: Displays Food, Transport, Fuel breakdowns.
+       * Action Buttons:
+         - Edit Icon (Blue): Opens dialog to edit Quantity & Price (or Count & Salary).
+         - Delete Icon (Red): Removes the row from the active submission.
+
+  8. Bottom Action Bar:
+     - Save / Update Button:
+       * In Normal Mode : Displays "SAVE" -> prompts confirmation or duplicate check.
+       * In Update Mode : Displays "UPDATE" -> executes in-place backend record update.
+     - Reset Button: Clears the form and resets update state.
+
+================================================================================
+3. BACKEND DATABASE ARCHITECTURE & FIRESTORE SCHEMA
+================================================================================
+
+A. Primary Canonical Collection:
+--------------------------------
+  Firestore Path:
+    /organisation/{orgId}/data/siteSupervisorEntries/{docId}
+
+  Document ID Convention:
+    `{siteCode}_{ddMMyyyy}`
+    Example: `ST001_29092026` (Site: ST001, Date: 29-09-2026)
+
+B. Canonical Document Payload Specification:
+--------------------------------------------
+{
+  "siteId": "ST001",
+  "siteCode": "ST001",
+  "siteLocation": "OMR Road, Chennai",
+  "location": "OMR Road, Chennai",
+  "projectName": "Commercial Complex Phase 1",
+  "projectStage": "Foundation Stage",
+  "supervisorId": "SUP_104",
+  "supervisorName": "Ramesh Supervisor",
+  "supervisor": "Ramesh Supervisor",
+
+  "date": "2026-09-29T10:30:00.000",
+  "createdAt": Timestamp(2026-09-29 10:35:00),
+  "updatedAt": Timestamp(2026-09-29 11:15:00),
+  
+  "createdBy": "Ramesh Supervisor",
+  "lastUpdatedBy": "Manager Suresh",
+  "lastUpdatedByRole": "manager",
+
+  "materials": [
+    {
+      "type": "Cement 53 Grade",
+      "materialName": "Cement 53 Grade",
+      "quantity": 25,
+      "unit": "Bags",
+      "category": "Structural",
+      "unitPrice": 420.0,
+      "amount": 10500.0
+    },
+    {
+      "type": "Steel Rebar 12mm",
+      "materialName": "Steel Rebar 12mm",
+      "quantity": 100,
+      "unit": "Kg",
+      "category": "Steel",
+      "unitPrice": 65.0,
+      "amount": 6500.0
+    }
+  ],
+
+  "labours": [
+    {
+      "type": "Head Mason",
+      "count": 2,
+      "salary": 1100.0,
+      "unitSalary": 1100.0,
+      "amount": 2200.0
+    },
+    {
+      "type": "Helper",
+      "count": 6,
+      "salary": 600.0,
+      "unitSalary": 600.0,
+      "amount": 3600.0
+    }
+  ],
+
+  "food": 600,
+  "transport": 350,
+  "fuel": 400,
+
+  "expenses": {
+    "foodCost": 600,
+    "transportCost": 350,
+    "fuelCost": 400,
+    "totalExpense": 1350
+  },
+
+  "totalAmount": 24150.0,
+
+  "morningStatus": "Work started at 8:30 AM. Excavation completed.",
+  "afternoonStatus": "Concrete pouring in progress. Quality checked by manager."
+}
+
+C. Synchronized Secondary Collections:
+--------------------------------------
+When the Manager updates an existing entry, secondary backend services sync in parallel:
+
+  1. Expense Aggregation Cache:
+     Service: ExpenseService.updateTotalSiteExpense(siteId)
+     Target:
+       - Recalculates total site expenditure across all daily entries.
+       - Syncs with linked project document `/organisation/{orgId}/data/projects/{siteId}`.
+       - Updates `totalSiteExpense`, `totalProjectExpenses`, and dashboard metrics.
+
+  2. Site Material Consumption Pool:
+     Service: MaterialInventoryService.recordDailyMaterialConsumption(...)
+     Target Collection:
+       /organisation/{orgId}/data/dailyMaterialConsumptions/{consumptionId}
+     Effect: Updates material usage logs for stock deduction and audit trails.
+
+  3. Project Stage Actuals:
+     Target Collection:
+       /organisation/{orgId}/data/siteSupervisorProjectStageActual/{siteCode}_{supervisorName}_{projectStage}
+     Effect:
+       Adjusts `actPayment` by adding `(updatedTotalAmount - previousTotalAmount)`
+       to maintain exact stage budget tracking.
+
+================================================================================
+4. STEP-BY-STEP WORKFLOW & PROCESS FLOW
+================================================================================
+
+--------------------------------------------------------------------------------
+Phase 1: Supervisor One-Time Entry Creation
+--------------------------------------------------------------------------------
+  1. Supervisor opens Site Entry Page on mobile or tablet.
+  2. Selects Site and enters daily materials, labour headcounts, and petty expenses.
+  3. System checks if `/organisation/{orgId}/data/siteSupervisorEntries/{siteCode}_{ddMMyyyy}` exists.
+     - If it exists: Blocks supervisor with "Duplicate Entry: An entry for this site and date already exists."
+     - If not: Writes document to `siteSupervisorEntries` and triggers initial stage/inventory tasks.
+
+--------------------------------------------------------------------------------
+Phase 2: Manager Reviews Existing Entry
+--------------------------------------------------------------------------------
+  Two intuitive entry review flows are provided for the Manager:
+
+  Flow A: Historical Entry Selector Modal
+    1. Manager navigates to "Manager Daily Site Entry".
+    2. Selects the target site from the dropdown.
+    3. Clicks "Select Existing Entry".
+    4. System queries `siteSupervisorEntries` where `siteId in [siteKeys]`, plus
+       docId prefix matching.
+    5. Displays a Draggable Bottom Sheet sorted newest-to-oldest with:
+       - Date formatted (YYYY-MM-DD)
+       - Project Stage badge
+       - Supervisor Name
+       - Total Amount (₹)
+    6. Manager taps an entry to load it.
+
+  Flow B: Instant Date-Match Detection
+    1. Manager selects a site and chooses a date on the calendar.
+    2. Background check runs: `_checkExistingEntryForDate(selectedDate)`.
+    3. If a supervisor submission exists for that date, an alert banner is displayed:
+       "Entry exists for YYYY-MM-DD [Review & Edit]".
+    4. Manager taps "Review & Edit" to immediately load the record into the form.
+
+--------------------------------------------------------------------------------
+Phase 3: Populating Form & Activating Update Mode
+--------------------------------------------------------------------------------
+  When an entry is loaded via `_loadEntryForUpdate(docId, data)`:
+    1. `isUpdateMode` is set to `true`.
+    2. `_updateDocId` stores the exact Firestore document ID.
+    3. `_existingEntryOriginalData` stores a complete deep copy of the original payload.
+    4. All materials are parsed and mapped into `materials` list.
+    5. All labour roles, headcounts, and salaries are mapped into `labours` list.
+    6. `foodCost`, `transportCost`, and `fuelCost` controllers are pre-filled.
+    7. Morning & afternoon status controllers are pre-filled.
+    8. UI updates to show the green "Editing Entry" badge, and the bottom button
+       changes from "SAVE" to "UPDATE".
+
+--------------------------------------------------------------------------------
+Phase 4: Manager Corrects Mismatched Values
+--------------------------------------------------------------------------------
+  The Manager can modify any aspect of the daily report:
+    - Edit Item In-Place: Tapping the blue Edit icon on any material or labour row
+      opens a quick modal to update Quantity & Unit Price or Worker Count & Salary.
+    - Delete Item: Tapping the red Delete icon removes incorrect or redundant rows.
+    - Add New Items: Manager can add any catalog or custom material/labour.
+    - Edit Expenses: Direct input in Food, Transport, or Fuel fields.
+    - Edit Status / Remarks: Edit morning or afternoon progress notes.
+
+--------------------------------------------------------------------------------
+Phase 5: In-Place Backend Update Execution
+--------------------------------------------------------------------------------
+  When Manager clicks "UPDATE":
+    1. System validates inputs and recalculates `totalAmount`.
+    2. Builds the merged payload:
+       - Starts with `_existingEntryOriginalData` (preserving supervisorId, supervisorName,
+         createdAt, original stage, location, etc.).
+       - Overwrites `materials`, `labours`, `food`, `transport`, `fuel`, `totalAmount`,
+         `morningStatus`, `afternoonStatus`.
+       - Sets `updatedAt` to `FieldValue.serverTimestamp()`.
+       - Sets `lastUpdatedBy` to `widget.userName` and `lastUpdatedByRole` to `'manager'`.
+    3. Executes atomic in-place update:
+       `await FirestoreService.siteSupervisorEntries.doc(_updateDocId).set(entryData, SetOptions(merge: true));`
+    4. No new document is generated. The record maintains the exact same document ID.
+
+--------------------------------------------------------------------------------
+Phase 6: Multi-Service Synchronization & State Reset
+--------------------------------------------------------------------------------
+  1. Concurrently executes:
+     - `ExpenseService.updateTotalSiteExpense(siteId)` -> Refreshes all project totals.
+     - `MaterialInventoryService.recordDailyMaterialConsumption(...)` -> Refreshes inventory.
+     - `siteSupervisorProjectStageActual` adjustment -> Updates stage budget deltas.
+  2. Displays Green Success SnackBar: "Site entry updated successfully!".
+  3. Resets form fields and sets `isUpdateMode = false`, returning page to standard state.
+
+--------------------------------------------------------------------------------
+Phase 7: Duplicate Prevention Safeguards
+--------------------------------------------------------------------------------
+  If a Manager enters values manually without clicking "Select Existing Entry" and
+  hits "SAVE":
+    1. System performs a pre-flight existence check for `${siteCode}_${ddMMyyyy}`.
+    2. If an entry already exists, saving is blocked.
+    3. A Dialog alerts the Manager:
+       "A daily site entry for site ST001 on YYYY-MM-DD already exists.
+        To avoid duplicates, please review and update the existing entry."
+    4. Action button "Load Existing Entry" opens the record directly in Update Mode.
+
+================================================================================
+5. DATA PRESERVATION & COMPARISON MATRIX
+================================================================================
+Field Name           | Supervisor Submission | Manager In-Place Update
+---------------------+-----------------------+----------------------------------
+Document ID          | {siteCode}_{ddMMyyyy} | RETAINED EXACTLY AS SAME ID
+Collection           | siteSupervisorEntries | RETAINED IN siteSupervisorEntries
+siteId / siteCode    | ST001                 | Preserved
+supervisorId         | SUP_101               | Preserved
+supervisorName       | John Doe              | Preserved
+createdAt            | Original Timestamp    | Preserved (Not overwritten)
+createdBy            | John Doe              | Preserved
+materials            | Original List         | Updated to Manager-edited list
+labours              | Original List         | Updated to Manager-edited list
+food / transport/fuel| Original Amounts      | Updated to Manager-edited values
+totalAmount          | Original Total        | Recalculated accurately
+morningStatus        | Supervisor Notes      | Preserved or appended/edited
+afternoonStatus      | Supervisor Notes      | Preserved or appended/edited
+updatedAt            | Initial Timestamp     | Set to ServerTimestamp()
+lastUpdatedBy        | None / Supervisor     | Manager's Name
+lastUpdatedByRole    | 'supervisor'          | 'manager'
+
+================================================================================
+6. SUMMARY OF TECHNICAL BENEFITS
+================================================================================
+1. Elimination of Data Fragmentation:
+   All daily site data resides in `siteSupervisorEntries`. No separate or orphaned
+   records exist in obsolete collections.
+2. Complete Auditability:
+   Maintains who originally entered the site data and which manager audited and
+   updated it, with exact server timestamps.
+3. Financial Accuracy:
+   Because updates recalculate `ExpenseService` totals in real time, owner and
+   organization financial statements are always 100% synchronized with ground realities.
+4. Smooth User Experience:
+   Managers are guided by auto-detection prompts, one-tap modals, inline edit dialogs,
+   and clear mode indicators, making daily entry verification fast and error-free.
+================================================================================

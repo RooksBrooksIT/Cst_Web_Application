@@ -597,17 +597,17 @@ export default function ManagerDashboard() {
             >
               <img
                 src={logo}
-                alt="CST Construction"
+                alt="eBricks"
                 className="h-10 w-auto rounded-xl bg-white p-1 shadow-md"
               />
 
               <div className="text-white">
                 <strong className="block text-sm font-extrabold tracking-wide">
-                  CST Construction
+                  eBricks
                 </strong>
 
                 <span className="text-[10px] font-bold uppercase tracking-widest text-blue-200">
-                  Manager Desk
+                  Manager Portal
                 </span>
               </div>
             </Link>

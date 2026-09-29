@@ -940,7 +940,7 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
               <div>
                 <div className="flex items-center gap-1.5 text-xs font-bold text-blue-900 uppercase tracking-widest">
                   <ShieldCheck className="w-4 h-4" />
-                  <span>CST Enterprise Logistics</span>
+                  <span>eBricks Enterprise Logistics</span>
                 </div>
                 <h2 className="text-xl font-black text-slate-900 mt-1">MATERIAL DELIVERY CHALLAN</h2>
                 <p className="text-xs text-slate-500 font-mono">

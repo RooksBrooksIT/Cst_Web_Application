@@ -64,7 +64,7 @@ export default function ManagerSupportHub({ orgId, currentUser, onNotify }) {
           </div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Manager Support</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Access CST construction workflows documentation, standard operating procedures, and 24/7 technical help.
+            Access eBricks construction workflows documentation, standard operating procedures, and 24/7 technical help.
           </p>
         </div>
       </div>

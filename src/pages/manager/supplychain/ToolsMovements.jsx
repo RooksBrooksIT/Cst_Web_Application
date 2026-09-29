@@ -116,6 +116,22 @@ export default function ToolsMovements({ orgId, sites = [], currentUser, onNotif
     }
   }, [orgId])
 
+  // Deduplicated site options
+  const uniqueSites = useMemo(() => {
+    const seen = new Set()
+    return (sites || []).filter((s) => {
+      if (!s) return false
+      const id = s.id || s.siteId || s.projectId
+      const name = (s.siteName || s.projectName || s.name || '').trim().toLowerCase()
+      const key = `${id}_${name}`
+      if (seen.has(key) || (id && seen.has(id)) || (name && seen.has(name))) return false
+      if (id) seen.add(id)
+      if (name) seen.add(name)
+      seen.add(key)
+      return true
+    })
+  }, [sites])
+
   // Map depot availability by toolCode
   const depotStockMap = useMemo(() => {
     const map = {}
@@ -699,7 +715,7 @@ export default function ToolsMovements({ orgId, sites = [], currentUser, onNotif
                     className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
                   >
                     <option value="">Select Source Site...</option>
-                    {sites.map((s) => (
+                    {uniqueSites.map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.siteName || s.projectName}
                       </option>
@@ -720,7 +736,7 @@ export default function ToolsMovements({ orgId, sites = [], currentUser, onNotif
                   className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
                 >
                   <option value="">Select Target Construction Site...</option>
-                  {sites.map((s) => (
+                  {uniqueSites.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.siteName || s.projectName}
                     </option>

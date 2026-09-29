@@ -98,9 +98,18 @@ export default function OrganizationInventoryHub({ sites = [], projects = [] }) 
     return () => unsubs.forEach((u) => u && u())
   }, [orgId])
 
-  // Consolidated site and project list for name resolution
+  // Consolidated site and project list for name resolution (deduplicated by site/project ID)
   const allSiteRecords = useMemo(() => {
-    return [...sites, ...projects, ...fetchedSites, ...fetchedProjects]
+    const raw = [...sites, ...projects, ...fetchedSites, ...fetchedProjects]
+    const map = new Map()
+    raw.forEach((s) => {
+      if (!s) return
+      const sId = s.id || s.siteId || s.projectId
+      if (sId && !map.has(sId)) {
+        map.set(sId, s)
+      }
+    })
+    return Array.from(map.values())
   }, [sites, projects, fetchedSites, fetchedProjects])
 
   // Resolve actual Project / Site Name from siteId or doc metadata across all collections
@@ -442,9 +451,61 @@ export default function OrganizationInventoryHub({ sites = [], projects = [] }) 
     })
   }, [tools, toolCategory, toolStatusFilter, toolSearch])
 
+  // Unique location options for dropdown selection (deduplicated by resolved display name)
+  const uniqueLocationOptions = useMemo(() => {
+    const seenNames = new Set()
+    const options = []
+
+    const processCandidate = (sId, rawName) => {
+      if (!sId || sId === 'HQ' || sId === 'COMPANY_HQ') return
+      const sName = resolveSiteName(sId, rawName)
+      if (!sName || !sName.trim()) return
+
+      const nameKey = sName.trim().toLowerCase()
+      if (!seenNames.has(nameKey)) {
+        seenNames.add(nameKey)
+        options.push({
+          id: sId,
+          name: sName.trim(),
+          matchingIds: [sId],
+          matchingNames: [nameKey],
+        })
+      } else {
+        const existing = options.find((opt) => opt.name.trim().toLowerCase() === nameKey)
+        if (existing && !existing.matchingIds.includes(sId)) {
+          existing.matchingIds.push(sId)
+        }
+      }
+    }
+
+    allSiteRecords.forEach((s) => {
+      const sId = s.id || s.siteId || s.projectId
+      const rawName = s.projectName || s.siteName || s.name || s.projectTitle
+      processCandidate(sId, rawName)
+    })
+
+    toolsAtSite.forEach((ts) => {
+      processCandidate(ts.siteId, ts.siteName || ts.projectName)
+    })
+
+    return options.sort((a, b) => a.name.localeCompare(b.name))
+  }, [allSiteRecords, toolsAtSite, resolveSiteName])
+
   const filteredSiteTools = useMemo(() => {
+    const selectedLocObj = uniqueLocationOptions.find((loc) => loc.id === selectedSiteFilter)
+
     return siteToolsBreakdown.filter((st) => {
-      if (selectedSiteFilter !== 'all' && st.siteId !== selectedSiteFilter) return false
+      if (selectedSiteFilter !== 'all') {
+        if (selectedSiteFilter === 'COMPANY_HQ') {
+          if (st.siteId !== 'COMPANY_HQ') return false
+        } else if (selectedLocObj) {
+          const matchesId = selectedLocObj.matchingIds.includes(st.siteId)
+          const matchesName = st.siteName && selectedLocObj.matchingNames.includes(st.siteName.trim().toLowerCase())
+          if (!matchesId && !matchesName) return false
+        } else {
+          if (st.siteId !== selectedSiteFilter) return false
+        }
+      }
       if (toolSearch.trim()) {
         const q = toolSearch.trim().toLowerCase()
         const name = st.toolName.toLowerCase()
@@ -454,7 +515,7 @@ export default function OrganizationInventoryHub({ sites = [], projects = [] }) 
       }
       return true
     })
-  }, [siteToolsBreakdown, selectedSiteFilter, toolSearch])
+  }, [siteToolsBreakdown, selectedSiteFilter, toolSearch, uniqueLocationOptions])
 
   const toolMetrics = useMemo(() => {
     const totalAssets = tools.length
@@ -899,11 +960,11 @@ export default function OrganizationInventoryHub({ sites = [], projects = [] }) 
                 >
                   <option value="all">All Locations (Sites & Company HQ)</option>
                   <option value="COMPANY_HQ">Company HQ Warehouse</option>
-                  {allSiteRecords.map((s) => {
-                    const sId = s.id || s.siteId || s.projectId
-                    const sName = s.projectName || s.siteName || s.name || s.projectTitle || sId
-                    return <option key={sId} value={sId}>{sName}</option>
-                  })}
+                  {uniqueLocationOptions.map((loc) => (
+                    <option key={loc.id} value={loc.id}>
+                      {loc.name}
+                    </option>
+                  ))}
                 </select>
 
                 <ExportButton

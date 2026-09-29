@@ -416,10 +416,10 @@ export default function ManagerModule() {
               onClick={() => setIsMobileMenuOpen(false)}
               className="flex items-center gap-3"
             >
-              <img className="h-10 w-auto rounded-xl object-contain bg-white p-1 shadow-md" src={logo} alt="CST" />
+              <img className="h-10 w-auto rounded-xl object-contain bg-white p-1 shadow-md" src={logo} alt="eBricks" />
               <div className="text-white">
-                <strong className="block text-sm font-extrabold tracking-wide">CST Construction</strong>
-                <span className="text-[10px] font-bold tracking-widest text-blue-200 uppercase">Manager Desk</span>
+                <strong className="block text-sm font-extrabold tracking-wide">eBricks</strong>
+                <span className="text-[10px] font-bold tracking-widest text-blue-200 uppercase">Manager Portal</span>
               </div>
             </Link>
             <button
