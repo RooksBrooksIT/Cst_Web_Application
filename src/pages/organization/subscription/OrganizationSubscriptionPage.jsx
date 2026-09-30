@@ -146,6 +146,7 @@ export function OrganizationSubscriptionPage({
             orgName={userData?.organizationName || 'Your Organization'}
             userEmail={user?.email || 'admin@construction.com'}
             userName={userData?.fullName || 'Admin'}
+            userPhone={userData?.phone || userData?.mobile || user?.phoneNumber || '9999999999'}
             onSuccess={handlePaymentSuccess}
           />
         )}

@@ -3,7 +3,6 @@ import {
   Coins,
   Plus,
   Search,
-  Sparkles,
   Trash2,
   Edit2,
   AlertCircle,
@@ -14,7 +13,6 @@ import {
   Lock,
   Unlock,
   RefreshCw,
-  CheckCircle2,
   ShieldAlert,
 } from 'lucide-react'
 import {
@@ -244,151 +242,117 @@ export default function LabourWageScales({ orgId, onNotify }) {
 
       {/* MODE 1: NEW LABOUR TRADE FORM */}
       {activeMode === 'new' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-6">
+        <div className="w-full bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs">
+          <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-6">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">Add New Master Trade</h2>
+              <p className="text-xs text-slate-500">
+                Define an enterprise trade category with approved benchmark day wages.
+              </p>
+            </div>
+            <span className="px-3 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200/60 rounded-full font-mono text-xs font-bold">
+              Auto-ID: {nextLabourId}
+            </span>
+          </div>
+
+          <form onSubmit={handleCreateTrade} className="space-y-5">
+            {/* Auto ID Readonly */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Add New Master Trade</h2>
-                <p className="text-xs text-slate-500">
-                  Define an enterprise trade category with approved benchmark day wages.
-                </p>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Labour ID (Auto-Generated)
+                </label>
+                <input
+                  type="text"
+                  disabled
+                  value={nextLabourId}
+                  className="w-full px-3.5 py-2.5 text-sm bg-slate-100 border border-slate-200 rounded-xl text-slate-500 font-mono font-bold cursor-not-allowed"
+                />
+                <p className="text-[11px] text-slate-400 mt-1">Calculated sequentially (LT001, LT002...)</p>
               </div>
-              <span className="px-3 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200/60 rounded-full font-mono text-xs font-bold">
-                Auto-ID: {nextLabourId}
-              </span>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Labour Designation / Trade Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={formDesignation}
+                  onChange={(e) => setFormDesignation(e.target.value)}
+                  placeholder="e.g. Mason, Carpenter, Barbender, Electrician, Helper"
+                  className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                />
+              </div>
             </div>
 
-            <form onSubmit={handleCreateTrade} className="space-y-5">
-              {/* Auto ID Readonly */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Labour ID (Auto-Generated)
-                  </label>
+            {/* Wage & OT Rate */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Daily Salary / Standard Wage (INR) *
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">
+                    ₹
+                  </span>
                   <input
-                    type="text"
-                    disabled
-                    value={nextLabourId}
-                    className="w-full px-3.5 py-2.5 text-sm bg-slate-100 border border-slate-200 rounded-xl text-slate-500 font-mono font-bold cursor-not-allowed"
-                  />
-                  <p className="text-[11px] text-slate-400 mt-1">Calculated sequentially (LT001, LT002...)</p>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Labour Designation / Trade Name *
-                  </label>
-                  <input
-                    type="text"
+                    type="number"
+                    min="1"
                     required
-                    value={formDesignation}
-                    onChange={(e) => setFormDesignation(e.target.value)}
-                    placeholder="e.g. Mason, Carpenter, Barbender, Electrician, Helper"
-                    className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    value={formSalary}
+                    onChange={(e) => setFormSalary(e.target.value)}
+                    placeholder="e.g. 850"
+                    className="w-full pl-8 pr-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-semibold"
                   />
                 </div>
+                <p className="text-[11px] text-slate-400 mt-1">Standard 8-hour shift rate per worker</p>
               </div>
 
-              {/* Wage & OT Rate */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Daily Salary / Standard Wage (INR) *
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">
-                      ₹
-                    </span>
-                    <input
-                      type="number"
-                      min="1"
-                      required
-                      value={formSalary}
-                      onChange={(e) => setFormSalary(e.target.value)}
-                      placeholder="e.g. 850"
-                      className="w-full pl-8 pr-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-semibold"
-                    />
-                  </div>
-                  <p className="text-[11px] text-slate-400 mt-1">Standard 8-hour shift rate per worker</p>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Overtime Hourly Rate (INR / hr)
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">
+                    ₹
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    value={formOtRate}
+                    onChange={(e) => setFormOtRate(e.target.value)}
+                    placeholder={formSalary ? Math.round(Number(formSalary) / 6).toString() : 'e.g. 140'}
+                    className="w-full pl-8 pr-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-semibold"
+                  />
                 </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Overtime Hourly Rate (INR / hr)
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">
-                      ₹
-                    </span>
-                    <input
-                      type="number"
-                      min="0"
-                      value={formOtRate}
-                      onChange={(e) => setFormOtRate(e.target.value)}
-                      placeholder={formSalary ? Math.round(Number(formSalary) / 6).toString() : 'e.g. 140'}
-                      className="w-full pl-8 pr-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-semibold"
-                    />
-                  </div>
-                  <p className="text-[11px] text-slate-400 mt-1">Default: ~Daily Wage / 6 hours</p>
-                </div>
-              </div>
-
-              {/* Submit Action */}
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFormDesignation('')
-                    setFormSalary('')
-                    setFormOtRate('')
-                  }}
-                  className="px-4 py-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
-                >
-                  Clear Fields
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting || !formDesignation.trim() || !formSalary}
-                  className="inline-flex items-center gap-2 px-6 py-2.5 text-xs font-semibold text-white bg-[#0B3470] hover:bg-[#082855] rounded-xl shadow-xs disabled:opacity-50 transition-all cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>{submitting ? 'Saving...' : 'Save Labour Trade'}</span>
-                </button>
-              </div>
-            </form>
-          </div>
-
-          {/* Right Info Box */}
-          <div className="space-y-4">
-            <div className="bg-slate-900 text-white p-5 rounded-2xl border border-slate-800 shadow-sm">
-              <div className="flex items-center gap-2 mb-3">
-                <Sparkles className="w-4 h-4 text-emerald-400" />
-                <h3 className="text-sm font-bold text-slate-100">Mobile Data Alignment</h3>
-              </div>
-              <div className="space-y-3 text-xs text-slate-300">
-                <p>
-                  Trade categories written to <code className="text-emerald-400 font-mono">/organisation/{orgId}/labours/{nextLabourId}</code> directly populate:
-                </p>
-                <ul className="list-disc list-inside space-y-1 text-slate-400 text-[11px]">
-                  <li>Supervisor daily muster roll categories</li>
-                  <li>Worker onboarding trade dropdowns</li>
-                  <li>Budget estimation for stage labour indents</li>
-                </ul>
+                <p className="text-[11px] text-slate-400 mt-1">Default: ~Daily Wage / 6 hours</p>
               </div>
             </div>
 
-            <div className="bg-emerald-50/70 border border-emerald-200/80 p-4 rounded-2xl text-xs text-emerald-900">
-              <div className="flex items-start gap-2.5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-700 mt-0.5 shrink-0" />
-                <div>
-                  <p className="font-bold">Automated Wage Inheritance</p>
-                  <p className="mt-1 text-emerald-800/90 leading-relaxed text-[11px]">
-                    When adding new workers in the directory, selecting a trade automatically inherits this benchmark day rate, eliminating manual salary re-entry errors.
-                  </p>
-                </div>
-              </div>
+            {/* Submit Action */}
+            <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setFormDesignation('')
+                  setFormSalary('')
+                  setFormOtRate('')
+                }}
+                className="px-4 py-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+              >
+                Clear Fields
+              </button>
+              <button
+                type="submit"
+                disabled={submitting || !formDesignation.trim() || !formSalary}
+                className="inline-flex items-center gap-2 px-6 py-2.5 text-xs font-semibold text-white bg-[#0B3470] hover:bg-[#082855] rounded-xl shadow-xs disabled:opacity-50 transition-all cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>{submitting ? 'Saving...' : 'Save Labour Trade'}</span>
+              </button>
             </div>
-          </div>
+          </form>
         </div>
       )}
 
