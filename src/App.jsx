@@ -1,9 +1,11 @@
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import OrganizationDashboard from './pages/organization/Dashboard'
 import ManagerDashboard from './pages/manager/ManagerDashboard'
 import ManagerModule from './pages/manager/ManagerModule'
 import { AuthProvider } from './context/AuthContext'
 import { NotificationProvider } from './context/NotificationContext'
+import { useNotifications } from './hooks/useNotifications'
+import NotificationBanner from './components/common/NotificationBanner'
 import { useAuth } from './hooks/useAuth'
 import Login from './pages/Login'
 
@@ -17,11 +19,27 @@ function ProtectedRoute({ allowedRole, children }) {
   return children
 }
 
+function GlobalNotificationBanner() {
+  const { activeBanner, dismissBanner, navigateNotification } = useNotifications()
+  const navigate = useNavigate()
+
+  if (!activeBanner) return null
+
+  return (
+    <NotificationBanner
+      notification={activeBanner}
+      onAction={(item) => navigateNotification(item, navigate)}
+      onDismiss={dismissBanner}
+    />
+  )
+}
+
 function App() {
   return (
     <AuthProvider>
       <NotificationProvider>
         <BrowserRouter>
+          <GlobalNotificationBanner />
           <Routes>
             <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="/login" element={<Login />} />

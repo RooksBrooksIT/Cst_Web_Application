@@ -19,6 +19,7 @@ import {
   fetchWithFallback,
   subscribeWithFallback,
 } from './firestoreService.js'
+import { createNotification } from './notificationService.js'
 
 /**
  * CST White Label - Materials Management System (Consumables & Bulk Raw Materials)
@@ -379,6 +380,170 @@ export const subscribeMaterialMovements = subscribeMaterialTransactions
  * 2. Increments /siteMaterialPool/{siteId}_{cleanMatName}
  * 3. Creates immutable /materialTransactions/{TXN_MAT_{timestamp}}
  */
+// ------------------------------------------------------------------------------------------------
+// 4B. MATERIAL ALLOCATIONS (Direct Flow 2: Manager -> Site Allocation)
+// ------------------------------------------------------------------------------------------------
+
+export async function fetchMaterialAllocations(orgId, siteId = null) {
+  if (!orgId) return []
+  const colRef = collection(db, 'organisation', orgId, 'materialAllocations')
+  if (siteId) {
+    const q = query(colRef, where('siteId', '==', siteId))
+    const snap = await getDocs(q)
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+  }
+  const snap = await getDocs(colRef)
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+}
+
+export function subscribeMaterialAllocations(orgId, onData, onError) {
+  return subscribeWithFallback(orgId, 'materialAllocations', onData, onError)
+}
+
+/**
+ * Flow 2: Manager Direct Material Allocation to Site
+ * Source: MANAGER_MATERIALS_AND_TOOLS_ARCHITECTURE_AND_FLOW.txt Section 2.3 & 5.2
+ */
+export async function allocateMaterialToSite(orgId, payload, managerActor) {
+  if (!orgId) throw new Error('Organization ID is required')
+  if (!payload.siteId) throw new Error('Destination site is required')
+  if (!payload.materialName?.trim()) throw new Error('Material selection is required')
+  const qty = Number(payload.quantity) || 0
+  if (qty <= 0) throw new Error('Allocation quantity must be greater than zero')
+
+  const unitRate = Number(payload.unitRate ?? payload.unitPrice) || 0
+  const totalAmount = Number(payload.amount ?? (qty * unitRate)) || 0
+  const cleanMatName = cleanKey(payload.materialName)
+  const cleanSiteId = cleanKey(payload.siteId)
+  const timestamp = Date.now()
+
+  const allocationId = payload.allocationId || `ALLOC_${timestamp}_${Math.random().toString(36).substring(2, 6)}`
+  const txnId = `TXN_MAT_${timestamp}_${Math.random().toString(36).substring(2, 6)}`
+
+  const batch = writeBatch(db)
+
+  // 1. Immutable record in materialAllocations
+  const allocRef = doc(db, 'organisation', orgId, 'materialAllocations', allocationId)
+  batch.set(allocRef, {
+    allocationId,
+    siteId: payload.siteId,
+    siteCode: payload.siteCode || '',
+    siteName: payload.siteName || '',
+    projectName: payload.projectName || payload.siteName || '',
+    materialId: payload.materialId || '',
+    materialName: payload.materialName.trim(),
+    quantity: qty,
+    unit: payload.unit || 'Bags',
+    unitRate,
+    unitPrice: unitRate,
+    amount: totalAmount,
+    totalValuation: totalAmount,
+    allocatedBy: managerActor?.name || 'Operations Manager',
+    managerId: managerActor?.id || 'mgr_lead',
+    managerName: managerActor?.name || 'Operations Manager',
+    allocationDate: payload.allocationDate ? new Date(payload.allocationDate) : serverTimestamp(),
+    remarks: payload.remarks || 'Direct site material allocation from manager',
+    createdAt: serverTimestamp(),
+  })
+
+  // 2. Increment site material pool (dual write availableCount and currentBalance, totalAllocated and totalValuation)
+  const poolDocId = `${cleanSiteId}_${cleanMatName}`
+  const poolRef = doc(db, 'organisation', orgId, 'siteMaterialPool', poolDocId)
+  batch.set(poolRef, {
+    siteId: payload.siteId,
+    siteCode: payload.siteCode || '',
+    siteName: payload.siteName || '',
+    projectName: payload.projectName || payload.siteName || '',
+    materialName: payload.materialName.trim(),
+    totalAllocated: increment(qty),
+    availableCount: increment(qty),
+    currentBalance: increment(qty),
+    unit: payload.unit || 'Bags',
+    unitPrice: unitRate,
+    totalValuation: increment(totalAmount),
+    totalAllocatedValue: increment(totalAmount),
+    updatedAt: serverTimestamp(),
+    lastUpdated: serverTimestamp(),
+  }, { merge: true })
+
+  // 3. Decrement Central Warehouse Stock
+  if (payload.deductFromWarehouse !== false) {
+    const warehouseRef = doc(db, 'organisation', orgId, 'materialsAvailability', cleanMatName)
+    batch.set(warehouseRef, {
+      materialName: payload.materialName.trim(),
+      availableCount: increment(-qty),
+      companyAvailableCount: increment(-qty),
+      unit: payload.unit || 'Bags',
+      lastUpdated: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }, { merge: true })
+  }
+
+  // 4. Immutable Audit Transaction in materialTransactions
+  const txnRef = doc(db, 'organisation', orgId, 'materialTransactions', txnId)
+  batch.set(txnRef, {
+    transactionId: txnId,
+    movementId: txnId,
+    allocationId,
+    gatePassNumber: payload.challanNumber || `GP-${timestamp.toString().slice(-6)}`,
+    transferType: 'COMPANY_TO_SITE',
+    transactionType: 'CompanyToSite',
+    from: 'Company Warehouse',
+    fromSite: 'Company Warehouse',
+    to: payload.siteName || payload.siteId,
+    toSiteId: payload.siteId,
+    toSite: payload.siteName || payload.siteId,
+    toSiteName: payload.siteName || payload.siteId,
+    siteId: payload.siteId,
+    siteName: payload.siteName || '',
+    projectName: payload.projectName || payload.siteName || '',
+    materialId: payload.materialId || '',
+    materialName: payload.materialName.trim(),
+    quantity: qty,
+    unit: payload.unit || 'Bags',
+    unitPrice: unitRate,
+    unitRate,
+    totalValue: totalAmount,
+    amount: totalAmount,
+    managerName: managerActor?.name || 'Operations Manager',
+    dispatchedBy: managerActor?.name || 'Operations Manager',
+    supervisorName: payload.supervisorName || '',
+    vehicleNumber: payload.vehicleNumber || '',
+    receivedStatus: 'Received',
+    date: new Date().toISOString().split('T')[0],
+    createdAt: serverTimestamp(),
+    timestamp: serverTimestamp(),
+  })
+
+  await batch.commit()
+
+  // 5. Trigger notification
+  try {
+    await createNotification({
+      orgId,
+      type: 'materialAllocation',
+      title: '📦 New Material Allocated to Site',
+      message: `${qty} ${payload.unit || 'Units'} of ${payload.materialName} allocated to ${payload.siteName || payload.siteId}.`,
+      siteId: payload.siteId,
+      siteName: payload.siteName || '',
+      senderRole: 'Manager',
+      senderName: managerActor?.name || 'Operations Manager',
+      actionRoute: '/manager/materials-stock',
+    })
+  } catch (notifErr) {
+    console.warn('Material allocation notification warning:', notifErr)
+  }
+
+  return { allocationId, txnId }
+}
+
+/**
+ * Mode 0: Company Warehouse -> Site Dispatch
+ * Wrapped inside an atomic WriteBatch:
+ * 1. Decrements /materialsAvailability/{cleanMatName}
+ * 2. Increments /siteMaterialPool/{siteId}_{cleanMatName}
+ * 3. Creates immutable /materialTransactions/{TXN_MAT_{timestamp}}
+ */
 export async function dispatchMaterialsToSite(orgId, payload) {
   if (!orgId) throw new Error('Organization ID is required')
   if (!payload.toSiteId) throw new Error('Destination site is required')
@@ -396,28 +561,35 @@ export async function dispatchMaterialsToSite(orgId, payload) {
 
     if (qty <= 0) continue
 
-    // 1. Decrement Central Warehouse Stock
+    // 1. Decrement Central Warehouse Stock (both availableCount and companyAvailableCount)
     const warehouseRef = doc(db, 'organisation', orgId, 'materialsAvailability', cleanMatName)
     batch.set(warehouseRef, {
       materialName: item.materialName,
       availableCount: increment(-qty),
+      companyAvailableCount: increment(-qty),
       unit: item.unit || 'Bags',
       lastUpdated: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     }, { merge: true })
 
-    // 2. Increment Site Material Pool
+    // 2. Increment Site Material Pool (both availableCount and currentBalance, totalAllocated and totalValuation)
     const poolDocId = `${cleanSiteId}_${cleanMatName}`
     const poolRef = doc(db, 'organisation', orgId, 'siteMaterialPool', poolDocId)
     batch.set(poolRef, {
       siteId: payload.toSiteId,
+      siteCode: payload.toSiteCode || '',
       siteName: payload.toSiteName || '',
+      projectName: payload.projectName || payload.toSiteName || '',
       materialName: item.materialName,
       totalAllocated: increment(qty),
+      availableCount: increment(qty),
       currentBalance: increment(qty),
       unit: item.unit || 'Bags',
       unitPrice,
+      totalValuation: increment(qty * unitPrice),
       totalAllocatedValue: increment(qty * unitPrice),
       updatedAt: serverTimestamp(),
+      lastUpdated: serverTimestamp(),
     }, { merge: true })
 
     // 3. Create Immutable Transaction Record
@@ -427,12 +599,15 @@ export async function dispatchMaterialsToSite(orgId, payload) {
       transactionId: txnId,
       movementId: txnId,
       gatePassNumber: payload.challanNumber || `GP-${timestamp.toString().slice(-6)}`,
+      transferType: 'COMPANY_TO_SITE',
       transactionType: 'CompanyToSite',
       from: 'Central Warehouse',
       fromSite: 'Central Warehouse',
       toSiteId: payload.toSiteId,
       toSite: payload.toSiteName || payload.toSiteId,
       toSiteName: payload.toSiteName || payload.toSiteId,
+      siteId: payload.toSiteId,
+      siteName: payload.toSiteName || payload.toSiteId,
       projectName: payload.projectName || payload.toSiteName || '',
       materialId: item.materialId || '',
       materialName: item.materialName,
@@ -450,6 +625,7 @@ export async function dispatchMaterialsToSite(orgId, payload) {
       receivedStatus: 'In Transit',
       date: new Date().toISOString().split('T')[0],
       createdAt: serverTimestamp(),
+      timestamp: serverTimestamp(),
     })
   }
 
@@ -470,25 +646,33 @@ export async function transferMaterialSiteToSite(orgId, payload) {
   const qty = Number(payload.quantity) || 0
   const unitPrice = Number(payload.unitPrice) || 0.0
 
-  // 1. Decrement From Site Pool
+  // 1. Decrement From Site Pool (both availableCount and currentBalance)
   const fromPoolRef = doc(db, 'organisation', orgId, 'siteMaterialPool', `${cleanFrom}_${cleanMat}`)
   batch.set(fromPoolRef, {
+    availableCount: increment(-qty),
     currentBalance: increment(-qty),
+    totalValuation: increment(-(qty * unitPrice)),
     updatedAt: serverTimestamp(),
+    lastUpdated: serverTimestamp(),
   }, { merge: true })
 
-  // 2. Increment To Site Pool
+  // 2. Increment To Site Pool (both availableCount and currentBalance)
   const toPoolRef = doc(db, 'organisation', orgId, 'siteMaterialPool', `${cleanTo}_${cleanMat}`)
   batch.set(toPoolRef, {
     siteId: payload.toSiteId,
+    siteCode: payload.toSiteCode || '',
     siteName: payload.toSiteName || '',
+    projectName: payload.projectName || payload.toSiteName || '',
     materialName: payload.materialName,
     totalAllocated: increment(qty),
+    availableCount: increment(qty),
     currentBalance: increment(qty),
     unit: payload.unit || 'Bags',
     unitPrice,
+    totalValuation: increment(qty * unitPrice),
     totalAllocatedValue: increment(qty * unitPrice),
     updatedAt: serverTimestamp(),
+    lastUpdated: serverTimestamp(),
   }, { merge: true })
 
   // 3. Transaction Log
@@ -498,6 +682,7 @@ export async function transferMaterialSiteToSite(orgId, payload) {
     transactionId: txnId,
     movementId: txnId,
     gatePassNumber: payload.challanNumber || `GP-${Date.now().toString().slice(-6)}`,
+    transferType: 'SITE_TO_SITE',
     transactionType: 'SiteToSite',
     from: payload.fromSiteName || payload.fromSiteId,
     fromSite: payload.fromSiteName || payload.fromSiteId,
@@ -505,6 +690,8 @@ export async function transferMaterialSiteToSite(orgId, payload) {
     toSiteId: payload.toSiteId,
     toSite: payload.toSiteName || payload.toSiteId,
     toSiteName: payload.toSiteName || payload.toSiteId,
+    siteId: payload.toSiteId,
+    siteName: payload.toSiteName || payload.toSiteId,
     materialName: payload.materialName,
     quantity: qty,
     unit: payload.unit || 'Bags',
@@ -517,6 +704,7 @@ export async function transferMaterialSiteToSite(orgId, payload) {
     receivedStatus: 'In Transit',
     date: new Date().toISOString().split('T')[0],
     createdAt: serverTimestamp(),
+    timestamp: serverTimestamp(),
   })
 
   await batch.commit()
@@ -538,17 +726,22 @@ export async function returnMaterialSiteToCompany(orgId, payload) {
   // 1. Decrement From Site Pool
   const fromPoolRef = doc(db, 'organisation', orgId, 'siteMaterialPool', `${cleanFrom}_${cleanMat}`)
   batch.set(fromPoolRef, {
+    availableCount: increment(-qty),
     currentBalance: increment(-qty),
+    totalValuation: increment(-(qty * unitPrice)),
     updatedAt: serverTimestamp(),
+    lastUpdated: serverTimestamp(),
   }, { merge: true })
 
-  // 2. Increment Central Warehouse Availability
+  // 2. Increment Central Warehouse Availability (both availableCount and companyAvailableCount)
   const warehouseRef = doc(db, 'organisation', orgId, 'materialsAvailability', cleanMat)
   batch.set(warehouseRef, {
     materialName: payload.materialName,
     availableCount: increment(qty),
+    companyAvailableCount: increment(qty),
     unit: payload.unit || 'Bags',
     lastUpdated: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   }, { merge: true })
 
   // 3. Transaction Log
@@ -558,6 +751,7 @@ export async function returnMaterialSiteToCompany(orgId, payload) {
     transactionId: txnId,
     movementId: txnId,
     gatePassNumber: payload.challanNumber || `GP-${Date.now().toString().slice(-6)}`,
+    transferType: 'SITE_TO_COMPANY',
     transactionType: 'SiteToCompany',
     from: payload.fromSiteName || payload.fromSiteId,
     fromSite: payload.fromSiteName || payload.fromSiteId,
@@ -565,6 +759,8 @@ export async function returnMaterialSiteToCompany(orgId, payload) {
     toSiteId: 'Central Warehouse',
     toSite: 'Central Warehouse',
     toSiteName: 'Central Warehouse',
+    siteId: payload.fromSiteId,
+    siteName: payload.fromSiteName || payload.fromSiteId,
     materialName: payload.materialName,
     quantity: qty,
     unit: payload.unit || 'Bags',
@@ -577,6 +773,7 @@ export async function returnMaterialSiteToCompany(orgId, payload) {
     receivedStatus: 'Received',
     date: new Date().toISOString().split('T')[0],
     createdAt: serverTimestamp(),
+    timestamp: serverTimestamp(),
   })
 
   await batch.commit()

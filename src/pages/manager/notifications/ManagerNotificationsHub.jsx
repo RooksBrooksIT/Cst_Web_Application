@@ -12,8 +12,10 @@ import {
   DollarSign,
   ArrowRight,
   Sparkles,
+  Users,
 } from 'lucide-react'
 import { evaluateAllProjectAlerts } from '../../../utils/projectAlerts'
+import { useNotifications } from '../../../hooks/useNotifications'
 
 export default function ManagerNotificationsHub({
   orgId,
@@ -21,12 +23,82 @@ export default function ManagerNotificationsHub({
   onNavigate,
   onNotify,
 }) {
-  const [filterType, setFilterType] = useState('ALL') // 'ALL' | 'UNREAD' | 'APPROVAL' | 'STOCK'
-  const [readIds, setReadIds] = useState(new Set())
+  const { notifications, markAsRead, markAllAsRead } = useNotifications()
+  const [filterType, setFilterType] = useState('ALL') // 'ALL' | 'UNREAD' | 'APPROVAL' | 'STOCK' | 'SYSTEM'
+  const [localReadIds, setLocalReadIds] = useState(new Set())
 
-  // Dynamically compute real-time priority alerts from dashboard streams
+  // Dynamically compute real-time priority alerts from dashboard streams + real-time Firestore notifications
   const alerts = useMemo(() => {
     const list = []
+
+    // 0. Real-Time Firestore Notifications (Section 2.1 & 2.5)
+    notifications.forEach((item) => {
+      const type = String(item.type || item.requestType || '').toLowerCase()
+      const title = item.title || 'System Notification'
+      const message = item.body || item.message || ''
+
+      let targetTab = 'dashboard'
+      let icon = Bell
+      let color = 'text-blue-600 bg-blue-50'
+      let category = 'System Update'
+      let filterCategory = 'SYSTEM'
+
+      if (type.includes('material') || message.toLowerCase().includes('material')) {
+        targetTab = 'approvals'
+        icon = Package
+        color = 'text-blue-600 bg-blue-50'
+        category = 'Material Request'
+        filterCategory = 'APPROVAL'
+      } else if (type.includes('tool') || message.toLowerCase().includes('tool')) {
+        targetTab = 'approvals'
+        icon = Wrench
+        color = 'text-amber-600 bg-amber-50'
+        category = 'Equipment Request'
+        filterCategory = 'APPROVAL'
+      } else if (type.includes('cash') || type.includes('payment') || type.includes('expense')) {
+        targetTab = type.includes('cash') ? 'pettyCash' : 'approvals'
+        icon = DollarSign
+        color = 'text-emerald-600 bg-emerald-50'
+        category = 'Finance & Expense'
+        filterCategory = 'APPROVAL'
+      } else if (type.includes('workforce') || type.includes('schedule') || type.includes('log')) {
+        targetTab = 'workforce'
+        icon = Users
+        color = 'text-purple-600 bg-purple-50'
+        category = 'Workforce & Daily Log'
+        filterCategory = 'SYSTEM'
+      } else if (type.includes('site') || type.includes('project')) {
+        targetTab = 'sites'
+        icon = Building2
+        color = 'text-indigo-600 bg-indigo-50'
+        category = 'Site Management'
+        filterCategory = 'SYSTEM'
+      }
+
+      const ts = item.createdAt?.toDate
+        ? item.createdAt.toDate().getTime()
+        : item.createdAt?.seconds
+        ? item.createdAt.seconds * 1000
+        : item.createdAt
+        ? new Date(item.createdAt).getTime()
+        : Date.now()
+
+      list.push({
+        id: item.id,
+        isFirestoreNotification: true,
+        originalItem: item,
+        type: filterCategory,
+        category,
+        title,
+        message,
+        timestamp: ts,
+        targetTab,
+        priority: item.priority || 'normal',
+        icon,
+        color,
+        isReadInFirestore: item.isRead || item.status === 'read',
+      })
+    })
 
     // 1. Site Supervisor Expense Claims
     const pendingClaims = (dashboardData.pendingExpenses || []).filter(
@@ -126,32 +198,53 @@ export default function ManagerNotificationsHub({
     })
 
     return list.sort((a, b) => b.timestamp - a.timestamp)
-  }, [dashboardData])
+  }, [dashboardData, notifications])
 
-  const toggleRead = (id) => {
-    setReadIds((prev) => {
+  const isAlertUnread = (alert) => {
+    if (alert.isFirestoreNotification) {
+      return !alert.isReadInFirestore && !localReadIds.has(alert.id)
+    }
+    return !localReadIds.has(alert.id)
+  }
+
+  const toggleRead = (alert) => {
+    if (alert.isFirestoreNotification) {
+      markAsRead(alert.id)
+    }
+    setLocalReadIds((prev) => {
       const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
+      if (next.has(alert.id)) next.delete(alert.id)
+      else next.add(alert.id)
       return next
     })
   }
 
-  const markAllRead = () => {
-    setReadIds(new Set(alerts.map((a) => a.id)))
+  const handleMarkAllRead = () => {
+    markAllAsRead()
+    setLocalReadIds(new Set(alerts.map((a) => a.id)))
     onNotify?.('All notifications marked as read', 'info')
+  }
+
+  const handleTakeAction = (alert) => {
+    if (alert.isFirestoreNotification) {
+      markAsRead(alert.id)
+    }
+    if (alert.targetTab) {
+      onNavigate?.(alert.targetTab)
+    }
   }
 
   const filteredAlerts = useMemo(() => {
     return alerts.filter((a) => {
-      const isUnread = !readIds.has(a.id)
+      const isUnread = isAlertUnread(a)
       if (filterType === 'UNREAD') return isUnread
       if (filterType === 'PROJECT_ALERT') return a.type === 'PROJECT_ALERT'
       if (filterType === 'APPROVAL') return a.type === 'APPROVAL'
       if (filterType === 'STOCK') return a.type === 'STOCK'
+      if (filterType === 'SYSTEM') return a.type === 'SYSTEM'
       return true
     })
-  }, [alerts, filterType, readIds])
+  }, [alerts, filterType, localReadIds, notifications])
 
   return (
     <div className="space-y-6">
@@ -165,12 +258,12 @@ export default function ManagerNotificationsHub({
           </div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Notifications</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Live operations alerts, project budget threshold warnings, milestone sign-offs, and critical material shortage alerts.
+            Live operations alerts, real-time Firestore requisitions, project budget threshold warnings, and supply chain updates.
           </p>
         </div>
 
         <button
-          onClick={markAllRead}
+          onClick={handleMarkAllRead}
           disabled={alerts.length === 0}
           className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-all disabled:opacity-50 cursor-pointer"
         >
@@ -183,10 +276,11 @@ export default function ManagerNotificationsHub({
       <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
         {[
           { id: 'ALL', label: `All Alerts (${alerts.length})` },
-          { id: 'UNREAD', label: `Unread (${alerts.filter((a) => !readIds.has(a.id)).length})` },
-          { id: 'PROJECT_ALERT', label: `Project Risk (${alerts.filter((a) => a.type === 'PROJECT_ALERT').length})` },
+          { id: 'UNREAD', label: `Unread (${alerts.filter(isAlertUnread).length})` },
           { id: 'APPROVAL', label: `Approvals (${alerts.filter((a) => a.type === 'APPROVAL').length})` },
+          { id: 'PROJECT_ALERT', label: `Project Risk (${alerts.filter((a) => a.type === 'PROJECT_ALERT').length})` },
           { id: 'STOCK', label: `Stock Alerts (${alerts.filter((a) => a.type === 'STOCK').length})` },
+          { id: 'SYSTEM', label: `System (${alerts.filter((a) => a.type === 'SYSTEM').length})` },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -214,7 +308,7 @@ export default function ManagerNotificationsHub({
       ) : (
         <div className="space-y-3">
           {filteredAlerts.map((alert) => {
-            const isUnread = !readIds.has(alert.id)
+            const isUnread = isAlertUnread(alert)
             const Icon = alert.icon || Bell
             const timeAgo = new Date(alert.timestamp).toLocaleTimeString('en-IN', {
               hour: '2-digit',
@@ -252,8 +346,8 @@ export default function ManagerNotificationsHub({
 
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => toggleRead(alert.id)}
-                    className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg"
+                    onClick={() => toggleRead(alert)}
+                    className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
                     title={isUnread ? 'Mark Read' : 'Mark Unread'}
                   >
                     <Check className="w-4 h-4" />
@@ -261,7 +355,7 @@ export default function ManagerNotificationsHub({
 
                   {alert.targetTab && (
                     <button
-                      onClick={() => onNavigate?.(alert.targetTab)}
+                      onClick={() => handleTakeAction(alert)}
                       className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#0B3470] hover:bg-[#082855] text-white text-xs font-semibold rounded-lg shadow-xs cursor-pointer"
                     >
                       <span>Take Action</span>

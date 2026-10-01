@@ -145,6 +145,19 @@ export async function registerMasterTool(orgId, data) {
     toolOwner,
     availableCount: increment(count),
     updatedAt: serverTimestamp(),
+    lastUpdated: serverTimestamp(),
+  }, { merge: true })
+
+  // 3. Central Multi-Site Inventory Registry (/organisation/{orgId}/toolsInventory/{toolCode})
+  const invRef = doc(db, 'organisation', orgId, 'toolsInventory', toolCode)
+  batch.set(invRef, {
+    toolCode,
+    toolName,
+    availableCountAtSites: {},
+    totalAtCompany: count,
+    totalAtSites: 0,
+    lastUpdated: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   }, { merge: true })
 
   await batch.commit()
@@ -177,7 +190,7 @@ export async function deleteMasterTool(orgId, toolId, toolCode = '') {
     const siteToolsSnap = await getDocs(
       query(collection(db, 'organisation', orgId, 'toolsAtSite'), where('toolCode', '==', toolCode))
     )
-    const isDeployed = siteToolsSnap.docs.some((d) => (Number(d.data().quantity) || 0) > 0)
+    const isDeployed = siteToolsSnap.docs.some((d) => (Number(d.data().quantity ?? d.data().availableCount) || 0) > 0)
     if (isDeployed) {
       throw new Error(`Cannot delete "${toolCode}". It is currently deployed on active project sites.`)
     }
@@ -200,6 +213,14 @@ export async function fetchToolsAtCompany(orgId) {
 
 export function subscribeToolsAtCompany(orgId, onData, onError) {
   return subscribeWithFallback(orgId, 'toolsAtCompany', onData, onError)
+}
+
+export async function fetchToolsInventory(orgId) {
+  return fetchWithFallback(orgId, 'toolsInventory')
+}
+
+export function subscribeToolsInventory(orgId, onData, onError) {
+  return subscribeWithFallback(orgId, 'toolsInventory', onData, onError)
 }
 
 export async function fetchToolsAtSite(orgId, siteId = null) {
@@ -230,6 +251,14 @@ export function subscribeToolMovements(orgId, onData, onError) {
   return subscribeWithFallback(orgId, 'toolsMovement', onData, onError)
 }
 
+export async function fetchToolsReturns(orgId) {
+  return fetchWithFallback(orgId, 'toolsReturn')
+}
+
+export function subscribeToolsReturns(orgId, onData, onError) {
+  return subscribeWithFallback(orgId, 'toolsReturn', onData, onError)
+}
+
 /**
  * Mode 0: Central Warehouse (toolsAtCompany) -> Site (toolsAtSite)
  */
@@ -248,15 +277,19 @@ export async function dispatchToolToSite(orgId, payload) {
   batch.set(depotRef, {
     availableCount: increment(-count),
     updatedAt: serverTimestamp(),
+    lastUpdated: serverTimestamp(),
   }, { merge: true })
 
-  // 2. Add to Site Tools
+  // 2. Add to Site Tools (writing both availableCount and quantity)
   const siteToolRef = doc(db, 'organisation', orgId, 'toolsAtSite', siteToolDocId)
   batch.set(siteToolRef, {
     siteId: payload.toSiteId,
+    siteCode: payload.toSiteCode || '',
     siteName: payload.toSiteName || '',
+    projectName: payload.projectName || payload.toSiteName || '',
     toolCode: payload.toolCode,
     toolName: payload.toolName || '',
+    availableCount: increment(count),
     quantity: increment(count),
     supervisorId: payload.supervisorId || '',
     supervisorName: payload.supervisorName || 'Site Supervisor',
@@ -264,23 +297,45 @@ export async function dispatchToolToSite(orgId, payload) {
     expectedReturnDate: payload.expectedReturnDate || null,
     condition: 'Good',
     updatedAt: serverTimestamp(),
+    lastUpdated: serverTimestamp(),
   }, { merge: true })
 
-  // 3. Movement Voucher Record
+  // 3. Update Multi-Site Inventory Map in toolsInventory
+  const invRef = doc(db, 'organisation', orgId, 'toolsInventory', payload.toolCode)
+  batch.set(invRef, {
+    toolCode: payload.toolCode,
+    toolName: payload.toolName || '',
+    [`availableCountAtSites.${payload.toSiteId}`]: increment(count),
+    totalAtSites: increment(count),
+    lastUpdated: serverTimestamp(),
+  }, { merge: true })
+
+  // 4. Movement Voucher Record in toolsMovement
   const movId = `MOV_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`
   const movRef = doc(db, 'organisation', orgId, 'toolsMovement', movId)
   batch.set(movRef, {
     movementId: movId,
-    movementType: 'CompanyToSite',
+    tmId: movId,
+    movementType: payload.movementType || 'CompanyToSite',
     from: payload.fromLocation || 'Central Depot',
     fromSite: payload.fromLocation || 'Central Depot',
     toSiteId: payload.toSiteId,
     toSite: payload.toSiteName || payload.toSiteId,
     toSiteName: payload.toSiteName || payload.toSiteId,
+    siteId: payload.toSiteId,
+    siteName: payload.toSiteName || payload.toSiteId,
+    projectName: payload.projectName || payload.toSiteName || '',
     toolId: payload.toolId || '',
     toolCode: payload.toolCode,
     toolName: payload.toolName || '',
     quantity: count,
+    tools: [
+      {
+        toolCode: payload.toolCode,
+        toolName: payload.toolName || '',
+        toolCount: count,
+      },
+    ],
     supervisorName: payload.supervisorName || 'Site Supervisor',
     dispatchedBy: payload.dispatchedBy || 'Operations Manager',
     driverName: payload.driverName || '',
@@ -291,9 +346,10 @@ export async function dispatchToolToSite(orgId, payload) {
     status: 'Dispatched',
     notes: payload.notes || 'Dispatched for site execution',
     createdAt: serverTimestamp(),
+    timestamp: serverTimestamp(),
   })
 
-  // 4. Update master tool record status if applicable
+  // 5. Update master tool record status if applicable
   if (payload.toolMasterDocId) {
     const masterRef = doc(db, 'organisation', orgId, 'tools', payload.toolMasterDocId)
     batch.update(masterRef, {
@@ -326,32 +382,70 @@ export async function returnToolToCompany(orgId, payload) {
   const siteToolDocId = `${cleanSite}_${payload.toolCode}`
   const condition = payload.condition || 'Working'
 
-  // 1. Deduct from Site Tools
+  // 1. Deduct from Site Tools (both availableCount and quantity)
   const siteToolRef = doc(db, 'organisation', orgId, 'toolsAtSite', siteToolDocId)
   batch.set(siteToolRef, {
+    availableCount: increment(-count),
     quantity: increment(-count),
     updatedAt: serverTimestamp(),
+    lastUpdated: serverTimestamp(),
   }, { merge: true })
 
-  // 2. Increment Central Warehouse
+  // 2. Decrement from toolsInventory site tracking
+  const invRef = doc(db, 'organisation', orgId, 'toolsInventory', payload.toolCode)
+  batch.set(invRef, {
+    [`availableCountAtSites.${payload.fromSiteId}`]: increment(-count),
+    totalAtSites: increment(-count),
+    lastUpdated: serverTimestamp(),
+  }, { merge: true })
+
+  // 3. Increment Central Warehouse
   const depotRef = doc(db, 'organisation', orgId, 'toolsAtCompany', payload.toolCode)
   batch.set(depotRef, {
     availableCount: increment(count),
     updatedAt: serverTimestamp(),
+    lastUpdated: serverTimestamp(),
   }, { merge: true })
 
-  // 3. Movement Voucher Record
-  const movId = payload.movementId || `MOV_RET_${Date.now()}`
-  const movRef = doc(db, 'organisation', orgId, 'toolsMovement', movId)
-  batch.set(movRef, {
+  // 4. Record Return in toolsReturn (Section 4.3.6)
+  const retId = payload.returnDocId || `TR_${Date.now()}`
+  const retRef = doc(db, 'organisation', orgId, 'toolsReturn', retId)
+  batch.set(retRef, {
+    trId: retId,
+    returnId: retId,
+    movementId: payload.movementId || '',
+    siteId: payload.fromSiteId,
+    siteName: payload.fromSiteName || payload.fromSiteId,
+    toolCode: payload.toolCode,
+    tools: [
+      {
+        toolCode: payload.toolCode,
+        toolCount: count,
+      },
+    ],
+    quantity: count,
+    condition,
     status: 'Returned',
-    returnCondition: condition,
-    receivedBy: payload.receivedBy || 'Operations Manager',
     returnDate: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  }, { merge: true })
+    receivedBy: payload.receivedBy || 'Operations Manager',
+    supervisorName: payload.supervisorName || '',
+    notes: payload.notes || '',
+    createdAt: serverTimestamp(),
+  })
 
-  // 4. Update master tool status if toolMasterDocId exists
+  // 5. Update Movement Voucher Record
+  if (payload.movementId) {
+    const movRef = doc(db, 'organisation', orgId, 'toolsMovement', payload.movementId)
+    batch.set(movRef, {
+      status: 'Returned',
+      returnCondition: condition,
+      receivedBy: payload.receivedBy || 'Operations Manager',
+      returnDate: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }, { merge: true })
+  }
+
+  // 6. Update master tool status if toolMasterDocId exists
   if (payload.toolMasterDocId) {
     const nextToolStatus = condition === 'Working' ? 'Available' : 'Maintenance'
     const masterRef = doc(db, 'organisation', orgId, 'tools', payload.toolMasterDocId)

@@ -1,19 +1,30 @@
-import React, { useState, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { useAuth } from '../../../hooks/useAuth'
 import StatusBadge from '../../../components/common/StatusBadge'
 import Modal from '../../../components/common/Modal'
 import ExportButton from '../../../components/common/ExportButton'
+import ApprovalWorkflowStepper from '../../../components/common/ApprovalWorkflowStepper'
+import CreateRequisitionModal from '../../../components/common/CreateRequisitionModal'
 import {
   managerReviewSitePayment,
   linkSitePaymentToPettyCash,
   managerClearSitePayment,
   managerReviewMaterialOrder,
   managerClearMaterialOrder,
+  confirmMaterialReceipt,
   managerApproveToolRequest,
   managerDispatchTool,
+  confirmToolReceipt,
   managerConfirmToolReturn,
   managerApproveStageMilestone,
 } from '../../../services/approvalService.js'
+import {
+  Plus,
+  Eye,
+  Truck,
+  RotateCcw,
+  Search,
+} from 'lucide-react'
 
 function money(amount) {
   return new Intl.NumberFormat('en-IN', {
@@ -25,10 +36,81 @@ function money(amount) {
 
 function formatDate(raw) {
   if (!raw) return 'N/A'
-  const d = raw?.toDate ? raw.toDate() : new Date(raw)
+  const d = raw?.toDate ? raw.toDate() : raw?.seconds ? new Date(raw.seconds * 1000) : new Date(raw)
   return Number.isNaN(d.getTime())
     ? 'N/A'
     : new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short' }).format(d)
+}
+
+function matchesPaymentSubTab(entry, tab) {
+  const st = String(entry.status || '').toLowerCase()
+  const step = Number(entry.currentStep) || 0
+  if (tab === 'review') {
+    return st === 'pending_manager_review' || st === 'submitted' || step === 1
+  }
+  if (tab === 'org') {
+    return st === 'pending_org_approval' || st === 'pending_organization_approval' || st === 'manager_verified' || step === 2
+  }
+  if (tab === 'clearance') {
+    return st === 'approved_by_org' || st === 'pending_manager_clearance' || step === 3
+  }
+  if (tab === 'approved') {
+    return st === 'approved' || st === 'paid' || st === 'cleared' || st === 'settled' || st === 'completed' || step >= 4
+  }
+  if (tab === 'rejected') {
+    return st.includes('reject') || step === -1
+  }
+  return true
+}
+
+function matchesMaterialSubTab(req, tab) {
+  const st = String(req.status || '').toLowerCase()
+  const step = Number(req.currentStep) || 0
+  if (tab === 'review') {
+    return st === 'pending_manager_review' || st === 'submitted' || step === 1
+  }
+  if (tab === 'org') {
+    return st === 'pending_org_approval' || st === 'pending_organization_approval' || st === 'manager_verified' || step === 2
+  }
+  if (tab === 'clearance') {
+    return st === 'authorized_for_procurement' || st === 'approved_by_org' || st === 'pending_manager_clearance' || step === 3
+  }
+  if (tab === 'approved') {
+    return st === 'approved' || st === 'dispatched' || st === 'received' || st === 'cleared' || step >= 4
+  }
+  if (tab === 'rejected') {
+    return st.includes('reject') || step === -1
+  }
+  return true
+}
+
+function matchesToolSubTab(tool, tab) {
+  const st = String(tool.status || '').toLowerCase()
+  const step = Number(tool.currentStep) || 0
+  if (tab === 'review') {
+    return st === 'pending_manager_review' || st === 'submitted' || step === 1
+  }
+  if (tab === 'org') {
+    return st === 'pending_org_approval' || st === 'pending_organization_approval' || step === 2
+  }
+  if (tab === 'clearance') {
+    return st === 'approved' || st === 'allocated' || st === 'approved_by_org' || st === 'pending_manager_clearance' || step === 3
+  }
+  if (tab === 'approved') {
+    return st === 'dispatched' || st === 'received' || st === 'returned' || st === 'completed' || step >= 4
+  }
+  if (tab === 'rejected') {
+    return st.includes('reject') || step === -1
+  }
+  return true
+}
+
+function matchesStageSubTab(stg, tab) {
+  const isComplete = stg.status === 'completed' || Boolean(stg.isApproved)
+  if (tab === 'review') return !isComplete
+  if (tab === 'approved') return isComplete
+  if (tab === 'org' || tab === 'clearance' || tab === 'rejected') return false
+  return true
 }
 
 export default function ApprovalsCenter({
@@ -47,7 +129,7 @@ export default function ApprovalsCenter({
 
   // Active Stream Tab: 'payments' | 'materials' | 'tools' | 'stages'
   const [activeStream, setActiveStream] = useState('payments')
-  const [subTab, setSubTab] = useState('review') // 'review' | 'org' | 'clearance' | 'approved'
+  const [subTab, setSubTab] = useState('review') // 'review' | 'org' | 'clearance' | 'approved' | 'rejected'
   const [search, setSearch] = useState('')
   const [siteFilter, setSiteFilter] = useState('all')
 
@@ -60,20 +142,46 @@ export default function ApprovalsCenter({
   }
 
   // Modals state
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [selectedItem, setSelectedItem] = useState(null)
+  const [isAuditModalOpen, setIsAuditModalOpen] = useState(false)
+
+  // Rejection modal
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
 
+  // Material Review modal (Stage 2)
   const [isMaterialModalOpen, setIsMaterialModalOpen] = useState(false)
   const [approvedQty, setApprovedQty] = useState('')
   const [vendorNotes, setVendorNotes] = useState('')
 
+  // Material Clearance Gate Pass modal (Stage 4)
+  const [isGatePassModalOpen, setIsGatePassModalOpen] = useState(false)
+  const [gatePassNo, setGatePassNo] = useState('')
+  const [dispatchRemarks, setDispatchRemarks] = useState('')
+
+  // Payment Clearance UTR modal (Stage 4)
+  const [isPaymentClearanceModalOpen, setIsPaymentClearanceModalOpen] = useState(false)
+  const [utrReference, setUtrReference] = useState('')
+
+  // Tool Allocation modal (Stage 2)
   const [isToolModalOpen, setIsToolModalOpen] = useState(false)
   const [assetSerialId, setAssetSerialId] = useState('')
 
+  // Tool Dispatch modal (Stage 4)
+  const [isToolDispatchModalOpen, setIsToolDispatchModalOpen] = useState(false)
+  const [toolDispatchNotes, setToolDispatchNotes] = useState('')
+
+  // Receipt Confirmation modal (Stage 5)
+  const [isReceiptConfirmModalOpen, setIsReceiptConfirmModalOpen] = useState(false)
+  const [receiptNotes, setReceiptNotes] = useState('')
+  const [receiptType, setReceiptType] = useState('material') // 'material' | 'tool'
+
+  // Tool Return modal
   const [isReturnConditionModalOpen, setIsReturnConditionModalOpen] = useState(false)
   const [returnCondition, setReturnCondition] = useState('Working')
 
+  // Milestone Sign-off modal
   const [isMilestoneModalOpen, setIsMilestoneModalOpen] = useState(false)
   const [milestoneQualityNotes, setMilestoneQualityNotes] = useState('')
 
@@ -86,22 +194,125 @@ export default function ApprovalsCenter({
     return map
   }, [sites])
 
-  // Stream Counts
+  // Stream Total Pending Counts (for Stream Bento Cards)
   const pendingPaymentsCount = useMemo(() => {
-    return siteSupervisorEntries.filter((e) => e.status === 'pending_manager_review').length
+    return siteSupervisorEntries.filter((e) => matchesPaymentSubTab(e, 'review')).length
   }, [siteSupervisorEntries])
 
   const pendingMaterialsCount = useMemo(() => {
-    return siteMaterialsRequest.filter((r) => r.status === 'pending_manager_review').length
+    return siteMaterialsRequest.filter((r) => matchesMaterialSubTab(r, 'review')).length
   }, [siteMaterialsRequest])
 
   const pendingToolsCount = useMemo(() => {
-    return siteToolsRequest.filter((t) => t.status === 'pending_manager_review').length
+    return siteToolsRequest.filter((t) => matchesToolSubTab(t, 'review')).length
   }, [siteToolsRequest])
 
   const pendingStagesCount = useMemo(() => {
-    return siteSupervisorProjectStageSchedule.filter((s) => s.status === 'in_progress' || s.status === 'pending').length
+    return siteSupervisorProjectStageSchedule.filter((s) => matchesStageSubTab(s, 'review')).length
   }, [siteSupervisorProjectStageSchedule])
+
+  // Subtab count maps for current active stream
+  const subTabCounts = useMemo(() => {
+    const tabs = ['review', 'org', 'clearance', 'approved', 'rejected']
+    const counts = {}
+
+    if (activeStream === 'payments') {
+      tabs.forEach((tab) => {
+        counts[tab] = siteSupervisorEntries.filter((e) => matchesPaymentSubTab(e, tab)).length
+      })
+    } else if (activeStream === 'materials') {
+      tabs.forEach((tab) => {
+        counts[tab] = siteMaterialsRequest.filter((r) => matchesMaterialSubTab(r, tab)).length
+      })
+    } else if (activeStream === 'tools') {
+      tabs.forEach((tab) => {
+        counts[tab] = siteToolsRequest.filter((t) => matchesToolSubTab(t, tab)).length
+      })
+    } else if (activeStream === 'stages') {
+      tabs.forEach((tab) => {
+        counts[tab] = siteSupervisorProjectStageSchedule.filter((s) => matchesStageSubTab(s, tab)).length
+      })
+    }
+
+    return counts
+  }, [
+    activeStream,
+    siteSupervisorEntries,
+    siteMaterialsRequest,
+    siteToolsRequest,
+    siteSupervisorProjectStageSchedule,
+  ])
+
+  // Filtered lists for each stream applying subTab, siteFilter, and search
+  const filteredPayments = useMemo(() => {
+    const q = search.toLowerCase().trim()
+    return siteSupervisorEntries.filter((entry) => {
+      if (!matchesPaymentSubTab(entry, subTab)) return false
+      if (siteFilter !== 'all' && entry.siteId !== siteFilter) return false
+      if (q) {
+        const siteName = (siteMap[entry.siteId] || '').toLowerCase()
+        const sup = (entry.supervisorName || '').toLowerCase()
+        const id = (entry.id || '').toLowerCase()
+        const stage = (entry.projectStage || '').toLowerCase()
+        if (!siteName.includes(q) && !sup.includes(q) && !id.includes(q) && !stage.includes(q)) {
+          return false
+        }
+      }
+      return true
+    })
+  }, [siteSupervisorEntries, subTab, siteFilter, search, siteMap])
+
+  const filteredMaterials = useMemo(() => {
+    const q = search.toLowerCase().trim()
+    return siteMaterialsRequest.filter((req) => {
+      if (!matchesMaterialSubTab(req, subTab)) return false
+      if (siteFilter !== 'all' && req.siteId !== siteFilter) return false
+      if (q) {
+        const mat = (req.materialName || '').toLowerCase()
+        const siteName = (siteMap[req.siteId] || '').toLowerCase()
+        const id = (req.requestId || req.id || '').toLowerCase()
+        const cat = (req.category || '').toLowerCase()
+        if (!mat.includes(q) && !siteName.includes(q) && !id.includes(q) && !cat.includes(q)) {
+          return false
+        }
+      }
+      return true
+    })
+  }, [siteMaterialsRequest, subTab, siteFilter, search, siteMap])
+
+  const filteredTools = useMemo(() => {
+    const q = search.toLowerCase().trim()
+    return siteToolsRequest.filter((tool) => {
+      if (!matchesToolSubTab(tool, subTab)) return false
+      if (siteFilter !== 'all' && tool.siteId !== siteFilter) return false
+      if (q) {
+        const toolName = (tool.toolName || '').toLowerCase()
+        const siteName = (siteMap[tool.siteId] || '').toLowerCase()
+        const id = (tool.requestId || tool.id || '').toLowerCase()
+        const serial = (tool.assignedSerialId || '').toLowerCase()
+        if (!toolName.includes(q) && !siteName.includes(q) && !id.includes(q) && !serial.includes(q)) {
+          return false
+        }
+      }
+      return true
+    })
+  }, [siteToolsRequest, subTab, siteFilter, search, siteMap])
+
+  const filteredStages = useMemo(() => {
+    const q = search.toLowerCase().trim()
+    return siteSupervisorProjectStageSchedule.filter((stg) => {
+      if (!matchesStageSubTab(stg, subTab)) return false
+      if (siteFilter !== 'all' && stg.siteId !== siteFilter) return false
+      if (q) {
+        const stageName = (stg.stageName || stg.name || '').toLowerCase()
+        const siteName = (siteMap[stg.siteId] || '').toLowerCase()
+        if (!stageName.includes(q) && !siteName.includes(q)) {
+          return false
+        }
+      }
+      return true
+    })
+  }, [siteSupervisorProjectStageSchedule, subTab, siteFilter, search, siteMap])
 
   // Handlers
   async function handleVerifyPayment(entry) {
@@ -109,7 +320,7 @@ export default function ApprovalsCenter({
     setActionLoading(true)
     try {
       await managerReviewSitePayment(orgId, entry.id, 'VERIFY', 'Verified by Operations Manager', managerActor)
-      showMsg('success', 'Payment verified and forwarded to Organization HQ for Tier-2 approval.')
+      showMsg('success', 'Payment verified and forwarded to Organization HQ for Tier-2 authorization.')
     } catch (err) {
       showMsg('error', err.message || 'Verification failed')
     } finally {
@@ -130,6 +341,23 @@ export default function ApprovalsCenter({
     }
   }
 
+  async function handlePaymentClearanceSubmit(e) {
+    e.preventDefault()
+    if (!selectedItem) return
+    setActionLoading(true)
+    try {
+      await managerClearSitePayment(orgId, selectedItem.id, utrReference.trim(), managerActor)
+      showMsg('success', `Payment claim disbursed and settled. Ref: ${utrReference.trim() || 'CASH_DISBURSED'}`)
+      setIsPaymentClearanceModalOpen(false)
+      setSelectedItem(null)
+      setUtrReference('')
+    } catch (err) {
+      showMsg('error', err.message || 'Disbursement clearance failed')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   async function handleRejectSubmit(e) {
     e.preventDefault()
     if (!selectedItem || !rejectReason.trim()) {
@@ -142,8 +370,10 @@ export default function ApprovalsCenter({
         await managerReviewSitePayment(orgId, selectedItem.id, 'REJECT', rejectReason.trim(), managerActor)
       } else if (activeStream === 'materials') {
         await managerReviewMaterialOrder(orgId, selectedItem.id, false, 0, rejectReason.trim(), managerActor)
+      } else if (activeStream === 'tools') {
+        await managerApproveToolRequest(orgId, selectedItem.id, false, rejectReason.trim(), managerActor)
       }
-      showMsg('success', 'Item rejected with feedback recorded.')
+      showMsg('success', 'Item rejected and feedback recorded.')
       setIsRejectModalOpen(false)
       setSelectedItem(null)
       setRejectReason('')
@@ -160,11 +390,29 @@ export default function ApprovalsCenter({
     setActionLoading(true)
     try {
       await managerReviewMaterialOrder(orgId, selectedItem.id, true, Number(approvedQty), vendorNotes, managerActor)
-      showMsg('success', 'Material order verified & forwarded for procurement.')
+      showMsg('success', 'Material order verified & forwarded to Organization HQ for procurement authorization.')
       setIsMaterialModalOpen(false)
       setSelectedItem(null)
     } catch (err) {
       showMsg('error', err.message || 'Failed to approve material request')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  async function handleGatePassSubmit(e) {
+    e.preventDefault()
+    if (!selectedItem) return
+    setActionLoading(true)
+    try {
+      await managerClearMaterialOrder(orgId, selectedItem.id, gatePassNo.trim(), managerActor, dispatchRemarks.trim())
+      showMsg('success', `Gate Pass #${gatePassNo || 'GP-AUTO'} issued. Materials dispatched to site.`)
+      setIsGatePassModalOpen(false)
+      setSelectedItem(null)
+      setGatePassNo('')
+      setDispatchRemarks('')
+    } catch (err) {
+      showMsg('error', err.message || 'Failed to issue gate pass')
     } finally {
       setActionLoading(false)
     }
@@ -175,12 +423,51 @@ export default function ApprovalsCenter({
     if (!selectedItem) return
     setActionLoading(true)
     try {
-      await managerApproveToolRequest(orgId, selectedItem.id, assetSerialId.trim(), managerActor)
+      await managerApproveToolRequest(orgId, selectedItem.id, true, assetSerialId.trim(), managerActor)
       showMsg('success', 'Tool allocation approved with yard asset tag assigned.')
       setIsToolModalOpen(false)
       setSelectedItem(null)
     } catch (err) {
       showMsg('error', err.message || 'Failed to approve tool request')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  async function handleToolDispatchSubmit(e) {
+    e.preventDefault()
+    if (!selectedItem) return
+    setActionLoading(true)
+    try {
+      await managerDispatchTool(orgId, selectedItem.id, toolDispatchNotes.trim(), managerActor)
+      showMsg('success', `Equipment ${selectedItem.toolName} dispatched from yard to site.`)
+      setIsToolDispatchModalOpen(false)
+      setSelectedItem(null)
+      setToolDispatchNotes('')
+    } catch (err) {
+      showMsg('error', err.message || 'Failed to dispatch equipment')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  async function handleReceiptConfirmSubmit(e) {
+    e.preventDefault()
+    if (!selectedItem) return
+    setActionLoading(true)
+    try {
+      if (receiptType === 'material') {
+        await confirmMaterialReceipt(orgId, selectedItem.id, receiptNotes.trim(), managerActor)
+        showMsg('success', 'Site physical delivery verified and confirmed into site inventory.')
+      } else {
+        await confirmToolReceipt(orgId, selectedItem.id, receiptNotes.trim(), managerActor)
+        showMsg('success', 'Equipment arrival and physical condition verified at site.')
+      }
+      setIsReceiptConfirmModalOpen(false)
+      setSelectedItem(null)
+      setReceiptNotes('')
+    } catch (err) {
+      showMsg('error', err.message || 'Failed to confirm receipt')
     } finally {
       setActionLoading(false)
     }
@@ -246,6 +533,18 @@ export default function ApprovalsCenter({
             Multi-Tier technical review and sign-off gateway for site finances, raw materials, plant tools, and construction milestones
           </p>
         </div>
+
+        {/* Global Action: Create Requisition */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsCreateModalOpen(true)}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-[#0B3470] text-white hover:bg-blue-800 shadow-xs transition-all cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Create Requisition</span>
+          </button>
+        </div>
       </div>
 
       {/* 4 Core Operational Stream Cards (2x2 Bento) */}
@@ -265,7 +564,7 @@ export default function ApprovalsCenter({
                 setActiveStream(stream.id)
                 setSubTab('review')
               }}
-              className={`p-5 rounded-2xl border text-left transition-all relative overflow-hidden flex flex-col justify-between ${
+              className={`p-5 rounded-2xl border text-left transition-all relative overflow-hidden flex flex-col justify-between cursor-pointer ${
                 active
                   ? 'bg-white border-[#0B3470] shadow-md ring-2 ring-blue-600/20'
                   : 'bg-white border-slate-200 hover:border-slate-300 shadow-xs'
@@ -275,7 +574,7 @@ export default function ApprovalsCenter({
                 <span className="text-2xl">{stream.icon}</span>
                 {stream.count > 0 ? (
                   <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-amber-500 text-white shadow-xs animate-pulse">
-                    {stream.count} Overdue
+                    {stream.count} Pending
                   </span>
                 ) : (
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600">
@@ -302,20 +601,31 @@ export default function ApprovalsCenter({
               { id: 'org', label: '2. ORG APPROVAL' },
               { id: 'clearance', label: '3. MGR CLEARANCE' },
               { id: 'approved', label: '4. APPROVED & SETTLED' },
+              { id: 'rejected', label: '5. DECLINED' },
             ].map((tab) => {
               const active = subTab === tab.id
+              const count = subTabCounts[tab.id] || 0
               return (
                 <button
                   key={tab.id}
                   type="button"
                   onClick={() => setSubTab(tab.id)}
-                  className={`px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                  className={`px-3 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
                     active
                       ? 'bg-[#0B3470] text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                   }`}
                 >
-                  {tab.label}
+                  <span>{tab.label}</span>
+                  {count > 0 && (
+                    <span
+                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                        active ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  )}
                 </button>
               )
             })}
@@ -334,13 +644,16 @@ export default function ApprovalsCenter({
                 </option>
               ))}
             </select>
-            <input
-              type="text"
-              placeholder="Search..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 outline-none focus:border-blue-600 w-36 sm:w-48"
-            />
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="bg-white border border-slate-200 rounded-xl pl-7 pr-3 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 outline-none focus:border-blue-600 w-36 sm:w-48"
+              />
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2 top-2" />
+            </div>
           </div>
         </div>
 
@@ -352,10 +665,13 @@ export default function ApprovalsCenter({
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold text-slate-900">Supervisor Daily Expense Claims</h3>
-                <p className="text-xs text-slate-500">Review itemized materials, labour muster roll, and food/transport sundries</p>
+                <p className="text-xs text-slate-500">
+                  Showing {filteredPayments.length} item{filteredPayments.length !== 1 ? 's' : ''} in{' '}
+                  <span className="font-semibold text-blue-700">{subTab.toUpperCase()}</span> stage
+                </p>
               </div>
               <ExportButton
-                data={siteSupervisorEntries.map((e) => ({
+                data={filteredPayments.map((e) => ({
                   ID: e.id,
                   Site: siteMap[e.siteId] || e.siteId,
                   Supervisor: e.supervisorName,
@@ -386,16 +702,18 @@ export default function ApprovalsCenter({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {siteSupervisorEntries.length === 0 ? (
+                  {filteredPayments.length === 0 ? (
                     <tr>
                       <td colSpan={9} className="py-8 text-center text-slate-400">
-                        No payment claims recorded.
+                        No payment claims matching the current filter.
                       </td>
                     </tr>
                   ) : (
-                    siteSupervisorEntries.map((entry) => {
+                    filteredPayments.map((entry) => {
                       const sundries = (Number(entry.foodCost) || 0) + (Number(entry.transportCost) || 0) + (Number(entry.fuelCost) || 0)
-                      const isPending = entry.status === 'pending_manager_review'
+                      const isPendingReview = entry.status === 'pending_manager_review' || entry.currentStep === 1
+                      const isClearanceReady = entry.status === 'approved_by_org' || entry.status === 'pending_manager_clearance' || entry.currentStep === 3
+
                       return (
                         <tr key={entry.id} className="hover:bg-slate-50/70 transition-colors">
                           <td className="py-2.5 px-3 text-slate-600">{formatDate(entry.date)}</td>
@@ -412,42 +730,76 @@ export default function ApprovalsCenter({
                             <StatusBadge status={entry.status} />
                           </td>
                           <td className="py-2.5 px-3 text-right">
-                            {isPending ? (
-                              <div className="flex items-center justify-end gap-1.5">
-                                <button
-                                  type="button"
-                                  disabled={actionLoading}
-                                  onClick={() => handleVerifyPayment(entry)}
-                                  className="px-2 py-1 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
-                                >
-                                  ✓ Verify & Forward
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={actionLoading}
-                                  onClick={() => handleLinkPettyCash(entry)}
-                                  className="px-2 py-1 rounded-lg text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
-                                >
-                                  💵 Petty Cash
-                                </button>
+                            <div className="flex items-center justify-end gap-1.5">
+                              {/* Inspect Workflow & Audit History Button */}
+                              <button
+                                type="button"
+                                title="View 5-Stage Approval History"
+                                onClick={() => {
+                                  setSelectedItem(entry)
+                                  setIsAuditModalOpen(true)
+                                }}
+                                className="p-1 rounded-lg text-slate-500 hover:text-blue-700 hover:bg-blue-50 border border-slate-200"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+
+                              {/* Stage 1 Actions */}
+                              {isPendingReview && (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={actionLoading}
+                                    onClick={() => handleVerifyPayment(entry)}
+                                    className="px-2 py-1 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
+                                  >
+                                    ✓ Verify & Forward
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={actionLoading}
+                                    onClick={() => handleLinkPettyCash(entry)}
+                                    className="px-2 py-1 rounded-lg text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
+                                  >
+                                    💵 Petty Cash
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={actionLoading}
+                                    onClick={() => {
+                                      setSelectedItem(entry)
+                                      setRejectReason('')
+                                      setIsRejectModalOpen(true)
+                                    }}
+                                    className="px-2 py-1 rounded-lg text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100"
+                                  >
+                                    ✕ Reject
+                                  </button>
+                                </>
+                              )}
+
+                              {/* Stage 4 Clearance Action */}
+                              {isClearanceReady && (
                                 <button
                                   type="button"
                                   disabled={actionLoading}
                                   onClick={() => {
                                     setSelectedItem(entry)
-                                    setRejectReason('')
-                                    setIsRejectModalOpen(true)
+                                    setUtrReference('')
+                                    setIsPaymentClearanceModalOpen(true)
                                   }}
-                                  className="px-2 py-1 rounded-lg text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100"
+                                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs"
                                 >
-                                  ✕ Reject
+                                  Disburse & Clear
                                 </button>
-                              </div>
-                            ) : (
-                              <span className="text-[11px] text-slate-400 font-mono">
-                                {entry.status === 'approved' ? '✓ Settled' : 'Processed'}
-                              </span>
-                            )}
+                              )}
+
+                              {!isPendingReview && !isClearanceReady && (
+                                <span className="text-[11px] text-slate-400 font-mono">
+                                  {entry.status === 'approved' ? '✓ Settled' : entry.statusDisplay || entry.status}
+                                </span>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       )
@@ -467,8 +819,25 @@ export default function ApprovalsCenter({
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold text-slate-900">Site Raw Material Requisitions</h3>
-                <p className="text-xs text-slate-500">Review required quantities, urgency, vendor quotes, and delivery timelines</p>
+                <p className="text-xs text-slate-500">
+                  Showing {filteredMaterials.length} item{filteredMaterials.length !== 1 ? 's' : ''} in{' '}
+                  <span className="font-semibold text-blue-700">{subTab.toUpperCase()}</span> stage
+                </p>
               </div>
+              <ExportButton
+                data={filteredMaterials.map((r) => ({
+                  ID: r.requestId || r.id,
+                  Site: siteMap[r.siteId] || r.siteId,
+                  Material: r.materialName,
+                  RequestedQty: r.requestedQty,
+                  ApprovedQty: r.approvedQty,
+                  Unit: r.unit,
+                  Urgency: r.urgency,
+                  Status: r.status,
+                  GatePass: r.gatePassNumber || '',
+                }))}
+                filename="material_indent_approvals.csv"
+              />
             </div>
 
             <div className="overflow-x-auto border border-slate-200 rounded-xl">
@@ -487,15 +856,22 @@ export default function ApprovalsCenter({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {siteMaterialsRequest.length === 0 ? (
+                  {filteredMaterials.length === 0 ? (
                     <tr>
                       <td colSpan={9} className="py-8 text-center text-slate-400">
-                        No material requests pending.
+                        No material requisitions matching the current filter.
                       </td>
                     </tr>
                   ) : (
-                    siteMaterialsRequest.map((req) => {
-                      const isPending = req.status === 'pending_manager_review'
+                    filteredMaterials.map((req) => {
+                      const isPendingReview = req.status === 'pending_manager_review' || req.currentStep === 1
+                      const isClearanceReady =
+                        req.status === 'authorized_for_procurement' ||
+                        req.status === 'approved_by_org' ||
+                        req.status === 'pending_manager_clearance' ||
+                        req.currentStep === 3
+                      const isDispatched = req.status === 'dispatched' || (req.currentStep === 4 && !req.receivedAt)
+
                       return (
                         <tr key={req.id} className="hover:bg-slate-50/70 transition-colors">
                           <td className="py-2.5 px-3 font-mono font-bold text-slate-700">{req.requestId || req.id}</td>
@@ -518,35 +894,88 @@ export default function ApprovalsCenter({
                             <StatusBadge status={req.status} />
                           </td>
                           <td className="py-2.5 px-3 text-right">
-                            {isPending ? (
-                              <div className="flex items-center justify-end gap-1.5">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {/* Audit Trail Inspector */}
+                              <button
+                                type="button"
+                                title="View 5-Stage Approval History"
+                                onClick={() => {
+                                  setSelectedItem(req)
+                                  setIsAuditModalOpen(true)
+                                }}
+                                className="p-1 rounded-lg text-slate-500 hover:text-blue-700 hover:bg-blue-50 border border-slate-200"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+
+                              {/* Stage 1: Review & Authorize */}
+                              {isPendingReview && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedItem(req)
+                                      setApprovedQty(String(req.requestedQty || ''))
+                                      setVendorNotes('')
+                                      setIsMaterialModalOpen(true)
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg text-xs font-bold bg-[#0B3470] text-white hover:bg-blue-800 shadow-xs"
+                                  >
+                                    Verify Qty
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedItem(req)
+                                      setRejectReason('')
+                                      setIsRejectModalOpen(true)
+                                    }}
+                                    className="px-2 py-1 rounded-lg text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100"
+                                  >
+                                    ✕
+                                  </button>
+                                </>
+                              )}
+
+                              {/* Stage 4: Issue Gate Pass & Dispatch */}
+                              {isClearanceReady && (
                                 <button
                                   type="button"
                                   onClick={() => {
                                     setSelectedItem(req)
-                                    setApprovedQty(String(req.requestedQty || ''))
-                                    setVendorNotes('')
-                                    setIsMaterialModalOpen(true)
+                                    setGatePassNo(`GP-${Date.now().toString().slice(-6)}`)
+                                    setDispatchRemarks('')
+                                    setIsGatePassModalOpen(true)
                                   }}
-                                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-[#0B3470] text-white hover:bg-blue-800 shadow-xs"
+                                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs flex items-center gap-1"
                                 >
-                                  Review & Authorize
+                                  <Truck className="w-3.5 h-3.5" />
+                                  <span>Issue Gate Pass</span>
                                 </button>
+                              )}
+
+                              {/* Stage 5: Confirm Physical Receipt at Site */}
+                              {isDispatched && (
                                 <button
                                   type="button"
                                   onClick={() => {
                                     setSelectedItem(req)
-                                    setRejectReason('')
-                                    setIsRejectModalOpen(true)
+                                    setReceiptType('material')
+                                    setReceiptNotes('Material unloaded at site, quantity & bag seal verified.')
+                                    setIsReceiptConfirmModalOpen(true)
                                   }}
-                                  className="px-2 py-1 rounded-lg text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100"
+                                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-xs"
                                 >
-                                  ✕
+                                  Confirm Receipt
                                 </button>
-                              </div>
-                            ) : (
-                              <span className="text-[11px] text-slate-400 font-mono">✓ Processed</span>
-                            )}
+                              )}
+
+                              {!isPendingReview && !isClearanceReady && !isDispatched && (
+                                <span className="text-[11px] text-slate-400 font-mono">
+                                  {req.status === 'received' ? '✓ Received at Site' : req.statusDisplay || req.status}
+                                </span>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       )
@@ -566,8 +995,23 @@ export default function ApprovalsCenter({
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold text-slate-900">Plant & Power Tool Requisitions</h3>
-                <p className="text-xs text-slate-500">Assign yard assets, issue site dispatch gate passes, and inspect returned conditions</p>
+                <p className="text-xs text-slate-500">
+                  Showing {filteredTools.length} item{filteredTools.length !== 1 ? 's' : ''} in{' '}
+                  <span className="font-semibold text-blue-700">{subTab.toUpperCase()}</span> stage
+                </p>
               </div>
+              <ExportButton
+                data={filteredTools.map((t) => ({
+                  ID: t.requestId || t.id,
+                  Site: siteMap[t.siteId] || t.siteId,
+                  Tool: t.toolName,
+                  Quantity: t.quantity,
+                  AssetSerial: t.assignedSerialId || '',
+                  Status: t.status,
+                  ReturnCondition: t.returnCondition || '',
+                }))}
+                filename="tool_requisition_approvals.csv"
+              />
             </div>
 
             <div className="overflow-x-auto border border-slate-200 rounded-xl">
@@ -585,16 +1029,23 @@ export default function ApprovalsCenter({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {siteToolsRequest.length === 0 ? (
+                  {filteredTools.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="py-8 text-center text-slate-400">
-                        No equipment requisitions logged.
+                        No equipment requisitions matching the current filter.
                       </td>
                     </tr>
                   ) : (
-                    siteToolsRequest.map((tool) => {
-                      const isPending = tool.status === 'pending_manager_review'
+                    filteredTools.map((tool) => {
+                      const isPendingReview = tool.status === 'pending_manager_review' || tool.currentStep === 1
+                      const isReadyToDispatch =
+                        tool.status === 'approved' ||
+                        tool.status === 'allocated' ||
+                        tool.status === 'pending_manager_clearance' ||
+                        tool.currentStep === 3
                       const isDispatched = tool.status === 'dispatched'
+                      const isReceived = tool.status === 'received'
+
                       return (
                         <tr key={tool.id} className="hover:bg-slate-50/70 transition-colors">
                           <td className="py-2.5 px-3 font-mono font-bold text-slate-700">{tool.requestId || tool.id}</td>
@@ -607,33 +1058,87 @@ export default function ApprovalsCenter({
                             <StatusBadge status={tool.status} />
                           </td>
                           <td className="py-2.5 px-3 text-right">
-                            {isPending ? (
+                            <div className="flex items-center justify-end gap-1.5">
+                              {/* Audit Trail Inspector */}
                               <button
                                 type="button"
+                                title="View 5-Stage Approval History"
                                 onClick={() => {
                                   setSelectedItem(tool)
-                                  setAssetSerialId(`YARD_${tool.toolName?.replace(/\s+/g, '_')}_01`)
-                                  setIsToolModalOpen(true)
+                                  setIsAuditModalOpen(true)
                                 }}
-                                className="px-2.5 py-1 rounded-lg text-xs font-bold bg-[#0B3470] text-white hover:bg-blue-800 shadow-xs"
+                                className="p-1 rounded-lg text-slate-500 hover:text-blue-700 hover:bg-blue-50 border border-slate-200"
                               >
-                                Allocate Asset Serial
+                                <Eye className="w-3.5 h-3.5" />
                               </button>
-                            ) : isDispatched ? (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setSelectedItem(tool)
-                                  setReturnCondition('Working')
-                                  setIsReturnConditionModalOpen(true)
-                                }}
-                                className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs"
-                              >
-                                Confirm Return
-                              </button>
-                            ) : (
-                              <span className="text-[11px] text-slate-400 font-mono">✓ {tool.status}</span>
-                            )}
+
+                              {/* Stage 1: Assign Yard Asset Tag */}
+                              {isPendingReview && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedItem(tool)
+                                    setAssetSerialId(`YARD_${tool.toolName?.replace(/\s+/g, '_')}_01`)
+                                    setIsToolModalOpen(true)
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-[#0B3470] text-white hover:bg-blue-800 shadow-xs"
+                                >
+                                  Allocate Asset Serial
+                                </button>
+                              )}
+
+                              {/* Stage 4: Dispatch Tool from Yard */}
+                              {isReadyToDispatch && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedItem(tool)
+                                    setToolDispatchNotes('Dispatched on company equipment truck')
+                                    setIsToolDispatchModalOpen(true)
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs flex items-center gap-1"
+                                >
+                                  <Truck className="w-3.5 h-3.5" />
+                                  <span>Dispatch Tool</span>
+                                </button>
+                              )}
+
+                              {/* Stage 5: Confirm Site Receipt */}
+                              {isDispatched && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedItem(tool)
+                                    setReceiptType('tool')
+                                    setReceiptNotes('Asset arrived at site yard, operational testing passed.')
+                                    setIsReceiptConfirmModalOpen(true)
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-xs"
+                                >
+                                  Confirm Arrival
+                                </button>
+                              )}
+
+                              {/* Return Inspection */}
+                              {isReceived && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedItem(tool)
+                                    setReturnCondition('Working')
+                                    setIsReturnConditionModalOpen(true)
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-600 text-white hover:bg-amber-700 shadow-xs flex items-center gap-1"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5" />
+                                  <span>Return to Yard</span>
+                                </button>
+                              )}
+
+                              {!isPendingReview && !isReadyToDispatch && !isDispatched && !isReceived && (
+                                <span className="text-[11px] text-slate-400 font-mono">✓ {tool.status}</span>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       )
@@ -653,7 +1158,10 @@ export default function ApprovalsCenter({
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold text-slate-900">Project Stage Milestones & Quality Sign-Off</h3>
-                <p className="text-xs text-slate-500">Sign off completion of construction stages and unlock subsequent Gantt phases</p>
+                <p className="text-xs text-slate-500">
+                  Showing {filteredStages.length} milestone{filteredStages.length !== 1 ? 's' : ''} in{' '}
+                  <span className="font-semibold text-blue-700">{subTab.toUpperCase()}</span> stage
+                </p>
               </div>
             </div>
 
@@ -671,15 +1179,15 @@ export default function ApprovalsCenter({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {siteSupervisorProjectStageSchedule.length === 0 ? (
+                  {filteredStages.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="py-8 text-center text-slate-400">
-                        No milestone schedule registered. Launch a new site in Project & Site Setup to initialize milestones.
+                        No milestone schedules registered.
                       </td>
                     </tr>
                   ) : (
-                    siteSupervisorProjectStageSchedule.map((stg) => {
-                      const isComplete = stg.status === 'completed' || stg.isApproved
+                    filteredStages.map((stg) => {
+                      const isComplete = stg.status === 'completed' || Boolean(stg.isApproved)
                       return (
                         <tr key={stg.id} className="hover:bg-slate-50/70 transition-colors">
                           <td className="py-2.5 px-3 font-mono font-bold text-slate-700">#{stg.stageOrder || 1}</td>
@@ -693,21 +1201,35 @@ export default function ApprovalsCenter({
                           </td>
                           <td className="py-2.5 px-3 text-slate-500 max-w-xs truncate">{stg.qualityCheckRemarks || 'Pending final physical inspection'}</td>
                           <td className="py-2.5 px-3 text-right">
-                            {!isComplete ? (
+                            <div className="flex items-center justify-end gap-1.5">
                               <button
                                 type="button"
+                                title="View 5-Stage Approval History"
                                 onClick={() => {
                                   setSelectedItem(stg)
-                                  setMilestoneQualityNotes('Physical QA check verified. Work approved.')
-                                  setIsMilestoneModalOpen(true)
+                                  setIsAuditModalOpen(true)
                                 }}
-                                className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs"
+                                className="p-1 rounded-lg text-slate-500 hover:text-blue-700 hover:bg-blue-50 border border-slate-200"
                               >
-                                ✓ Sign Off Milestone
+                                <Eye className="w-3.5 h-3.5" />
                               </button>
-                            ) : (
-                              <span className="text-[11px] text-emerald-600 font-bold font-mono">✓ Signed Off</span>
-                            )}
+
+                              {!isComplete ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedItem(stg)
+                                    setMilestoneQualityNotes('Physical QA check verified. Work approved.')
+                                    setIsMilestoneModalOpen(true)
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs"
+                                >
+                                  ✓ Sign Off Milestone
+                                </button>
+                              ) : (
+                                <span className="text-[11px] text-emerald-600 font-bold font-mono">✓ Signed Off</span>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       )
@@ -723,6 +1245,50 @@ export default function ApprovalsCenter({
       {/* ------------------------------------------------------------- */}
       {/* MODALS */}
       {/* ------------------------------------------------------------- */}
+
+      {/* Create Requisition Modal */}
+      <CreateRequisitionModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        orgId={orgId}
+        currentUser={user}
+        sites={sites}
+        onSuccess={() => {
+          showMsg('success', 'Requisition successfully submitted to the 5-Stage Approval Pipeline.')
+        }}
+      />
+
+      {/* Audit Trail & 5-Stage Workflow Modal */}
+      <Modal
+        isOpen={isAuditModalOpen}
+        onClose={() => {
+          setIsAuditModalOpen(false)
+          setSelectedItem(null)
+        }}
+        title="Requisition Lifecycle & Audit Trail"
+        subtitle={`Item #${selectedItem?.id || selectedItem?.requestId || ''} · ${siteMap[selectedItem?.siteId] || ''}`}
+      >
+        <div className="p-6 space-y-4">
+          <ApprovalWorkflowStepper
+            currentStep={selectedItem?.currentStep || 1}
+            status={selectedItem?.status || ''}
+            history={selectedItem?.approvalHistory || []}
+          />
+          <div className="flex justify-end pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setIsAuditModalOpen(false)
+                setSelectedItem(null)
+              }}
+              className="px-4 py-2 rounded-xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 cursor-pointer"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </Modal>
+
       {/* Rejection Modal */}
       <Modal
         isOpen={isRejectModalOpen}
@@ -743,15 +1309,15 @@ export default function ApprovalsCenter({
             />
           </div>
           <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
-            <button type="button" onClick={() => setIsRejectModalOpen(false)} className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100">Cancel</button>
-            <button type="submit" disabled={actionLoading} className="px-5 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-xs">
+            <button type="button" onClick={() => setIsRejectModalOpen(false)} className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer">Cancel</button>
+            <button type="submit" disabled={actionLoading} className="px-5 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-xs cursor-pointer">
               {actionLoading ? 'Rejecting...' : 'Confirm Rejection'}
             </button>
           </div>
         </form>
       </Modal>
 
-      {/* Material Review Modal */}
+      {/* Material Review Modal (Stage 2) */}
       <Modal
         isOpen={isMaterialModalOpen}
         onClose={() => setIsMaterialModalOpen(false)}
@@ -790,15 +1356,81 @@ export default function ApprovalsCenter({
             />
           </div>
           <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
-            <button type="button" onClick={() => setIsMaterialModalOpen(false)} className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100">Cancel</button>
-            <button type="submit" disabled={actionLoading} className="px-5 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white shadow-xs">
+            <button type="button" onClick={() => setIsMaterialModalOpen(false)} className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer">Cancel</button>
+            <button type="submit" disabled={actionLoading} className="px-5 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white shadow-xs cursor-pointer">
               {actionLoading ? 'Saving...' : 'Authorize Requisition'}
             </button>
           </div>
         </form>
       </Modal>
 
-      {/* Tool Allocation Modal */}
+      {/* Material Clearance Gate Pass Modal (Stage 4) */}
+      <Modal
+        isOpen={isGatePassModalOpen}
+        onClose={() => setIsGatePassModalOpen(false)}
+        title="Issue Warehouse Gate Pass & Clear Dispatch"
+        subtitle={`Item: ${selectedItem?.materialName} (${selectedItem?.approvedQty || selectedItem?.requestedQty} ${selectedItem?.unit})`}
+      >
+        <form onSubmit={handleGatePassSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Gate Pass Number *</label>
+            <input
+              type="text"
+              value={gatePassNo}
+              onChange={(e) => setGatePassNo(e.target.value)}
+              placeholder="e.g. GP-2026-8812"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 font-mono font-bold outline-none focus:border-blue-600"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Dispatch Remarks / Vehicle Details</label>
+            <textarea
+              rows={2}
+              value={dispatchRemarks}
+              onChange={(e) => setDispatchRemarks(e.target.value)}
+              placeholder="e.g. Loaded onto Truck MH-12-AB-3421 with original challan copy"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 outline-none focus:border-blue-600"
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
+            <button type="button" onClick={() => setIsGatePassModalOpen(false)} className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer">Cancel</button>
+            <button type="submit" disabled={actionLoading} className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs cursor-pointer">
+              {actionLoading ? 'Issuing...' : 'Issue Gate Pass & Dispatch'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Payment Clearance & UTR Modal (Stage 4) */}
+      <Modal
+        isOpen={isPaymentClearanceModalOpen}
+        onClose={() => setIsPaymentClearanceModalOpen(false)}
+        title="Disburse Payment & Record Settlement"
+        subtitle={`Amount: ${money(selectedItem?.totalAmount)} for ${siteMap[selectedItem?.siteId] || ''}`}
+      >
+        <form onSubmit={handlePaymentClearanceSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Bank UTR / Transaction Reference *</label>
+            <input
+              type="text"
+              value={utrReference}
+              onChange={(e) => setUtrReference(e.target.value)}
+              placeholder="e.g. UTR-HDFC-9921481 or CASH_DISBURSED"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 font-mono font-bold outline-none focus:border-blue-600"
+              required
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
+            <button type="button" onClick={() => setIsPaymentClearanceModalOpen(false)} className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer">Cancel</button>
+            <button type="submit" disabled={actionLoading} className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs cursor-pointer">
+              {actionLoading ? 'Disbursing...' : 'Confirm Disbursement'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Tool Allocation Modal (Stage 2) */}
       <Modal
         isOpen={isToolModalOpen}
         onClose={() => setIsToolModalOpen(false)}
@@ -818,9 +1450,63 @@ export default function ApprovalsCenter({
             />
           </div>
           <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
-            <button type="button" onClick={() => setIsToolModalOpen(false)} className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100">Cancel</button>
-            <button type="submit" disabled={actionLoading} className="px-5 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white shadow-xs">
+            <button type="button" onClick={() => setIsToolModalOpen(false)} className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer">Cancel</button>
+            <button type="submit" disabled={actionLoading} className="px-5 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white shadow-xs cursor-pointer">
               {actionLoading ? 'Authorizing...' : 'Authorize & Tag Asset'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Tool Dispatch Modal (Stage 4) */}
+      <Modal
+        isOpen={isToolDispatchModalOpen}
+        onClose={() => setIsToolDispatchModalOpen(false)}
+        title="Dispatch Machinery from Central Yard"
+        subtitle={`Tool: ${selectedItem?.toolName} (Asset Tag: ${selectedItem?.assignedSerialId})`}
+      >
+        <form onSubmit={handleToolDispatchSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Dispatch Remarks / Vehicle Details</label>
+            <textarea
+              rows={2}
+              value={toolDispatchNotes}
+              onChange={(e) => setToolDispatchNotes(e.target.value)}
+              placeholder="e.g. Transported via company recovery trailer"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 outline-none focus:border-blue-600"
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
+            <button type="button" onClick={() => setIsToolDispatchModalOpen(false)} className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer">Cancel</button>
+            <button type="submit" disabled={actionLoading} className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs cursor-pointer">
+              {actionLoading ? 'Dispatching...' : 'Confirm Dispatch'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Site Receipt Confirmation Modal (Stage 5) */}
+      <Modal
+        isOpen={isReceiptConfirmModalOpen}
+        onClose={() => setIsReceiptConfirmModalOpen(false)}
+        title="Confirm Physical Delivery at Construction Site"
+        subtitle={`Verifying delivery of ${receiptType === 'material' ? selectedItem?.materialName : selectedItem?.toolName}`}
+      >
+        <form onSubmit={handleReceiptConfirmSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Site Receipt Inspection Remarks</label>
+            <textarea
+              rows={3}
+              value={receiptNotes}
+              onChange={(e) => setReceiptNotes(e.target.value)}
+              placeholder="e.g. Unloaded at site yard, bag count matches invoice, quality verified"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 outline-none focus:border-blue-600"
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
+            <button type="button" onClick={() => setIsReceiptConfirmModalOpen(false)} className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer">Cancel</button>
+            <button type="submit" disabled={actionLoading} className="px-5 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-xs cursor-pointer">
+              {actionLoading ? 'Confirming...' : 'Confirm Receipt at Site'}
             </button>
           </div>
         </form>
@@ -847,8 +1533,8 @@ export default function ApprovalsCenter({
             </select>
           </div>
           <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
-            <button type="button" onClick={() => setIsReturnConditionModalOpen(false)} className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100">Cancel</button>
-            <button type="submit" disabled={actionLoading} className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs">
+            <button type="button" onClick={() => setIsReturnConditionModalOpen(false)} className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer">Cancel</button>
+            <button type="submit" disabled={actionLoading} className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs cursor-pointer">
               {actionLoading ? 'Confirming...' : 'Confirm Return & Update Yard'}
             </button>
           </div>
@@ -875,8 +1561,8 @@ export default function ApprovalsCenter({
             />
           </div>
           <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
-            <button type="button" onClick={() => setIsMilestoneModalOpen(false)} className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100">Cancel</button>
-            <button type="submit" disabled={actionLoading} className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs">
+            <button type="button" onClick={() => setIsMilestoneModalOpen(false)} className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer">Cancel</button>
+            <button type="submit" disabled={actionLoading} className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs cursor-pointer">
               {actionLoading ? 'Signing Off...' : 'Confirm Milestone Sign-Off'}
             </button>
           </div>

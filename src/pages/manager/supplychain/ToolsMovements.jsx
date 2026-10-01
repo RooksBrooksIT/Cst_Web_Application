@@ -37,6 +37,7 @@ import {
   subscribeToolsAtSite,
   generateToolCode,
 } from '../../../services/toolService.js'
+import { resolveSite, getNormalizedSiteOptions } from '../../../utils/siteUtils.js'
 
 export default function ToolsMovements({ orgId, sites = [], currentUser, onNotify }) {
   const [movements, setMovements] = useState([])
@@ -116,21 +117,8 @@ export default function ToolsMovements({ orgId, sites = [], currentUser, onNotif
     }
   }, [orgId])
 
-  // Deduplicated site options
-  const uniqueSites = useMemo(() => {
-    const seen = new Set()
-    return (sites || []).filter((s) => {
-      if (!s) return false
-      const id = s.id || s.siteId || s.projectId
-      const name = (s.siteName || s.projectName || s.name || '').trim().toLowerCase()
-      const key = `${id}_${name}`
-      if (seen.has(key) || (id && seen.has(id)) || (name && seen.has(name))) return false
-      if (id) seen.add(id)
-      if (name) seen.add(name)
-      seen.add(key)
-      return true
-    })
-  }, [sites])
+  // Deduplicated and normalized site options
+  const normalizedSites = useMemo(() => getNormalizedSiteOptions(sites), [sites])
 
   // Map depot availability by toolCode
   const depotStockMap = useMemo(() => {
@@ -159,9 +147,10 @@ export default function ToolsMovements({ orgId, sites = [], currentUser, onNotif
   // Auto fill supervisor when site is selected
   const handleSiteChange = (siteId) => {
     setSelectedSiteId(siteId)
-    const siteObj = sites.find((s) => s.id === siteId)
-    if (siteObj && (siteObj.supervisorName || siteObj.inCharge)) {
-      setSupervisorName(siteObj.supervisorName || siteObj.inCharge)
+    const siteObj = normalizedSites.find((s) => s.value === siteId) || resolveSite(siteId, '', sites)
+    const sup = siteObj?.raw?.supervisorName || siteObj?.raw?.inCharge || siteObj?.raw?.supervisor
+    if (sup) {
+      setSupervisorName(sup)
     }
   }
 
@@ -173,8 +162,13 @@ export default function ToolsMovements({ orgId, sites = [], currentUser, onNotif
     } else if (tools.length > 0) {
       setSelectedToolCode(tools[0].toolCode || generateToolCode(tools[0].toolName, tools[0].toolOwner))
     }
-    if (sites.length > 0) {
-      handleSiteChange(sites[0].id)
+    if (normalizedSites.length > 0) {
+      handleSiteChange(normalizedSites[0].value)
+      if (normalizedSites.length > 1) {
+        setFromSiteId(normalizedSites[1].value)
+      } else {
+        setFromSiteId(normalizedSites[0].value)
+      }
     }
     setDispatchQty('1')
     setDriverName('')
@@ -208,21 +202,39 @@ export default function ToolsMovements({ orgId, sites = [], currentUser, onNotif
 
     setSubmittingDispatch(true)
     try {
-      const targetSite = sites.find((s) => s.id === selectedSiteId)
-      const siteName = targetSite?.siteName || targetSite?.projectName || selectedSiteId
+      const targetSite = resolveSite(selectedSiteId, '', sites)
+      const siteName = targetSite.siteName || targetSite.label || selectedSiteId
       const toolName = selectedToolObj?.toolName || selectedToolObj?.name || selectedToolCode
+
+      let fromLoc = 'Central Yard Depot'
+      let fromSiteIdVal = 'CENTRAL_DEPOT'
+      let fromSiteNameVal = 'Central Yard Depot'
+      let fromSiteCodeVal = 'DEPOT'
+
+      if (dispatchMode === 1) {
+        const fromSiteRes = resolveSite(fromSiteId, '', sites)
+        fromLoc = fromSiteRes.label || fromSiteRes.siteName || fromSiteId
+        fromSiteIdVal = fromSiteRes.siteId || fromSiteId
+        fromSiteNameVal = fromSiteRes.siteName
+        fromSiteCodeVal = fromSiteRes.siteCode
+      }
 
       const payload = {
         movementType: dispatchMode === 0 ? 'CompanyToSite' : 'SiteToSite',
-        fromLocation: dispatchMode === 0 ? 'Central Yard Depot' : fromSiteId || 'Field Site',
-        toSiteId: selectedSiteId,
-        toSiteName: siteName,
+        fromLocation: fromLoc,
+        fromSiteId: fromSiteIdVal,
+        fromSiteName: fromSiteNameVal,
+        fromSiteCode: fromSiteCodeVal,
+        toSiteId: targetSite.siteId || selectedSiteId,
+        toSiteCode: targetSite.siteCode || '',
+        toSiteName: targetSite.siteName || siteName,
+        projectName: targetSite.projectName || '',
         toolId: selectedToolObj?.id || selectedToolObj?.toolId || '',
         toolMasterDocId: selectedToolObj?.id || selectedToolObj?.toolId || '',
         toolCode: selectedToolCode,
         toolName,
         quantity: qty,
-        supervisorName: supervisorName || 'Site Supervisor',
+        supervisorName: supervisorName || targetSite.raw?.supervisorName || 'Site Supervisor',
         dispatchedBy: currentUser?.name || currentUser?.email || 'Operations Manager',
         driverName: driverName.trim(),
         vehicleNumber: vehicleNumber.trim().toUpperCase(),
@@ -232,7 +244,7 @@ export default function ToolsMovements({ orgId, sites = [], currentUser, onNotif
 
       await dispatchToolToSite(orgId, payload)
 
-      onNotify?.(`Equipment "${toolName}" successfully dispatched to ${siteName}!`, 'success')
+      onNotify?.(`Equipment "${toolName}" successfully dispatched to ${targetSite.label || siteName}!`, 'success')
       setShowDispatchModal(false)
     } catch (err) {
       console.error(err)
@@ -249,10 +261,17 @@ export default function ToolsMovements({ orgId, sites = [], currentUser, onNotif
 
     setSubmittingReturn(true)
     try {
+      const returnSiteRes = resolveSite(
+        returnMovement.toSiteId || returnMovement.siteId || '',
+        returnMovement.toSiteName || returnMovement.toSite || returnMovement.siteName || '',
+        sites
+      )
+
       await returnToolToCompany(orgId, {
         movementId: returnMovement.id || returnMovement.movementId,
         toolCode: returnMovement.toolCode || '',
-        fromSiteId: returnMovement.toSiteId || '',
+        fromSiteId: returnSiteRes.siteId || returnMovement.toSiteId || '',
+        fromSiteName: returnSiteRes.siteName || returnMovement.toSiteName || '',
         toolMasterDocId: returnMovement.toolId || '',
         quantity: returnMovement.quantity || 1,
         condition: returnCondition,
@@ -491,13 +510,45 @@ export default function ToolsMovements({ orgId, sites = [], currentUser, onNotif
                       </td>
 
                       <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-1.5 text-xs text-slate-800 font-medium">
-                          <Building2 className="w-3.5 h-3.5 text-slate-400" />
-                          <span>{item.toSiteName || item.toSite || item.siteName || 'Site'}</span>
-                        </div>
-                        <span className="text-[10px] text-slate-400 block mt-0.5">
-                          From: {item.from || item.fromSite || 'Central Depot'}
-                        </span>
+                        {(() => {
+                          const toRes = resolveSite(
+                            item.toSiteId || item.siteId,
+                            item.toSiteName || item.toSite || item.siteName,
+                            sites
+                          )
+                          const isFromDepot =
+                            !item.fromSiteId ||
+                            item.fromSiteId === 'CENTRAL_DEPOT' ||
+                            item.from === 'Central Depot' ||
+                            item.from === 'Central Yard Depot' ||
+                            item.movementType === 'CompanyToSite'
+
+                          const fromRes = isFromDepot
+                            ? { label: 'Central Yard Depot', siteName: 'Central Yard Depot', siteCode: 'DEPOT' }
+                            : resolveSite(item.fromSiteId || item.fromSite || item.from, '', sites)
+
+                          return (
+                            <div>
+                              <div className="flex items-center gap-1.5 text-xs text-slate-800 font-medium">
+                                <Building2 className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                                <span>{toRes.siteName || 'Site'}</span>
+                                {toRes.siteCode && (
+                                  <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 font-semibold border border-blue-100">
+                                    {toRes.siteCode}
+                                  </span>
+                                )}
+                              </div>
+                              {toRes.projectName && (
+                                <div className="text-[10px] text-slate-400 pl-5">
+                                  Project: {toRes.projectName}
+                                </div>
+                              )}
+                              <span className="text-[10px] text-slate-500 block mt-0.5 pl-5">
+                                From: {fromRes.label || fromRes.siteName || item.from || 'Central Depot'}
+                              </span>
+                            </div>
+                          )
+                        })()}
                       </td>
 
                       <td className="py-3.5 px-4">
@@ -715,9 +766,9 @@ export default function ToolsMovements({ orgId, sites = [], currentUser, onNotif
                     className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
                   >
                     <option value="">Select Source Site...</option>
-                    {uniqueSites.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.siteName || s.projectName}
+                    {normalizedSites.map((s) => (
+                      <option key={s.value} value={s.value}>
+                        {s.label}
                       </option>
                     ))}
                   </select>
@@ -736,9 +787,9 @@ export default function ToolsMovements({ orgId, sites = [], currentUser, onNotif
                   className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
                 >
                   <option value="">Select Target Construction Site...</option>
-                  {uniqueSites.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.siteName || s.projectName}
+                  {normalizedSites.map((s) => (
+                    <option key={s.value} value={s.value}>
+                      {s.label}
                     </option>
                   ))}
                 </select>
@@ -855,14 +906,23 @@ export default function ToolsMovements({ orgId, sites = [], currentUser, onNotif
             </div>
 
             <form onSubmit={handleReturnSubmit} className="space-y-4">
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs">
-                <p className="font-semibold text-slate-900 text-sm">{returnMovement.toolName}</p>
-                <p className="text-slate-500 font-mono mt-0.5">{returnMovement.toolCode || 'Asset Code'}</p>
-                <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-200/60 text-slate-600">
-                  <span>Returning from: {returnMovement.toSiteName || returnMovement.toSite}</span>
-                  <span className="font-semibold">Qty: {returnMovement.quantity || 1}</span>
-                </div>
-              </div>
+              {(() => {
+                const retSiteRes = resolveSite(
+                  returnMovement.toSiteId || returnMovement.siteId,
+                  returnMovement.toSiteName || returnMovement.toSite || returnMovement.siteName,
+                  sites
+                )
+                return (
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs">
+                    <p className="font-semibold text-slate-900 text-sm">{returnMovement.toolName}</p>
+                    <p className="text-slate-500 font-mono mt-0.5">{returnMovement.toolCode || 'Asset Code'}</p>
+                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-200/60 text-slate-600">
+                      <span>Returning from: <strong className="text-slate-800">{retSiteRes.label}</strong></span>
+                      <span className="font-semibold">Qty: {returnMovement.quantity || 1}</span>
+                    </div>
+                  </div>
+                )
+              })()}
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
@@ -1036,25 +1096,48 @@ export default function ToolsMovements({ orgId, sites = [], currentUser, onNotif
               </div>
 
               {/* Logistics & Locations */}
-              <div className="grid grid-cols-2 gap-4 text-xs">
-                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
-                  <span className="font-bold text-slate-700 block text-[11px] uppercase tracking-wider">
-                    Custody & Destination
-                  </span>
-                  <p><strong className="text-slate-600">To Site:</strong> {selectedVoucher.toSiteName || selectedVoucher.toSite}</p>
-                  <p><strong className="text-slate-600">Supervisor:</strong> {selectedVoucher.supervisorName}</p>
-                  <p><strong className="text-slate-600">From Origin:</strong> {selectedVoucher.from || 'Central Depot'}</p>
-                </div>
+              {(() => {
+                const voucherToRes = resolveSite(
+                  selectedVoucher.toSiteId || selectedVoucher.siteId,
+                  selectedVoucher.toSiteName || selectedVoucher.toSite || selectedVoucher.siteName,
+                  sites
+                )
+                const isVoucherFromDepot =
+                  !selectedVoucher.fromSiteId ||
+                  selectedVoucher.fromSiteId === 'CENTRAL_DEPOT' ||
+                  selectedVoucher.from === 'Central Depot' ||
+                  selectedVoucher.from === 'Central Yard Depot' ||
+                  selectedVoucher.movementType === 'CompanyToSite'
 
-                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
-                  <span className="font-bold text-slate-700 block text-[11px] uppercase tracking-wider">
-                    Transport Details
-                  </span>
-                  <p><strong className="text-slate-600">Vehicle:</strong> {selectedVoucher.vehicleNumber || 'Self Transfer'}</p>
-                  <p><strong className="text-slate-600">Driver:</strong> {selectedVoucher.driverName || 'N/A'}</p>
-                  <p><strong className="text-slate-600">Notes:</strong> {selectedVoucher.notes || 'None'}</p>
-                </div>
-              </div>
+                const voucherFromRes = isVoucherFromDepot
+                  ? { label: 'Central Yard Depot' }
+                  : resolveSite(selectedVoucher.fromSiteId || selectedVoucher.fromSite || selectedVoucher.from, '', sites)
+
+                return (
+                  <div className="grid grid-cols-2 gap-4 text-xs">
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
+                      <span className="font-bold text-slate-700 block text-[11px] uppercase tracking-wider">
+                        Custody & Destination
+                      </span>
+                      <p><strong className="text-slate-600">To Site:</strong> {voucherToRes.label}</p>
+                      {voucherToRes.projectName && (
+                        <p><strong className="text-slate-600">Project:</strong> {voucherToRes.projectName}</p>
+                      )}
+                      <p><strong className="text-slate-600">Supervisor:</strong> {selectedVoucher.supervisorName}</p>
+                      <p><strong className="text-slate-600">From Origin:</strong> {voucherFromRes.label || selectedVoucher.from || 'Central Depot'}</p>
+                    </div>
+
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
+                      <span className="font-bold text-slate-700 block text-[11px] uppercase tracking-wider">
+                        Transport Details
+                      </span>
+                      <p><strong className="text-slate-600">Vehicle:</strong> {selectedVoucher.vehicleNumber || 'Self Transfer'}</p>
+                      <p><strong className="text-slate-600">Driver:</strong> {selectedVoucher.driverName || 'N/A'}</p>
+                      <p><strong className="text-slate-600">Notes:</strong> {selectedVoucher.notes || 'None'}</p>
+                    </div>
+                  </div>
+                )
+              })()}
 
               {/* Sign-off Blocks */}
               <div className="grid grid-cols-3 gap-4 pt-6 border-t border-dashed border-slate-300 text-center text-[11px] text-slate-500">

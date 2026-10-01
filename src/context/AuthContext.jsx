@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { onAuthStateChanged, signOut } from 'firebase/auth'
 import { auth } from '../services/firebase'
 import { clearStoredSession, fetchCurrentUserProfile, loginUser, normalizeRole, readStoredSession } from '../services/authService'
+import { deleteFcmToken } from '../services/notificationService'
 import { AuthContext } from './auth-context'
 
 export function AuthProvider({ children }) {
@@ -50,6 +51,13 @@ export function AuthProvider({ children }) {
   }
 
   async function logout() {
+    if (session.orgId && session.user?.uid) {
+      deleteFcmToken({
+        orgId: session.orgId,
+        role: session.role,
+        userId: session.user.uid,
+      }).catch(() => {})
+    }
     await signOut(auth).catch(() => {})
     clearStoredSession()
     setSession({ user: null, role: null, orgId: null, userData: null, loading: false })

@@ -1,0 +1,737 @@
+================================================================================
+CST WHITE LABEL (eBRICKS) - COMPLETE PROJECT APPROVAL & REQUEST SYSTEM
+ARCHITECTURE, DATA CONTRACTS, FRONTEND/BACKEND STRUCTURE & LOGIC FLOW SPECIFICATION
+================================================================================
+Document Type   : Full-Stack System Architecture, Data Models & Workflow Specification
+Author / Target : CST White Label Engineering Team (Mobile, Web & Backend)
+Platforms       : React Web Application, Flutter Mobile (Android/iOS), Firebase Node.js
+Date Generated  : 2026-09-30
+Specification   : Production V3.5 Enterprise Multi-Tenant Standard
+================================================================================
+
+TABLE OF CONTENTS:
+1. Executive Summary & Approval Governance Matrix
+2. Complete Domain Request Streams (8 Core Streams)
+3. Universal 5-Stage Approval Lifecycle & State Transitions
+4. Frontend Architecture (Web Application & Mobile Application)
+   4.1 Web Architecture (React 19 / Vite / Tailwind)
+   4.2 Mobile Architecture (Flutter Frontend)
+   4.3 Shared UI Patterns & 5-Stage Stepper Component
+5. Backend Architecture (Firebase Cloud Functions & Automations)
+   5.1 Reactive Firestore Triggers
+   5.2 Automated Inventory Allocation & Stock Deduction Engine
+   5.3 Petty Cash Ledger & Financial Rebalancing Engine
+   5.4 Distributed Lock Idempotency & Push Notification Bridge
+6. Firestore Database Schema & Data Contracts
+   6.1 Dual-Collection Storage Topology & Legacy Fallbacks
+   6.2 Unified Approval Document Schema & Audit Log Object
+   6.3 Stream-Specific Document Contracts (Materials, Tools, Cash, Contractors, etc.)
+7. End-to-End Sequence Logic Flows (Step-by-Step Flowcharts)
+   7.1 Flow 1: Material Indent Requisition -> Procurement -> Site Delivery
+   7.2 Flow 2: Petty Cash Claim / Payment Approval -> HQ Clearance -> Payout
+   7.3 Flow 3: Machinery / Tool Requisition -> Yard Allocation -> Return Condition
+   7.4 Flow 4: Contractor Measurement Book (MB) Entry -> Milestone Sign-off
+   7.5 Flow 5: Multi-Level Rejection, Return to Draft & Reason Tracking
+8. Enterprise Security, Role-Based Access Control (RBAC) & Edge Cases
+
+================================================================================
+1. EXECUTIVE SUMMARY & APPROVAL GOVERNANCE MATRIX
+================================================================================
+
+The CST White Label (eBricks) construction and enterprise operations platform 
+operates a synchronized multi-tiered approval engine. It enforces strict financial,
+procurement, and equipment accountability across field supervisors, operations 
+managers, and corporate headquarters (Organization HQ).
+
++-----------------------+--------------------------------------------------------------+
+| Core Role             | Approval & Request Authority                                 |
++-----------------------+--------------------------------------------------------------+
+| Field Supervisor      | Initiates site material indents, equipment requisitions,     |
+| (Mobile Client)       | daily labour attendance, contractor work entries, and petty  |
+|                       | cash expense claims. Confirms receipt of physical assets.    |
++-----------------------+--------------------------------------------------------------+
+| Operations Manager    | Reviews, verifies, edits quantities, validates site budgets, |
+| (Web & Mobile Client) | assigns machinery serial numbers, issues warehouse gate      |
+|                       | passes, and conducts preliminary clearance before HQ review. |
++-----------------------+--------------------------------------------------------------+
+| Organization HQ Admin | Highest commercial authority. Authorizes financial draws,   |
+| (Web Enterprise Portal)| corporate expenses, capital expenditures, material indents,  |
+|                       | and vendor purchase orders. Final budget release checkpoint. |
++-----------------------+--------------------------------------------------------------+
+
+Key Principles:
+1. Strict Audit Immutability: Every state transition appends a non-destructive
+   audit log entry (`approvalHistory`) containing timestamp, actor name, actor ID,
+   actor role, and mandatory remarks.
+2. Dual-Verification Safety: Field supervisors cannot bypass Operations Managers
+   to request funds directly from HQ. HQ cannot dispatch physical warehouse stock
+   without Manager gate-pass clearance.
+3. Automated Physical Side-Effects: Approving an indent is not merely a status change;
+   it automatically triggers warehouse ledger debits, site inventory credits, or
+   petty cash wallet balance deductions.
+
+================================================================================
+2. COMPLETE DOMAIN REQUEST STREAMS (8 CORE STREAMS)
+================================================================================
+
+The platform coordinates eight distinct request streams under a unified schema:
+
+--------------------------------------------------------------------------------
+Stream 1: Site Material Requests & Indents
+--------------------------------------------------------------------------------
+- Primary Collection : `/organisation/{orgId}/siteMaterialsRequest`
+- Legacy Aliases     : `material_requests`, `material_indents`, `indents`
+- Initiator          : Field Supervisor (Mobile)
+- Payload            : Material ID, category, requested quantity, required date, urgency
+- Verification Role  : Operations Manager (approves quantity, notes preferred vendor)
+- Authorization Role : Organization HQ (approves procurement capital spend)
+- Final Action       : Manager issues Gate Pass No. -> Stock moves to site
+
+--------------------------------------------------------------------------------
+Stream 2: Tools, Machinery & Equipment Movement
+--------------------------------------------------------------------------------
+- Primary Collection : `/organisation/{orgId}/siteToolsRequest`
+- Legacy Aliases     : `tool_allocations`, `equipment_movement`, `toolsRequest`
+- Initiator          : Field Supervisor (Mobile)
+- Payload            : Tool ID, equipment type, required duration, site location
+- Verification Role  : Operations Manager (checks central plant yard availability)
+- Authorization Role : Organization HQ (required for high-value heavy machinery)
+- Final Action       : Central Yard dispatches asset with Serial ID -> Return inspection
+
+--------------------------------------------------------------------------------
+Stream 3: Site Payments & Daily Expense Claims
+--------------------------------------------------------------------------------
+- Primary Collection : `/organisation/{orgId}/siteSupervisorEntries`
+- Legacy Aliases     : `daily_site_logs`, `site_logs`, `daily_logs`
+- Initiator          : Field Supervisor (Mobile)
+- Payload            : Bill item, vendor, expense category, invoice attachment, total amount
+- Verification Role  : Operations Manager (verifies bill authenticity and site progress)
+- Authorization Role : Organization HQ (authorizes bank disbursement or petty cash link)
+- Final Action       : Account credited and ledger recorded in `totalSiteExpensesPerDay`
+
+--------------------------------------------------------------------------------
+Stream 4: Petty Cash Top-Up & Draw Requests
+--------------------------------------------------------------------------------
+- Primary Collection : `/organisation/{orgId}/pettyCashRequests`
+- Legacy Aliases     : `petty_cash_requests`, `petty_cash_topups`
+- Initiator          : Field Supervisor (Mobile) or Operations Manager
+- Payload            : Account ID, site ID, current balance, top-up requested, justification
+- Verification Role  : Operations Manager (reviews balance consumption rate)
+- Authorization Role : Organization HQ (transfers funds to site supervisor custodian wallet)
+- Final Action       : Custodian account credited; transaction audit log generated
+
+--------------------------------------------------------------------------------
+Stream 5: Contractor Measurement Book (MB) & Claims
+--------------------------------------------------------------------------------
+- Primary Collection : `/organisation/{orgId}/contractorEntries`
+- Legacy Aliases     : `contractor_bills`, `contractor_claims`, `mb_bills`
+- Initiator          : Field Supervisor or Contractor Coordinator
+- Payload            : Contractor ID, contract stage, measured work quantity, rate, claim amount
+- Verification Role  : Operations Manager (inspects physical site measurement against drawings)
+- Authorization Role : Organization HQ (authorizes progress payment against contract retention)
+- Final Action       : Invoice recorded in Accounts Payable ledger
+
+--------------------------------------------------------------------------------
+Stream 6: Project Stage Milestone Sign-Offs
+--------------------------------------------------------------------------------
+- Primary Collection : `/organisation/{orgId}/siteSupervisorProjectStageSchedule`
+- Legacy Aliases     : `project_stage_schedules`, `stage_schedules`
+- Initiator          : Field Supervisor (reports stage 100% physically finished)
+- Payload            : Project ID, stage ID, stage name, completion date, quality checklist
+- Verification Role  : Operations Manager (conducts on-site quality inspection)
+- Authorization Role : Organization HQ (releases next project funding milestone)
+- Final Action       : Stage marked `completed`, unlocks subsequent dependency stages
+
+--------------------------------------------------------------------------------
+Stream 7: Manager Operational Site Expenses
+--------------------------------------------------------------------------------
+- Primary Collection : `/organisation/{orgId}/managerExpenses`
+- Legacy Aliases     : `manager_expenses`
+- Initiator          : Operations Manager (travel, emergency procurement, fuel, municipal fees)
+- Payload            : Site ID, expense type, receipts, line items, total claim
+- Verification Role  : Auto-verified by Manager submission
+- Authorization Role : Organization HQ (finance department review & direct reimbursement)
+- Final Action       : Reimbursed via corporate bank transfer
+
+--------------------------------------------------------------------------------
+Stream 8: Vehicle Logistics & Fleet Movement Requests
+--------------------------------------------------------------------------------
+- Primary Collection : `/organisation/{orgId}/vehicleMovements`
+- Legacy Aliases     : `vehicle_movements`, `fleet_requests`, `trip_tickets`
+- Initiator          : Field Supervisor or Logistics Coordinator
+- Payload            : Vehicle ID, driver ID, starting site, destination site, trip cargo
+- Verification Role  : Operations Manager / Fleet Manager
+- Authorization Role : Organization HQ (for long-distance inter-state transit)
+- Final Action       : Trip gate pass printed and GPS odometer tracking initiated
+
+================================================================================
+3. UNIVERSAL 5-STAGE APPROVAL LIFECYCLE & STATE TRANSITIONS
+================================================================================
+
+Every request entity progresses through a standardized 5-stage lifecycle.
+
++-------+-----------------------------+-------------------------------+---------+
+| Stage | System Status Code          | UI Display Label              | Step No |
++-------+-----------------------------+-------------------------------+---------+
+| 1     | pending_manager_review      | Pending Manager Review        | 1       |
+| 2     | pending_org_approval        | Pending Organization Approval | 2       |
+| 3     | pending_manager_clearance   | Pending Manager Clearance     | 3       |
+| 4     | approved / dispatched       | Approved & Dispatched         | 4       |
+| 5     | received / completed        | Received / Active / Completed | 5       |
+| Halt  | rejected_by_manager         | Rejected by Manager           | -1      |
+| Halt  | rejected_by_org             | Rejected by Organization HQ   | -1      |
++-------+-----------------------------+-------------------------------+---------+
+
+Detailed Lifecycle Breakdown:
+
+[STAGE 1: FIELD SUPERVISOR CREATION]
+- Actor: Field Supervisor (Mobile App)
+- Trigger: User fills request form and taps "Submit Request".
+- Document State:
+  * `status`: "pending_manager_review"
+  * `statusDisplay`: "Pending Manager Review"
+  * `currentStep`: 1
+  * `createdAt`: serverTimestamp()
+  * `approvalHistory`: Array containing 1st record: "1. Supervisor Submission"
+- Notifications Dispatched:
+  * In-App notification written to `/notifications` and `/organisation/{orgId}/notifications`
+  * Dual-collection write triggers Cloud Function `onNotificationCreated`
+  * Push notification sent to Operations Manager device: "📦 New Requisition Submitted"
+
+[STAGE 2: OPERATIONS MANAGER VERIFICATION]
+- Actor: Operations Manager (Web or Mobile)
+- Action A (Approve & Forward):
+  * Manager verifies site needs, adjusts quantities if excessive, adds internal remarks.
+  * Document State updated:
+    - `status`: "pending_org_approval"
+    - `statusDisplay`: "Pending Organization Approval"
+    - `currentStep`: 2
+    - `managerReviewedBy`: Manager Name
+    - `managerReviewedAt`: serverTimestamp()
+    - `approvedQty`: Verified quantity
+    - Appends entry to `approvalHistory`: "2. Manager Verification & Forwarding"
+  * Notifications Dispatched:
+    - Alert sent to Organization HQ Admins: "✅ Request Verified by Manager. Authorization Required."
+- Action B (Decline):
+  * Manager declines with mandatory rejection remarks.
+  * Document State updated:
+    - `status`: "rejected_by_manager"
+    - `statusDisplay`: "Rejected by Manager"
+    - `currentStep`: -1
+    - `rejectionReason`: Reason text
+    - `rejectedBy`: Manager Name
+  * Notifications Dispatched:
+    - Alert sent to Supervisor: "❌ Request Declined by Manager."
+
+[STAGE 3: ORGANIZATION HQ AUTHORIZATION]
+- Actor: Organization HQ Admin / Director (Web Portal)
+- Action A (Authorize):
+  * HQ verifies financial viability, project budget headroom, and compliance.
+  * Document State updated:
+    - `status`: "pending_manager_clearance"
+    - `statusDisplay`: "Pending Manager Clearance"
+    - `currentStep`: 3
+    - `orgApproved`: true
+    - `orgApprovedBy`: HQ Admin Name
+    - `orgApprovedAt`: serverTimestamp()
+    - `orgApprovalRemarks`: Authorization notes
+    - Appends entry to `approvalHistory`: "3. Organization Authorization"
+  * Notifications Dispatched:
+    - Dual write notification targeting `manager_and_organisation`:
+      "✅ Requisition Authorized by HQ. Manager clearance required to release to site."
+- Action B (Decline):
+  * HQ declines request with business justification.
+  * Document State updated:
+    - `status`: "rejected_by_org"
+    - `statusDisplay`: "Rejected by Organization"
+    - `currentStep`: -1
+    - `rejectionReason`: Reason text
+    - `rejectedBy`: HQ Admin Name
+  * Notifications Dispatched:
+    - Alert sent to Manager and Supervisor: "❌ Requisition Declined by HQ."
+
+[STAGE 4: MANAGER FINAL CLEARANCE & DISPATCH]
+- Actor: Operations Manager (Central Yard / Inventory Lead)
+- Action:
+  * Generates Gate Pass Number (`GP-XXXXXX`) or assigns physical Asset Serial.
+  * Initiates automated stock deduction from central warehouse.
+  * Document State updated:
+    - `status`: "approved" (or "dispatched" for tools/vehicles)
+    - `statusDisplay`: "Approved & Dispatched"
+    - `currentStep`: 4
+    - `gatePassNumber`: "GP-892144"
+    - `assignedSerialId`: "TR-CAT-04"
+    - `clearedByManager`: Manager Name
+    - `clearedAt`: serverTimestamp()
+    - Appends entry to `approvalHistory`: "4. Manager Final Clearance & Dispatch"
+  * Automated Side-Effects Triggered:
+    - Inventory deduction from company warehouse
+    - Transit ledger entry created
+  * Notifications Dispatched:
+    - Alert sent to Supervisor: "🚚 Asset / Materials Dispatched from Central Yard. Gate Pass: GP-892144."
+
+[STAGE 5: FIELD SUPERVISOR RECEIPT CONFIRMATION]
+- Actor: Field Supervisor (Mobile App at Site)
+- Action:
+  * Physical arrival check. Supervisor inspects quantity, checks for transit damage,
+    and taps "Confirm Receipt" on mobile device.
+  * Document State updated:
+    - `status`: "received" (or "completed")
+    - `statusDisplay`: "Received / Active"
+    - `currentStep`: 5 (Completed)
+    - `receivedBy`: Supervisor Name
+    - `receivedAt`: serverTimestamp()
+    - Appends entry to `approvalHistory`: "5. Site Receipt Confirmation"
+  * Automated Side-Effects Triggered:
+    - Site inventory balance incremented at destination
+    - Tool state set to `toolsAtSite`
+  * Notifications Dispatched:
+    - Informational alert sent to Manager: "📦 Requisition #101 marked as Received at Site Alpha."
+
+================================================================================
+4. FRONTEND ARCHITECTURE (WEB APPLICATION & MOBILE APPLICATION)
+================================================================================
+
+--------------------------------------------------------------------------------
+4.1 Web Architecture (React 19 / Vite / Tailwind)
+--------------------------------------------------------------------------------
+
+Core Files:
+- [src/pages/organization/approvals/OrganizationApprovalsCenter.jsx] : HQ Approvals Master
+- [src/pages/manager/approvals/ApprovalsCenter.jsx]                  : Manager 4-Stream Hub
+- [src/services/approvalService.js]                                 : Core Business Logic & Mutators
+- [src/services/notificationService.js]                             : Dual-Collection Dispatchers
+- [src/services/notificationRouter.js]                              : 600ms Debounced Deep-Linker
+- [src/context/NotificationContext.jsx]                             : Reactive Bridge & Audio Chime
+- [src/components/common/NotificationBanner.jsx]                     : Tier 2 In-App Floating Heads-Up
+- [src/components/common/NotificationDrawer.jsx]                     : Slide-Out Feed Drawer
+
+Web Implementation Design:
+1. Reactive Streams via `subscribeWithFallback`:
+   The web frontend maintains live Firestore snapshots via `onSnapshot`. If a field
+   supervisor submits a request in the mobile app, it appears in the Web Approvals Center
+   within 350ms without page reload.
+2. Stream Tab Filtering:
+   Supports rapid switching across streams:
+   - Materials (`siteMaterialsRequest`)
+   - Tools (`siteToolsRequest`)
+   - Payments & Claims (`siteSupervisorEntries` + `pettyCashRequests`)
+   - Milestones (`siteSupervisorProjectStageSchedule`)
+   - Vehicle Fleet (`vehicleMovements`)
+3. Sub-Tab Status Filtering:
+   - `review`    : Items at Step 1 (`pending_manager_review`)
+   - `org`       : Items at Step 2 (`pending_org_approval`)
+   - `clearance` : Items at Step 3 (`pending_manager_clearance`)
+   - `approved`  : Items at Step 4 & 5 (`approved`, `dispatched`, `received`)
+   - `rejected`  : Items at Step -1 (`rejected_by_manager`, `rejected_by_org`)
+4. Safe Multi-Action Modals:
+   - Detailed inspection view showing full item breakdown, attached bill receipts,
+     site location, and dynamic 5-Stage Stepper progress.
+   - Quantity adjustment dialog allowing Managers to approve partial requisitions.
+   - Asset Serial input dialog for equipment tagging.
+   - Mandatory remarks modal for all rejection actions.
+5. Export & Reporting:
+   Direct CSV and PDF download of pending/authorized requisitions via [ExportButton.jsx].
+
+--------------------------------------------------------------------------------
+4.2 Mobile Architecture (Flutter Frontend)
+--------------------------------------------------------------------------------
+
+Core Files:
+- [lib/screens/supervisor/requisitions/create_material_requisition.dart]
+- [lib/screens/supervisor/requisitions/supervisor_material_information.dart]
+- [lib/screens/manager/approvals/manager_material_approval_screen.dart]
+- [lib/screens/manager/approvals/manager_site_payment_approval_page.dart]
+- [lib/screens/manager/approvals/tools_movement_page.dart]
+- [lib/services/approval_workflow_service.dart]
+- [lib/services/notification_service.dart]
+- [lib/services/notification_router.dart]
+
+Mobile Implementation Design:
+1. Offline-First Requisition Drafting:
+   Supervisors in remote construction areas with poor cellular reception can
+   create indents offline. Requests queue locally in SQLite / Hive and sync to
+   Firestore automatically upon connection restore.
+2. Camera & Receipt Capture:
+   Direct integration with camera hardware to compress and upload physical invoices,
+   challans, and material delivery slips to Firebase Storage before Firestore write.
+3. System Tray Deep-Linking:
+   Tapping an FCM push notification launches `NotificationRouter.navigate(context, payload)`,
+   bypasses the home screen, and deep-links directly into the exact approval screen.
+
+--------------------------------------------------------------------------------
+4.3 Shared UI Patterns & 5-Stage Stepper Component
+--------------------------------------------------------------------------------
+
+Both Web and Mobile render an interactive stepper visualizer:
+- Step 1: Green checkmark when submitted by Supervisor
+- Step 2: Green checkmark when verified by Manager (or Red 'X' if rejected)
+- Step 3: Green checkmark when authorized by HQ (or Red 'X' if rejected)
+- Step 4: Pulsing active badge during gate-pass clearance / transit
+- Step 5: Double green checkmark upon physical receipt confirmation
+
+================================================================================
+5. BACKEND ARCHITECTURE (FIREBASE CLOUD FUNCTIONS & AUTOMATIONS)
+================================================================================
+
+Core File: `functions/index.js`
+Runtime  : Node.js 18 / Firebase Functions SDK v1 / Firebase Admin SDK
+
+--------------------------------------------------------------------------------
+5.1 Reactive Firestore Triggers
+--------------------------------------------------------------------------------
+
+1. `onNotificationCreated` (`notifications/{notificationId}` - `.onCreate`):
+   Detects dual-collection notification records and routes FCM push payloads.
+2. `onOrgNotificationCreated` (`organisation/{orgId}/notifications/{notificationId}` - `.onCreate`):
+   Ensures multi-tenant scoped push notifications reach authorized devices.
+3. `onMaterialRequestUpdated` (`organisation/{orgId}/siteMaterialsRequest/{reqId}` - `.onUpdate`):
+   Listens for Stage 4 transition (`status == 'approved'`).
+   Executes automated stock deduction in company inventory.
+4. `onToolRequestUpdated` (`organisation/{orgId}/siteToolsRequest/{reqId}` - `.onUpdate`):
+   Listens for dispatch and return transitions.
+   Updates tool location status from `'company_yard'` to `'at_site'`.
+
+--------------------------------------------------------------------------------
+5.2 Automated Inventory Allocation & Stock Deduction Engine
+--------------------------------------------------------------------------------
+
+When a material indent achieves Stage 4 (`approved` with gate pass):
+1. Reads `siteMaterialsRequest/{reqId}`: extracts `materialId`, `approvedQty`, `siteId`.
+2. Locates Company Central Inventory:
+   Path: `/organisation/{orgId}/materialsAvailability/{materialId}`
+3. Transactional Validation:
+   Checks if `currentTotalStock >= approvedQty`.
+   - If Insufficient: Flags warning on Manager dashboard and prevents gate-pass dispatch.
+   - If Sufficient: Executes atomic Firestore transaction:
+     * Deducts `approvedQty` from central `materialsAvailability.currentTotalStock`
+     * Increments `materialsAvailability.inTransitStock`
+     * Logs inventory transaction in `/organisation/{orgId}/materialMovements`
+4. When Stage 5 (`received`) is confirmed by Supervisor:
+   * Deducts from `materialsAvailability.inTransitStock`
+   * Increments `/organisation/{orgId}/siteMaterials/{siteId}/materials/{materialId}.currentStock`
+
+--------------------------------------------------------------------------------
+5.3 Petty Cash Ledger & Financial Rebalancing Engine
+--------------------------------------------------------------------------------
+
+When a Petty Cash Draw or Expense Claim achieves Stage 3/4 approval:
+1. Locates Site Petty Cash Custodian Account:
+   Path: `/organisation/{orgId}/pettyCashAccounts/{accountId}`
+2. Verifies wallet spend limits:
+   * For Top-Ups: Credits account balance `currentBalance += amount`
+   * For Expense Claims: Deducts `currentBalance -= amount`
+3. Writes Immutable Transaction Voucher:
+   Path: `/organisation/{orgId}/pettyCashTransactions/{txnId}`
+4. Aggregates Daily Project Expenditure:
+   Updates `/organisation/{orgId}/totalSiteExpensesPerDay/{dateStr}_{siteId}` to
+   reflect actual cash burn in executive analytics.
+
+--------------------------------------------------------------------------------
+5.4 Distributed Lock Idempotency & Push Notification Bridge
+--------------------------------------------------------------------------------
+
+To eliminate duplicate alerts from rapid button double-clicks or dual-collection writes:
+1. Backend computes time-bucketed idempotency key:
+   `evt_{orgId}_{reqType}_{requestId}_{targetRole}_{timeBucket}` (25-second bucket).
+2. Tries atomic creation in `/organisation/{orgId}/processed_events/{idempotencyKey}`.
+3. If document exists, second execution is discarded immediately with status 200 OK.
+4. FCM Multicast engine queries device tokens from `/organisation/{orgId}/fcmTokens`
+   matching the target role and suppresses tokens belonging to the action author.
+
+================================================================================
+6. FIRESTORE DATABASE SCHEMA & DATA CONTRACTS
+================================================================================
+
+--------------------------------------------------------------------------------
+6.1 Multi-Tenant Collection Topology & Legacy Fallbacks
+--------------------------------------------------------------------------------
+
+All operations are strictly isolated by organization tenant:
+- Canonical Path: `/organisation/{orgId}/{collectionName}/{documentId}`
+- Global Backward Compatibility Path: `/{collectionName}/{documentId}`
+
+The web client's `firestoreService.js` incorporates `fetchWithFallback` and
+`subscribeWithFallback` to handle legacy alias collections gracefully:
+- `siteMaterialsRequest` <==> `material_requests` <==> `material_indents`
+- `siteToolsRequest` <==> `tool_allocations` <==> `equipment_movement`
+- `siteSupervisorEntries` <==> `daily_site_logs` <==> `site_logs`
+- `pettyCashRequests` <==> `petty_cash_requests` <==> `petty_cash_topups`
+- `contractorEntries` <==> `contractor_bills` <==> `mb_bills`
+
+--------------------------------------------------------------------------------
+6.2 Unified Approval Document Schema & Audit Log Object
+--------------------------------------------------------------------------------
+
+Every request document adheres to this standard base schema:
+
+```json
+{
+  "id": "REQ_MAT_1740000000_ABC",
+  "requestId": "REQ_MAT_1740000000_ABC",
+  "orgId": "tenant_cst_001",
+  "organizationId": "tenant_cst_001",
+  "siteId": "SITE_TOWER_A",
+  "siteName": "Alpha Tower Project",
+  "siteCode": "ATP-01",
+  
+  "status": "pending_org_approval",
+  "statusDisplay": "Pending Organization Approval",
+  "currentStep": 2,
+  
+  "supervisorId": "USR_SUP_101",
+  "supervisorName": "John Doe",
+  "createdBy": "John Doe",
+  
+  "managerId": "USR_MGR_202",
+  "managerName": "Alex Smith",
+  "managerReviewedBy": "Alex Smith",
+  "managerReviewedAt": "Timestamp",
+  "managerRemarks": "Verified against floor 5 structural requirements.",
+  
+  "orgApproved": false,
+  "orgApprovedBy": null,
+  "orgApprovedAt": null,
+  "orgApprovalRemarks": null,
+  
+  "rejectionReason": null,
+  "rejectedBy": null,
+  "rejectedRole": null,
+  
+  "gatePassNumber": null,
+  "assignedSerialId": null,
+  "clearedByManager": null,
+  "clearedAt": null,
+  
+  "receivedBy": null,
+  "receivedAt": null,
+  
+  "approvalHistory": [
+    {
+      "step": "1. Supervisor Submission",
+      "action": "Request Submitted",
+      "actorRole": "Supervisor",
+      "actorName": "John Doe",
+      "actorId": "USR_SUP_101",
+      "remarks": "Urgent requirement for slab casting.",
+      "timestamp": "2026-09-30T06:00:00.000Z",
+      "dateStr": "Sep 30, 2026 • 11:30 AM"
+    },
+    {
+      "step": "2. Manager Initial Review",
+      "action": "Verified & Forwarded to Organization",
+      "actorRole": "Manager",
+      "actorName": "Alex Smith",
+      "actorId": "USR_MGR_202",
+      "remarks": "Verified against floor 5 structural requirements.",
+      "timestamp": "2026-09-30T07:15:00.000Z",
+      "dateStr": "Sep 30, 2026 • 12:45 PM"
+    }
+  ],
+  
+  "createdAt": "Timestamp",
+  "updatedAt": "Timestamp"
+}
+```
+
+--------------------------------------------------------------------------------
+6.3 Stream-Specific Document Contracts
+--------------------------------------------------------------------------------
+
+A. Material Requisition Specific Fields (`siteMaterialsRequest`):
+```json
+{
+  "materialId": "MAT_CEM_53",
+  "materialName": "OPC Cement 53 Grade",
+  "category": "Civil & Structural",
+  "unit": "Bags",
+  "quantity": 100,
+  "requestedQty": 100,
+  "approvedQty": 90,
+  "urgency": "High",
+  "requiredDate": "2026-10-05",
+  "vendorNotes": "Preferred supplier: UltraTech"
+}
+```
+
+B. Tool & Machinery Specific Fields (`siteToolsRequest`):
+```json
+{
+  "toolId": "EQ_EXC_01",
+  "toolName": "Hydraulic Excavator CAT 320",
+  "category": "Heavy Earthmoving Machinery",
+  "assignedSerialId": "CAT-EXC-KA04-890",
+  "dispatchNotes": "Loaded onto flatbed transport #KA-01-E-4421",
+  "returnCondition": "Working",
+  "returnedAt": null
+}
+```
+
+C. Petty Cash & Expense Claim Fields (`pettyCashRequests` / `siteSupervisorEntries`):
+```json
+{
+  "accountId": "PC_ACC_ATP_01",
+  "amount": 25000,
+  "totalAmount": 25000,
+  "category": "Emergency Sand Delivery",
+  "voucherNo": "VOUCH-2026-09-082",
+  "billPhotoUrl": "https://firebasestorage.googleapis.com/.../receipt.jpg",
+  "isReimbursed": false
+}
+```
+
+D. Contractor Work Entries (`contractorEntries`):
+```json
+{
+  "contractorId": "CONT_SHREE_STEEL",
+  "contractorName": "Shree Steel Fabricators",
+  "workType": "Bar Bending & Tying",
+  "measuredQuantity": 12.5,
+  "unit": "Tons",
+  "unitRate": 4800,
+  "totalBillAmount": 60000,
+  "mbReference": "MB-BOOK-04-PAGE-18"
+}
+```
+
+================================================================================
+7. END-TO-END SEQUENCE LOGIC FLOWS (STEP-BY-STEP FLOWCHARTS)
+================================================================================
+
+--------------------------------------------------------------------------------
+7.1 Flow 1: Material Indent Requisition -> Procurement -> Site Delivery
+--------------------------------------------------------------------------------
+
+[Supervisor Mobile App]
+       │
+       ▼  Supervisor submits 100 bags Cement for Site Alpha
+  1. `approval_workflow_service.createMaterialRequest(...)`
+       ├── Writes doc to `/organisation/{orgId}/siteMaterialsRequest`
+       └── Calls `notificationService.notifyManagerAndOrganisation(...)`
+       │
+       ▼  Real-time Firestore stream notifies Manager
+[Manager Web / Mobile Approvals Center]
+  2. Manager inspects request under "Material Approvals"
+       ├── Verifies site requirement; approves 90 bags
+       └── Calls `managerReviewMaterialOrder(orgId, reqId, isApproved: true, 90, ...)`
+       ├── Document status transitions to: "pending_org_approval"
+       └── Notification sent to Organization HQ
+       │
+       ▼  Real-time Firestore stream notifies Org HQ
+[Organization HQ Web Portal (OrganizationApprovalsCenter.jsx)]
+  3. HQ Admin opens requisition detail modal
+       ├── Inspects 5-Stage Stepper: Step 1 (Passed), Step 2 (Passed)
+       ├── Reviews project budget headroom
+       └── Clicks "Authorize Request" -> `executeOrganizationApproval(...)`
+       ├── Document status transitions to: "pending_manager_clearance"
+       ├── Appends Stage 3 audit entry to `approvalHistory`
+       └── Dual-write notification sent to Manager
+       │
+       ▼  Manager releases item from Central Warehouse
+[Manager Approvals Center (Clearance Tab)]
+  4. Manager enters Gate Pass No. "GP-772911"
+       └── Calls `managerClearMaterialOrder(orgId, reqId, "GP-772911")`
+       ├── Document status transitions to: "approved"
+       ├── Cloud Function automatically deducts 90 bags from Central Warehouse
+       └── Dual-write notification sent to Site Supervisor: "Truck Dispatched"
+       │
+       ▼  Physical truck arrives at construction site
+[Supervisor Mobile App]
+  5. Supervisor counts bags, verifies physical gate pass
+       └── Taps "Confirm Receipt" -> status transitions to "received"
+       ├── Destination site inventory incremented by +90 bags
+       └── Audit trail completed: Steps 1 through 5 fully signed off.
+
+--------------------------------------------------------------------------------
+7.2 Flow 2: Petty Cash Claim / Payment Approval -> HQ Clearance -> Payout
+--------------------------------------------------------------------------------
+
+[Field Supervisor]
+       │
+       ▼  Uploads diesel receipt of ₹14,500 for Site Generator
+  1. `pettyCashService.submitPettyCashExpense(...)`
+       ├── Writes record to `/organisation/{orgId}/siteSupervisorEntries`
+       └── Status: `pending_manager_review`
+       │
+       ▼
+[Manager Web Portal]
+  2. Manager verifies diesel consumption log
+       └── Clicks "Verify & Forward to HQ"
+       └── Status: `pending_org_approval`
+       │
+       ▼
+[Organization HQ Admin]
+  3. Commercial Director reviews expense voucher image
+       └── Clicks "Authorize Disbursement"
+       └── Status: `pending_manager_clearance`
+       │
+       ▼
+[Manager / Site Custodian]
+  4. Custodian hands physical cash to supervisor or executes UPI transfer
+       └── Status: `approved`
+       ├── Account balance deducted from `pettyCashAccounts`
+       └── Daily project expense total updated in `totalSiteExpensesPerDay`.
+
+--------------------------------------------------------------------------------
+7.3 Flow 3: Machinery / Tool Requisition -> Yard Allocation -> Return Condition
+--------------------------------------------------------------------------------
+
+1. Supervisor requests Concrete Mixer for 7 days -> `siteToolsRequest`.
+2. Manager checks yard: assigns asset serial `MIXER-JCB-09` -> forwards to Org.
+3. Org HQ authorizes asset deployment.
+4. Yard Manager dispatches mixer with transport checklist -> status `dispatched`.
+5. Supervisor confirms equipment arrived at site in functional order -> status `received`.
+6. After 7 days, equipment is loaded back onto trailer to central yard.
+7. Yard Manager inspects machine on return:
+   - Selects condition: `Working` / `Damaged` / `Needs Service`
+   - Invokes `managerConfirmToolReturn(orgId, reqId, condition)`
+   - Status updated to `returned`; asset made available for next project indent.
+
+--------------------------------------------------------------------------------
+7.4 Flow 4: Rejection & Decline Recovery Flow
+--------------------------------------------------------------------------------
+
+If either Manager (Stage 2) or HQ Admin (Stage 3) rejects a requisition:
+1. Rejection Modal enforces mandatory remarks (minimum 5 characters).
+2. Status updated to `rejected_by_manager` or `rejected_by_org`.
+3. `currentStep` set to `-1`.
+4. Document audit history records rejection actor, timestamp, and explanation.
+5. In-app heads-up notification and push alert sent to creator.
+6. Supervisor can inspect rejection reasons directly on their mobile device,
+   correct quantities or specifications, and re-submit as a fresh indent.
+
+================================================================================
+8. ENTERPRISE SECURITY, ROLE-BASED ACCESS CONTROL (RBAC) & EDGE CASES
+================================================================================
+
+1. RBAC Matrix & Firestore Security Rules:
+   - Field Supervisors can ONLY create requests and read items scoped to their assigned sites.
+   - Operations Managers can update Stage 2 and Stage 4 fields. They CANNOT set `orgApproved: true`.
+   - Organization HQ Admins have tenant-wide authority to set `orgApproved: true` and execute rejections.
+   - Cross-Tenant Isolation: All queries enforce `orgId == request.auth.token.orgId`.
+
+2. Concurrent Action Debouncing (600ms):
+   Both Web [notificationRouter.js] and Flutter [notification_router.dart] enforce
+   a 600ms tap debounce to prevent double-submitting approvals or duplicate gate passes.
+
+3. Distributed Multi-Worker Idempotency:
+   If two Cloud Function worker instances run concurrently due to rapid snapshot triggers,
+   they compete to write `/organisation/{orgId}/processed_events/{idempotencyKey}` with `.create()`.
+   Only one worker succeeds; all others terminate without firing duplicate FCM pushes.
+
+4. Backward-Compatible Field Resolvers:
+   The web application's data layer seamlessly tolerates historical variations in field naming:
+   - `quantity` vs `requestedQty` vs `qty`
+   - `docId` vs `requestId` vs `id`
+   - `siteId` vs `siteid` vs `SiteId`
+   - `supervisorName` vs `createdBy` vs `requestedBy`
+   - `managerReviewedBy` vs `managerName` vs `approvedByManager`
+
+5. Audit Trail Immutability:
+   The `approvalHistory` array is strictly append-only. Frontends and backend workers
+   use Firestore `arrayUnion` or immutable spreading to guarantee prior audit milestones
+   can never be overwritten or erased.
+
+================================================================================
+END OF SPECIFICATION: PROJECT APPROVAL & REQUEST SYSTEM ARCHITECTURE
+================================================================================

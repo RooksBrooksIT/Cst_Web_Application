@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { useAuth } from '../../../hooks/useAuth'
 import StatusBadge from '../../../components/common/StatusBadge'
 import Modal from '../../../components/common/Modal'
@@ -7,23 +7,17 @@ import {
   executeOrganizationApproval,
   executeOrganizationRejection,
 } from '../../../services/approvalService'
+import ApprovalWorkflowStepper from '../../../components/common/ApprovalWorkflowStepper'
+import CreateRequisitionModal from '../../../components/common/CreateRequisitionModal'
 import {
   CheckCircle2,
   XCircle,
   Clock,
-  Building2,
-  Package,
-  Wrench,
-  DollarSign,
-  CalendarCheck,
-  Truck,
   Eye,
   Check,
   X,
   AlertTriangle,
-  FileText,
-  User,
-  ShieldCheck,
+  Plus,
 } from 'lucide-react'
 
 function money(amount) {
@@ -36,91 +30,10 @@ function money(amount) {
 
 function formatDate(raw) {
   if (!raw) return 'N/A'
-  const d = raw?.toDate ? raw.toDate() : new Date(raw)
+  const d = raw?.toDate ? raw.toDate() : raw?.seconds ? new Date(raw.seconds * 1000) : new Date(raw)
   return Number.isNaN(d.getTime())
     ? 'N/A'
     : new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short' }).format(d)
-}
-
-/**
- * 5-Stage Workflow Stepper Component
- * Renders the 5-stage lifecycle and audit trail timeline
- */
-function ApprovalWorkflowStepper({ currentStep = 1, status = '', history = [] }) {
-  const isRejected = currentStep === -1 || status.includes('reject')
-
-  const stages = [
-    { num: 1, name: '1. Supervisor Submission', code: 'pending_manager_review' },
-    { num: 2, name: '2. Manager Verification', code: 'pending_org_approval' },
-    { num: 3, name: '3. Organization Authorization', code: 'pending_manager_clearance' },
-    { num: 4, name: '4. Manager Final Clearance', code: 'approved' },
-    { num: 5, name: '5. Site Receipt Confirmation', code: 'received' },
-  ]
-
-  return (
-    <div className="space-y-4 bg-slate-50 p-4 rounded-2xl border border-slate-200">
-      <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-        <ShieldCheck className="w-4 h-4 text-blue-600" />
-        <span>5-Stage Approval Lifecycle Status</span>
-      </h4>
-
-      {/* Stepper Progress Bar */}
-      <div className="grid grid-cols-5 gap-1.5 text-center">
-        {stages.map((stg) => {
-          let stepState = 'upcoming' // 'passed' | 'current' | 'upcoming' | 'rejected'
-
-          if (isRejected && currentStep === stg.num) {
-            stepState = 'rejected'
-          } else if (currentStep > stg.num || (currentStep === 4 && status === 'received')) {
-            stepState = 'passed'
-          } else if (currentStep === stg.num) {
-            stepState = 'current'
-          }
-
-          return (
-            <div key={stg.num} className="space-y-1.5">
-              <div
-                className={`h-2 rounded-full transition-all ${
-                  stepState === 'passed'
-                    ? 'bg-emerald-500'
-                    : stepState === 'current'
-                    ? 'bg-[#0B3470] animate-pulse'
-                    : stepState === 'rejected'
-                    ? 'bg-rose-500'
-                    : 'bg-slate-200'
-                }`}
-              />
-              <span className="text-[10px] font-bold block text-slate-700 truncate">{stg.name}</span>
-            </div>
-          )
-        })}
-      </div>
-
-      {/* Audit History Log */}
-      {history.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-slate-200/80 space-y-2">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Audit History Log</p>
-          <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-            {history.map((hist, idx) => (
-              <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200/70 text-xs space-y-1">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="font-bold text-slate-900">{hist.step || hist.action}</span>
-                  <span className="text-slate-400 font-mono text-[10px]">{hist.dateStr || formatDate(hist.timestamp)}</span>
-                </div>
-                <div className="flex items-center gap-2 text-slate-600">
-                  <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 text-[10px] font-extrabold">
-                    {hist.actorRole || 'Actor'}
-                  </span>
-                  <span className="font-medium">{hist.actorName || 'User'}</span>
-                  {hist.remarks && <span className="text-slate-500 italic">· "{hist.remarks}"</span>}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  )
 }
 
 export default function OrganizationApprovalsCenter({
@@ -128,6 +41,7 @@ export default function OrganizationApprovalsCenter({
   siteMaterialsRequest = [],
   siteToolsRequest = [],
   siteSupervisorProjectStageSchedule = [],
+
   pettyCashRequests = [],
   siteSupervisorEntries = [],
   vehicleMovements = [],
@@ -147,6 +61,7 @@ export default function OrganizationApprovalsCenter({
   const [actionLoading, setActionLoading] = useState(false)
 
   // Action Modals
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [selectedItem, setSelectedItem] = useState(null)
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
 
@@ -365,19 +280,29 @@ export default function OrganizationApprovalsCenter({
           </p>
         </div>
 
-        <ExportButton
-          filename="org_approvals_master.csv"
-          data={filteredList.map((i) => ({
-            RequisitionID: i.id,
-            Category: i.category,
-            Title: i.title,
-            SiteName: i.siteName,
-            Supervisor: i.requester,
-            ManagerVerifiedBy: i.verifier,
-            Status: i.status || i.approvalStatus,
-            CreatedAt: formatDate(i.createdAt),
-          }))}
-        />
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsCreateModalOpen(true)}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-[#0B3470] text-white hover:bg-blue-800 shadow-xs transition-all cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Create Requisition</span>
+          </button>
+          <ExportButton
+            filename="org_approvals_master.csv"
+            data={filteredList.map((i) => ({
+              RequisitionID: i.id,
+              Category: i.category,
+              Title: i.title,
+              SiteName: i.siteName,
+              Supervisor: i.requester,
+              ManagerVerifiedBy: i.verifier,
+              Status: i.status || i.approvalStatus,
+              CreatedAt: formatDate(i.createdAt),
+            }))}
+          />
+        </div>
       </div>
 
       {/* Feedback Alert Banner */}
@@ -455,6 +380,18 @@ export default function OrganizationApprovalsCenter({
         </div>
 
         <div className="flex items-center gap-2">
+          <select
+            value={siteFilter}
+            onChange={(e) => setSiteFilter(e.target.value)}
+            className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-700 outline-none focus:border-blue-600"
+          >
+            <option value="all">All Sites</option>
+            {sites.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name || s.projectName || s.id}
+              </option>
+            ))}
+          </select>
           <input
             type="text"
             placeholder="Search requisition, site, supervisor..."
@@ -473,7 +410,6 @@ export default function OrganizationApprovalsCenter({
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {filteredList.map((item) => {
-            const currentStep = item.currentStep || 2
             const status = item.status || item.approvalStatus || 'pending_org_approval'
 
             return (
@@ -703,6 +639,18 @@ export default function OrganizationApprovalsCenter({
           </div>
         </Modal>
       )}
+
+      {/* Create Requisition Modal */}
+      <CreateRequisitionModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        orgId={orgId}
+        currentUser={user}
+        sites={sites}
+        onSuccess={() => {
+          showMsg('success', 'Requisition created and entered into the 5-Stage Approval System.')
+        }}
+      />
     </div>
   )
 }

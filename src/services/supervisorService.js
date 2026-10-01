@@ -18,6 +18,7 @@ import {
   fetchWithFallback,
   subscribeWithFallback,
 } from './firestoreService.js'
+import { notifySiteAssignment } from './notificationService.js'
 
 /**
  * CST White Label - Supervisor & Field Operations Service
@@ -450,6 +451,21 @@ export async function mapSupervisorToSite(orgId, mapData, managerActor) {
     } catch (err) {
       console.warn('Could not update supervisor assignedSites array:', err)
     }
+  }
+
+  // Dispatch site assignment notification (Section 2.2 #4 & Flow 1)
+  try {
+    await notifySiteAssignment({
+      orgId,
+      siteId: mapData.siteId,
+      siteName: mapData.siteName || mapData.projectName || 'Assigned Site',
+      supervisorId: mapData.supervisorId,
+      supervisorName: mapData.supervisorName || 'Supervisor',
+      senderUser: managerActor,
+      senderRole: 'manager',
+    })
+  } catch (notifErr) {
+    console.warn('Site assignment notification dispatch warning:', notifErr)
   }
 
   return { id: mappingId, ...payload }

@@ -1,0 +1,796 @@
+================================================================================
+CST WHITE LABEL (eBRICKS) - PETTY CASH SYSTEM ARCHITECTURE & LOGIC FLOW
+================================================================================
+Document Type   : Full-Stack Technical Architecture, Data Contracts & Logic Flow
+Domain Scope    : Petty Cash Subsystem (Frontend, Backend Connectivity & Storage)
+Platforms       : Flutter Mobile/Tablet Frontend, Firebase Firestore, Storage & Functions
+File Generated  : 2026-09-30
+================================================================================
+
+TABLE OF CONTENTS:
+1. Executive Summary & Core Financial Governance Model
+2. Frontend Architecture (Flutter)
+   2.1 Canonical State Machine (PettyCashStatus)
+   2.2 Data Models & Entity Registry
+   2.3 Manager Petty Cash Portal (8-Tab Command Center)
+   2.4 Supervisor Field Portal (Requests, Receipt Capture, Local Ledger)
+   2.5 Organization HQ Command Portal (Authorizations & PDF Exports)
+   2.6 PettyCashService API & Real-time Reactive Streams
+3. Backend Connectivity & Data Architecture
+   3.1 Multi-Tenant Isolation & Collection Routing
+   3.2 Schema & Data Dictionaries for all 8 Collections
+   3.3 Firebase Cloud Storage Architecture for Receipts & Invoices
+   3.4 Atomic Transactions & Financial Concurrency Controls
+   3.5 Security Rules (Firestore & Storage)
+4. Real-Time Notification & Deep-Linking Connectivity
+   4.1 Cross-Role Event Notification Matrix
+   4.2 Deep-Link Routing via NotificationRouter
+5. End-to-End Operational Logic Flows (Step-by-Step Sequences)
+   5.1 Flow 1: Supervisor Petty Cash Request Lifecycle (Submission to Receipt)
+   5.2 Flow 2: Manager Direct / Manual Fund Allocation
+   5.3 Flow 3: Field Expense Logging, Receipt Photo Upload & Manager Verification
+   5.4 Flow 4: Physical Cash Count Reconciliation & Audit Discrepancies
+   5.5 Flow 5: Surplus Cash Return to Company
+   5.6 Flow 6: Monthly Financial Statement & PDF Report Generation
+6. Financial Invariants, Anti-Fraud Controls & Edge-Case Fail-Safes
+
+================================================================================
+1. EXECUTIVE SUMMARY & CORE FINANCIAL GOVERNANCE MODEL
+================================================================================
+
+The CST White Label (eBricks) Petty Cash System is a high-governance, audit-compliant
+financial module engineered for construction operations. It governs cash handling
+across the three primary organizational tiers:
+
+                   ┌─────────────────────────────────────────┐
+                   │           ORGANIZATION HQ ADMIN         │
+                   │    • Corporate Budget Authorization     │
+                   │    • Global Spending Analytics          │
+                   │    • PDF Statement Generation           │
+                   └────────────────────┬────────────────────┘
+                                        │
+                                        ▼ (Authorizes Funds)
+                   ┌─────────────────────────────────────────┐
+                   │             PROJECT MANAGER             │
+                   │    • Request Verification               │
+                   │    • Fund Disbursement (Cash/UPI/NEFT)  │
+                   │    • Expense Approvals & Reconcile      │
+                   └────────────────────┬────────────────────┘
+                                        │
+                                        ▼ (Disburses Cash)
+                   ┌─────────────────────────────────────────┐
+                   │          SITE CUSTODIAN SUPERVISOR      │
+                   │    • Physical Receipt Confirmation      │
+                   │    • On-site Field Expense Logging      │
+                   │    • Bill / Invoice Camera Capture      │
+                   │    • Physical Cash Box Reconciliation   │
+                   └─────────────────────────────────────────┘
+
+Key Governance Tenets:
+1. Two-Person Integrity Principle:
+   Funds cannot be credited to a site custodian solely by the manager or solely
+   by the supervisor. Organization HQ must authorize, the Manager must disburse,
+   and the Supervisor must explicitly confirm physical receipt in the field.
+2. Dual Scoping (Site-Based & Supervisor-Based):
+   Accounts are keyed per site (`${orgId}_${siteId}`) with supervisor custodianship.
+   If a supervisor is remapped, historical site spending remains anchored to the site.
+3. Complete Double-Entry Ledger:
+   Every rupee added, spent, or returned generates an immutable entry in
+   `pettyCashTransactions` with balance-after auditing.
+4. Strict Receipt Thresholding:
+   Field expenses exceeding the configured threshold (default: ₹500) mandate an
+   uploaded bill/invoice image before submission.
+
+================================================================================
+2. FRONTEND ARCHITECTURE (FLUTTER)
+================================================================================
+
+Core Files:
+- [lib/models/petty_cash_models.dart]
+- [lib/services/petty_cash_service.dart]
+- [lib/screens/manager/manager_petty_cash_page.dart]
+- [lib/screens/supervisor/supervisor_petty_cash_page.dart]
+- [lib/screens/organization/org_petty_cash_page.dart]
+- [lib/screens/organization/petty_cash_report_pdf_helper.dart]
+
+--------------------------------------------------------------------------------
+2.1 Canonical State Machine (PettyCashStatus)
+--------------------------------------------------------------------------------
+Defined in: [lib/models/petty_cash_models.dart]
+
+Lifecycle States:
+- `DRAFT`                          : Created locally, not yet submitted.
+- `SUBMITTED` /
+  `PENDING_MANAGER_REVIEW`         : Submitted by Supervisor, awaiting Manager review.
+- `REJECTED_BY_MANAGER`            : Declined by Manager with written reason.
+- `PENDING_ORGANIZATION_APPROVAL`  : Verified by Manager, awaiting Org HQ authorization.
+- `REJECTED_BY_ORGANIZATION`       : Declined by Org HQ.
+- `APPROVED` /
+  `AWAITING_DISBURSEMENT`          : Authorized by Org HQ; returned to Manager to pay.
+- `DISBURSED` /
+  `AWAITING_RECEIPT_CONFIRMATION`  : Manager sent funds (Cash/UPI/NEFT); awaiting field receipt.
+- `RECEIVED` / `ACTIVE`            : Supervisor confirmed receipt; cash balance active.
+
+Expense Lifecycle States:
+- `PENDING_EXPENSE_REVIEW`         : Supervisor logged an expense; awaiting Manager audit.
+- `EXPENSE_APPROVED`               : Manager approved expense; debited from field balance.
+- `EXPENSE_REJECTED`               : Manager declined expense with written remarks.
+
+Reconciliation, Return & Closure States:
+- `REPLENISHMENT_REQUESTED`        : Top-up requested when balance reaches threshold.
+- `RECONCILIATION_PENDING`         : Supervisor physical cash count awaiting Manager audit.
+- `RECONCILIATION_APPROVED`        : Audit verified; cash box matches system balance.
+- `DISCREPANCY_REVIEW`             : Physical cash count does not match ledger balance.
+- `PENDING_RETURN_CONFIRMATION`    : Surplus funds returned to Manager; awaiting verification.
+- `RETURN_CONFIRMED`               : Manager confirmed receipt of returned cash.
+- `CLOSED`                         : Account deactivated or project completed.
+- `CANCELLED`                      : Request cancelled by author before review.
+
+--------------------------------------------------------------------------------
+2.2 Data Models & Entity Registry
+--------------------------------------------------------------------------------
+All models feature `toMap()`, `fromMap()`, and copy utilities.
+
+1. `PettyCashAccount`:
+   Represents the financial container for a site/supervisor.
+   Fields: `accountId`, `orgId`, `siteId`, `siteName`, `supervisorId`, `supervisorName`,
+   `managerId`, `managerName`, `totalDisbursed`, `totalSpent`, `currentBalance`,
+   `maxLimit`, `thresholdLimit`, `status`, `lastDisbursedAt`, `lastExpenseAt`.
+
+2. `PettyCashRequest`:
+   Encapsulates fund requisition / allocation documents.
+   Fields: `requestId`, `siteId`, `siteName`, `supervisorId`, `supervisorName`,
+   `requestedAmount`, `approvedAmount`, `disbursedAmount`, `purpose`, `requestType`
+   (INITIAL / REPLENISHMENT / MANUAL), `status`, `managerReviewRemarks`,
+   `orgApprovalRemarks`, `paymentMode` (CASH / UPI / NEFT / CHEQUE),
+   `transactionRef`, `disbursedAt`, `receivedAt`, `approvalHistory` list.
+
+3. `PettyCashExpense`:
+   Individual field expense records.
+   Fields: `expenseId`, `accountId`, `siteId`, `supervisorId`, `supervisorName`,
+   `amount`, `category`, `subCategory`, `description`, `vendorName`, `vendorPhone`,
+   `invoiceNumber`, `receiptUrl`, `receiptStoragePath`, `status`, `expenseDate`,
+   `reviewedBy`, `reviewRemarks`, `reviewedAt`.
+
+4. `PettyCashTransaction`:
+   Append-only field ledger entry.
+   Fields: `transactionId`, `accountId`, `siteId`, `supervisorId`, `type`
+   (CREDIT / DEBIT / RETURN), `amount`, `balanceBefore`, `balanceAfter`,
+   `description`, `category`, `referenceId`, `timestamp`.
+
+5. `PettyCashReconciliation`:
+   Periodic site audit report.
+   Fields: `reconciliationId`, `siteId`, `supervisorId`, `systemBalance`,
+   `physicalCashCount`, `discrepancy`, `status`, `notes`, `verifiedBy`.
+
+6. `PettyCashReturn`:
+   Physical return of surplus cash.
+   Fields: `returnId`, `siteId`, `supervisorId`, `returnAmount`, `reason`,
+   `status`, `returnedAt`, `confirmedBy`, `confirmedAt`.
+
+7. `PettyCashAuditLog`:
+   System event audit entry tracking every role transition and state change.
+
+--------------------------------------------------------------------------------
+2.3 Manager Petty Cash Portal (8-Tab Command Center)
+--------------------------------------------------------------------------------
+Screen: `ManagerPettyCashPage`
+Source: [lib/screens/manager/manager_petty_cash_page.dart]
+
+Tab 1: Request Reviews (`_buildReviewsTab`)
+- Filters: All, Pending Manager Review, Forwarded to HQ, Approved.
+- Displays supervisor top-up requisitions.
+- Actions:
+  * "Verify & Forward to HQ": Enters verification notes -> status moves to
+    `PENDING_ORGANIZATION_APPROVAL`.
+  * "Reject Request": Enters mandatory rejection reason -> status moves to
+    `REJECTED_BY_MANAGER`.
+
+Tab 2: Expense Approvals (`_buildExpenseApprovalsTab`)
+- Displays expenses submitted from field sites (`PENDING_EXPENSE_REVIEW`).
+- Shows receipt image thumbnail, category chip, vendor, and amount.
+- Actions:
+  * Tap receipt -> Opens full-screen zoomable modal.
+  * "Approve Expense": Atomically debits site balance and posts to ledger.
+  * "Decline Expense": Marks expense as rejected with feedback to supervisor.
+
+Tab 3: Disbursements (`_buildAllocationsTab`)
+- Filters requests authorized by Org HQ (`APPROVED` / `AWAITING_DISBURSEMENT`).
+- Manager action modal:
+  * Select Payment Mode: Cash, UPI / GPay / PhonePe, NEFT / Bank Transfer, Cheque.
+  * Enter Transaction Reference / UTR Number.
+  * Select Disbursement Date & Time.
+  * Confirm Disbursement -> status moves to `DISBURSED` /
+    `AWAITING_RECEIPT_CONFIRMATION`. Dispatches alert to Supervisor.
+
+Tab 4: Reconcile & Returns (`_buildReconcileAndReturnsTab`)
+- Reviews supervisor cash counts and audits surplus fund returns.
+- Confirms physical receipt of returned cash (`confirmCashReturn`).
+
+Tab 5: Site-Wise (`_buildSiteWiseTab`)
+- Deep drill-down filtering by Site, Project, Supervisor, Expense Category,
+  and Date Range (All Time, Today, This Month, Custom Date Range).
+- Live calculation of Site Disbursed, Site Spent, Remaining Cash, and Burn Rate.
+
+Tab 6: Supervisors (`_buildSupervisorsTab`)
+- Summary cards per Site Supervisor displaying:
+  * Current Cash in Field Hand
+  * Total Cumulative Disbursed
+  * Total Approved Spent
+  * Low Balance Alert indicators (`currentBalance <= thresholdLimit`)
+
+Tab 7: Ledger (`_buildLedgerTab`)
+- Live stream of all double-entry ledger transactions (`pettyCashTransactions`).
+- Color-coded badges: Green (CREDIT), Red (DEBIT), Amber (RETURN).
+
+Tab 8: Reports (`_buildReportsTab`)
+- Category-wise spending breakdown charts (Transportation, Materials, Labour Food, etc.).
+- Monthly expense trend analysis and quick CSV/PDF triggers.
+
+Floating Action Button: "Manual Allocation"
+- Allows Manager to directly inject petty cash to a supervisor/site without
+  waiting for a prior supervisor request (`managerCreateManualAllocation`).
+
+--------------------------------------------------------------------------------
+2.4 Supervisor Field Portal
+--------------------------------------------------------------------------------
+Screen: `SupervisorPettyCashPage`
+Source: [lib/screens/supervisor/supervisor_petty_cash_page.dart]
+
+Tab 0: Requests & Allocations
+- Top Summary Card: Displays live Available Cash Balance, Assigned Site Name,
+  and Account Status chip.
+- "Request Petty Cash" CTA:
+  * Select Site, enter Amount, Purpose (Labour food, emergency spares, travel).
+  * Submits request to Manager (`PettyCashService.submitRequest`).
+- "Confirm Amount Received" Banner:
+  * Appears automatically when Manager disburses cash.
+  * Supervisor confirms: "Yes, I have received ₹X in Cash/Bank".
+  * Idempotently activates cash and credits local account balance.
+
+Tab 1: Log Field Expenses
+- "Record New Expense" CTA:
+  * Amount, Category (Site Supplies, Transport, Courier, Fuel, Food, Unloading, Misc).
+  * Vendor Name & Phone.
+  * Bill / Invoice Photo:
+    - Tap Camera / Gallery -> ImagePicker captures photo.
+    - Uploaded via `AppStorageService` to Firebase Storage.
+    - Enforced validation: Mandatory receipt photo if amount >= ₹500.
+  * Submits expense with `PENDING_EXPENSE_REVIEW`.
+
+Tab 2: Transactions / Field Ledger
+- Chronological list of all Credits and Debits for this supervisor's site.
+
+Tab 3: Reconcile & Returns
+- "Submit Physical Cash Reconciliation":
+  * Enters physical currency count in cash box.
+  * Compares with system balance and alerts if discrepancy exists.
+- "Return Surplus Cash":
+  * Enters amount handed back to Manager with reason.
+
+--------------------------------------------------------------------------------
+2.5 Organization HQ Command Portal
+--------------------------------------------------------------------------------
+Screen: `OrgPettyCashPage`
+Source: [lib/screens/organization/org_petty_cash_page.dart]
+
+Capabilities:
+1. Executive Spend Header:
+   - Total Corporate Petty Cash Disbursed across all sites.
+   - Total Verified Field Spend.
+   - Total Active Cash in Field Circulation.
+2. Request Authorizations:
+   - Reviews requests verified by managers (`PENDING_ORGANIZATION_APPROVAL`).
+   - Actions: "Authorize Fund Release" or "Decline".
+3. PDF Report Generator ([petty_cash_report_pdf_helper.dart]):
+   - Generates high-resolution branded PDF audit reports with company header,
+     monthly transactions table, category charts, and signatory blocks.
+
+--------------------------------------------------------------------------------
+2.6 PettyCashService API & Reactive Streams
+--------------------------------------------------------------------------------
+Singleton Service: `PettyCashService`
+Source: [lib/services/petty_cash_service.dart]
+
+Key Methods:
+- `getOrCreateSiteAccount({siteId, siteName, supervisorId, ...})`: Fetches/creates site account.
+- `submitRequest(...)`: Creates new request in `pettyCashRequests`.
+- `managerForwardToOrg(...)`: Manager moves status to `PENDING_ORGANIZATION_APPROVAL`.
+- `managerRejectRequest(...)`: Manager rejects with remarks.
+- `orgApproveRequest(...)`: Org HQ authorizes amount.
+- `managerDisburseCash(...)`: Manager records payment mode & reference.
+- `supervisorConfirmAmountReceived(...)`: Field confirmation & atomic credit.
+- `submitExpense(...)`: Supervisor logs expense with photo upload.
+- `managerApproveExpense(...)`: Manager verifies and atomically debits account.
+- `managerRejectExpense(...)`: Manager rejects expense.
+- `submitReconciliation(...)` / `reviewReconciliation(...)`: Site cash audits.
+- `submitCashReturn(...)` / `confirmCashReturn(...)`: Surplus returns.
+
+Live Reactive Streams:
+- `streamSiteAccount(siteId)`: `Stream<PettyCashAccount?>`
+- `streamAllAccounts()`: `Stream<List<PettyCashAccount>>`
+- `streamSupervisorExpenses(...)`: `Stream<List<PettyCashExpense>>`
+- `streamAllExpenses()`: `Stream<List<PettyCashExpense>>`
+- `streamSupervisorTransactions(...)`: `Stream<List<PettyCashTransaction>>`
+- `streamAllTransactions()`: `Stream<List<PettyCashTransaction>>`
+- `streamSupervisorRequests(...)`: `Stream<List<PettyCashRequest>>`
+- `streamAllRequests()`: `Stream<List<PettyCashRequest>>`
+- `streamAuditLogs()`: `Stream<List<PettyCashAuditLog>>`
+
+================================================================================
+3. BACKEND CONNECTIVITY & DATA ARCHITECTURE
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1 Multi-Tenant Isolation & Collection Routing
+--------------------------------------------------------------------------------
+All petty cash collections are scoped under the tenant organization path:
+`/organisation/{orgId}/{collectionName}`
+
+Getter mappings in [lib/services/firestore_service.dart]:
+```dart
+get pettyCashAccounts       => getCollection('pettyCashAccounts');
+get pettyCashRequests       => getCollection('pettyCashRequests');
+get pettyCashTransactions   => getCollection('pettyCashTransactions');
+get pettyCashExpenses       => getCollection('pettyCashExpenses');
+get pettyCashReconciliations => getCollection('pettyCashReconciliations');
+get pettyCashReturns        => getCollection('pettyCashReturns');
+get pettyCashIdempotency    => getCollection('pettyCashIdempotency');
+get pettyCashAuditLogs      => getCollection('pettyCashAuditLogs');
+```
+
+--------------------------------------------------------------------------------
+3.2 Schema & Data Dictionaries for all 8 Collections
+--------------------------------------------------------------------------------
+
+1. `pettyCashAccounts`
+   Document ID: `${orgId}_${siteId}` (e.g., `cst_org_01_SITE_101`)
+   ```json
+   {
+     "accountId": "cst_org_01_SITE_101",
+     "orgId": "cst_org_01",
+     "siteId": "SITE_101",
+     "siteName": "Alpha Tower",
+     "supervisorId": "sup_123",
+     "supervisorName": "John Doe",
+     "managerId": "mgr_456",
+     "managerName": "Alice Smith",
+     "custodianSupervisorId": "sup_123",
+     "custodianSupervisorName": "John Doe",
+     "totalDisbursed": 50000.00,
+     "totalSpent": 32500.00,
+     "currentBalance": 17500.00,
+     "totalAllocated": 50000.00,
+     "totalUsed": 32500.00,
+     "availableBalance": 17500.00,
+     "totalReturned": 0.00,
+     "maxLimit": 100000.00,
+     "thresholdLimit": 5000.00,
+     "status": "ACTIVE",
+     "createdAt": "Timestamp",
+     "updatedAt": "Timestamp",
+     "lastDisbursedAt": "Timestamp",
+     "lastExpenseAt": "Timestamp"
+   }
+   ```
+
+2. `pettyCashRequests`
+   Document ID: `PCR_1740000000_123`
+   ```json
+   {
+     "requestId": "PCR_1740000000_123",
+     "id": "PCR_1740000000_123",
+     "orgId": "cst_org_01",
+     "siteId": "SITE_101",
+     "siteName": "Alpha Tower",
+     "supervisorId": "sup_123",
+     "supervisorName": "John Doe",
+     "managerId": "mgr_456",
+     "managerName": "Alice Smith",
+     "requestedAmount": 20000.00,
+     "approvedAmount": 20000.00,
+     "disbursedAmount": 20000.00,
+     "allocatedAmount": 20000.00,
+     "purpose": "Site emergency concrete additives & transport",
+     "requestType": "REPLENISHMENT",
+     "status": "RECEIVED",
+     "statusDisplay": "Funds Active in Field",
+     "paymentMode": "UPI",
+     "transactionRef": "UPI/329847293847/GPay",
+     "disbursedBy": "Alice Smith",
+     "disbursedAt": "Timestamp",
+     "receivedAt": "Timestamp",
+     "receivedRemarks": "Confirmed received in bank account",
+     "approvalHistory": [ ... ],
+     "createdAt": "Timestamp",
+     "updatedAt": "Timestamp"
+   }
+   ```
+
+3. `pettyCashTransactions` (Ledger Entries)
+   Document ID: `TX_1740000000_789`
+   ```json
+   {
+     "transactionId": "TX_1740000000_789",
+     "orgId": "cst_org_01",
+     "accountId": "cst_org_01_SITE_101",
+     "siteId": "SITE_101",
+     "supervisorId": "sup_123",
+     "type": "CREDIT",
+     "amount": 20000.00,
+     "balanceBefore": 5000.00,
+     "balanceAfter": 25000.00,
+     "description": "Petty Cash Topup Disbursed by Manager Alice Smith",
+     "category": "TOPUP",
+     "referenceId": "PCR_1740000000_123",
+     "performedBy": "sup_123",
+     "performedByName": "John Doe",
+     "timestamp": "Timestamp"
+   }
+   ```
+
+4. `pettyCashExpenses`
+   Document ID: `PCE_1740000000_555`
+   ```json
+   {
+     "expenseId": "PCE_1740000000_555",
+     "orgId": "cst_org_01",
+     "accountId": "cst_org_01_SITE_101",
+     "siteId": "SITE_101",
+     "siteName": "Alpha Tower",
+     "supervisorId": "sup_123",
+     "supervisorName": "John Doe",
+     "amount": 1250.00,
+     "category": "Site Supplies",
+     "subCategory": "Safety Gear",
+     "description": "Purchased 5 extra safety helmets for visitors",
+     "vendorName": "Metro Safety Tools Ltd",
+     "vendorPhone": "9876543210",
+     "invoiceNumber": "INV-2026-904",
+     "receiptUrl": "https://firebasestorage.googleapis.com/.../receipt.jpg",
+     "receiptStoragePath": "organisation/cst_org_01/petty_cash_receipts/PCE_555.jpg",
+     "status": "EXPENSE_APPROVED",
+     "statusDisplay": "Expense Approved & Posted",
+     "expenseDate": "Timestamp",
+     "reviewedBy": "Alice Smith",
+     "reviewRemarks": "Verified with security gate log",
+     "reviewedAt": "Timestamp",
+     "createdAt": "Timestamp"
+   }
+   ```
+
+5. `pettyCashReconciliations`
+   Document ID: `REC_1740000000_001`
+   ```json
+   {
+     "reconciliationId": "REC_1740000000_001",
+     "orgId": "cst_org_01",
+     "siteId": "SITE_101",
+     "supervisorId": "sup_123",
+     "systemBalance": 17500.00,
+     "physicalCashCount": 17500.00,
+     "discrepancy": 0.00,
+     "status": "RECONCILIATION_APPROVED",
+     "notes": "Weekly physical audit conducted with Manager",
+     "verifiedBy": "Alice Smith",
+     "verifiedAt": "Timestamp",
+     "createdAt": "Timestamp"
+   }
+   ```
+
+6. `pettyCashReturns`
+   Document ID: `RET_1740000000_002`
+   ```json
+   {
+     "returnId": "RET_1740000000_002",
+     "orgId": "cst_org_01",
+     "siteId": "SITE_101",
+     "supervisorId": "sup_123",
+     "returnAmount": 5000.00,
+     "reason": "Project phase complete, returning surplus cash",
+     "status": "RETURN_CONFIRMED",
+     "returnedAt": "Timestamp",
+     "confirmedBy": "Alice Smith",
+     "confirmedAt": "Timestamp"
+   }
+   ```
+
+7. `pettyCashIdempotency`
+   Document ID: `idemp_${requestId}_confirm`
+   ```json
+   {
+     "key": "idemp_PCR_123_confirm",
+     "performedAt": "Timestamp",
+     "actorId": "sup_123"
+   }
+   ```
+
+8. `pettyCashAuditLogs`
+   Document ID: `AUD_1740000000_999`
+   ```json
+   {
+     "logId": "AUD_1740000000_999",
+     "orgId": "cst_org_01",
+     "action": "EXPENSE_APPROVED",
+     "entityId": "PCE_1740000000_555",
+     "entityType": "EXPENSE",
+     "actorRole": "Manager",
+     "actorName": "Alice Smith",
+     "actorId": "mgr_456",
+     "details": { "amount": 1250.00, "siteId": "SITE_101" },
+     "timestamp": "Timestamp"
+   }
+   ```
+
+--------------------------------------------------------------------------------
+3.3 Firebase Cloud Storage Architecture for Receipts & Invoices
+--------------------------------------------------------------------------------
+Service: `AppStorageService`
+Location: [lib/services/app_storage_service.dart]
+
+Storage Tree:
+```
+firebase-storage-bucket/
+└── organisation/
+    └── {orgId}/
+        └── petty_cash_receipts/
+            ├── PCE_1740000000_555_1740000010.jpg
+            └── PCE_1740000000_556_1740000020.jpg
+```
+
+Upload Mechanics:
+1. `ImagePicker` compresses and selects image on mobile device.
+2. `AppStorageService.uploadFile` constructs scoped reference:
+   `organisation/{orgId}/petty_cash_receipts/{uniqueId}.jpg`.
+3. Sets metadata: `contentType: 'image/jpeg'`.
+4. Returns download URL and storage path.
+5. Saved in `PettyCashExpense` document.
+
+--------------------------------------------------------------------------------
+3.4 Atomic Transactions & Financial Concurrency Controls
+--------------------------------------------------------------------------------
+To prevent race conditions, double-spending, and balance corruption:
+
+1. `supervisorConfirmAmountReceived()`:
+   Runs inside `FirebaseFirestore.instance.runTransaction(...)`.
+   - Reads `pettyCashRequests.doc(requestId)`.
+   - Checks if already confirmed (`receivedAt != null`). If yes, exits.
+   - Reads `pettyCashAccounts.doc(siteAccId)`.
+   - Atomically increments `currentBalance += amount` and `totalDisbursed += amount`.
+   - Writes `pettyCashTransactions` entry.
+   - Commits all operations atomically.
+
+2. `managerApproveExpense()`:
+   Runs inside `FirebaseFirestore.instance.runTransaction(...)`.
+   - Checks if expense was already approved.
+   - Reads `pettyCashAccounts.doc(siteAccId)`.
+   - Atomically updates:
+     `currentBalance -= amount`
+     `totalSpent += amount`
+   - Creates `DEBIT` ledger transaction.
+   - Commits atomically.
+
+--------------------------------------------------------------------------------
+3.5 Security Rules
+--------------------------------------------------------------------------------
+Firestore Security Rules ([firestore.rules]):
+- All access partitioned by `/organisation/{orgId}/{collectionName}/{docId}`.
+- Operations require authenticated user matching the organization namespace.
+
+Storage Security Rules ([storage.rules]):
+- `match /organisation/{orgId}/{allPaths=**}`: Read and write restricted strictly
+  to authenticated users belonging to that organization.
+- Unpartitioned root storage paths are denied (`allow read, write: if false`).
+
+================================================================================
+4. REAL-TIME NOTIFICATION & DEEP-LINKING CONNECTIVITY
+================================================================================
+
+--------------------------------------------------------------------------------
+4.1 Cross-Role Event Notification Matrix
+--------------------------------------------------------------------------------
+Every state transition invokes `NotificationService` dual-writing to
+`/notifications` and `/organisation/{orgId}/notifications`:
+
++---------------------------+----------------+----------------+-------------------------------------+
+| Financial Event           | Sender Role    | Target Role(s) | Notification Title & Content        |
++---------------------------+----------------+----------------+-------------------------------------+
+| 1. Supervisor Request     | Supervisor     | Manager & Org  | "💵 New Petty Cash Request Subm."   |
+| 2. Manager Verified       | Manager        | Org HQ         | "💵 Request Forwarded to HQ"        |
+| 3. Manager Rejected       | Manager        | Supervisor     | "❌ Request Declined by Manager"    |
+| 4. Org HQ Authorized      | Org HQ         | Mgr & Superv   | "🏢 Request Authorized by HQ"       |
+| 5. Manager Disbursed      | Manager        | Supervisor     | "💸 Cash Disbursed! Confirm Receipt"|
+| 6. Supervisor Received    | Supervisor     | Manager & Org  | "✅ Cash Received in Field!"        |
+| 7. Expense Submitted      | Supervisor     | Manager        | "🧾 New Site Expense for Review"    |
+| 8. Expense Approved       | Manager        | Supervisor     | "✅ Site Expense Approved"          |
+| 9. Expense Rejected       | Manager        | Supervisor     | "❌ Site Expense Declined"          |
+| 10. Low Balance Alert     | System         | Manager        | "⚠️ Low Petty Cash Balance Alert"   |
++---------------------------+----------------+----------------+-------------------------------------+
+
+Backend FCM Multicast:
+Cloud Function triggers (`onNotificationCreated` and `onOrgNotificationCreated`)
+in `functions/index.js` pick up these written notification documents, execute
+idempotency checks, and send real-time push alerts to device tokens.
+
+--------------------------------------------------------------------------------
+4.2 Deep-Link Routing via NotificationRouter
+--------------------------------------------------------------------------------
+Source: [lib/services/notification_router.dart]
+
+When a user taps any petty cash push notification:
+```dart
+final isPettyCash = model.type == NotificationType.pettyCashRequest ||
+    model.type == NotificationType.pettyCashTopup ||
+    model.type == NotificationType.pettyCashDispatched ||
+    reqType.contains('petty') ||
+    reqType.contains('cash');
+
+if (role == UserRole.manager) {
+  Navigator.push(context, MaterialPageRoute(builder: (_) => const ManagerPettyCashPage()));
+} else if (role == UserRole.supervisor) {
+  Navigator.push(context, MaterialPageRoute(builder: (_) => SupervisorPettyCashPage(...)));
+} else if (role == UserRole.organisation) {
+  Navigator.push(context, MaterialPageRoute(builder: (_) => const OrgPettyCashPage()));
+}
+```
+
+================================================================================
+5. END-TO-END OPERATIONAL LOGIC FLOWS (STEP-BY-STEP SEQUENCES)
+================================================================================
+
+--------------------------------------------------------------------------------
+5.1 Flow 1: Supervisor Petty Cash Request Lifecycle (Submission to Receipt)
+--------------------------------------------------------------------------------
+
+[Stage 1: Field Request]
+  1. Supervisor opens `SupervisorPettyCashPage` -> Tab 0.
+  2. Enters: Site = "Alpha Tower", Amount = ₹20,000, Purpose = "Site Spares & Fuel".
+  3. Clicks "Submit Request":
+     - `PettyCashService.submitRequest(...)` called.
+     - Document created in `pettyCashRequests/PCR_101` with `status: PENDING_MANAGER_REVIEW`.
+     - Appends Stage 1 audit history log.
+     - Calls `NotificationService.notifyManagerAndOrganisation(...)`.
+     - Manager & Org HQ receive high-priority push alert.
+
+[Stage 2: Manager Verification]
+  4. Manager taps push alert -> Opens `ManagerPettyCashPage` -> "Request Reviews" Tab.
+  5. Manager reviews requested ₹20,000 and site progress.
+  6. Manager clicks "Verify & Forward to HQ":
+     - `PettyCashService.managerForwardToOrg(...)` called.
+     - Status updated to `PENDING_ORGANIZATION_APPROVAL`.
+     - Org HQ receives FCM push: "💵 Petty Cash Request #PCR_101 Forwarded to HQ".
+
+[Stage 3: Organization HQ Authorization]
+  7. Org Admin opens `OrgPettyCashPage` -> Reviews verified request.
+  8. Org Admin clicks "Authorize Fund Release":
+     - `PettyCashService.orgApproveRequest(...)` called.
+     - Status updated to `APPROVED` / `AWAITING_DISBURSEMENT`.
+     - Manager receives push notification: "🏢 Petty Cash Request Authorized by HQ. Action: Disburse Cash".
+
+[Stage 4: Manager Disbursement]
+  9. Manager opens `ManagerPettyCashPage` -> "Disbursements" Tab.
+ 10. Manager selects Payment Mode ("UPI / GPay"), enters UTR: "UPI/98234729384/GPay",
+     selects Date, and clicks "Confirm Disbursement":
+     - `PettyCashService.managerDisburseCash(...)` called.
+     - Status updated to `DISBURSED` / `AWAITING_RECEIPT_CONFIRMATION`.
+     - Dispatches notification to Supervisor: "💸 ₹20,000 Disbursed via UPI! Confirm Receipt".
+
+[Stage 5: Supervisor Physical Receipt Confirmation]
+ 11. Supervisor receives notification -> Banner appears in `SupervisorPettyCashPage`:
+     "Manager Alice Smith has disbursed ₹20,000 via UPI. Please confirm receipt."
+ 12. Supervisor taps "Confirm Received":
+     - Executes `PettyCashService.supervisorConfirmAmountReceived(...)` inside
+       Firestore transaction.
+     - `pettyCashAccounts` for Site Alpha atomically credited:
+       `currentBalance += 20000`, `totalDisbursed += 20000`.
+     - Transaction ledger `pettyCashTransactions` appends `CREDIT` of ₹20,000.
+     - Request status set to `RECEIVED` / `ACTIVE`.
+     - Manager & Org receive success alert: "✅ ₹20,000 Active in Field!".
+
+--------------------------------------------------------------------------------
+5.2 Flow 2: Manager Direct / Manual Fund Allocation
+--------------------------------------------------------------------------------
+
+  1. Manager opens `ManagerPettyCashPage` -> Taps Floating Action Button "Manual Allocation".
+  2. Selects Target Site, Custodian Supervisor, Amount (₹15,000), Payment Mode (Cash),
+     and enters Reference Number.
+  3. Clicks "Create Manual Allocation":
+     - Calls `PettyCashService.managerCreateManualAllocation(...)`.
+     - Pre-authorized by Manager, created with `status: AWAITING_RECEIPT_CONFIRMATION`.
+     - Direct alert sent to Supervisor to confirm physical handover.
+  4. Supervisor taps "Confirm Received" -> Site balance credited atomically.
+
+--------------------------------------------------------------------------------
+5.3 Flow 3: Field Expense Logging, Receipt Photo Upload & Manager Verification
+--------------------------------------------------------------------------------
+
+  1. Supervisor incurs field expense: ₹1,250 for safety helmets at site.
+  2. Opens `SupervisorPettyCashPage` -> "Log Field Expenses" Tab.
+  3. Enters Amount: 1,250, Category: "Site Supplies", Vendor: "Metro Tools".
+  4. Taps "Capture Receipt":
+     - Device camera opens; photo taken.
+     - `AppStorageService.uploadFile` uploads image to:
+       `/organisation/{orgId}/petty_cash_receipts/PCE_555.jpg`.
+  5. Submits expense:
+     - Document saved in `pettyCashExpenses/PCE_555` with `status: PENDING_EXPENSE_REVIEW`.
+     - Notification sent to Manager: "🧾 New Site Expense ₹1,250 Submitted for Review".
+  6. Manager reviews in `ManagerPettyCashPage` -> "Expense Approvals" Tab:
+     - Inspects receipt photo in zoomable viewer.
+     - Clicks "Approve Expense":
+       * Executes `PettyCashService.managerApproveExpense(...)` in atomic transaction.
+       * `pettyCashAccounts` for Site Alpha updated:
+         `currentBalance -= 1250`, `totalSpent += 1250`.
+       * Ledger `pettyCashTransactions` appends `DEBIT` of ₹1,250.
+       * Expense status updated to `EXPENSE_APPROVED`.
+       * Supervisor notified: "✅ Site Expense ₹1,250 Approved & Posted".
+
+--------------------------------------------------------------------------------
+5.4 Flow 4: Physical Cash Count Reconciliation & Audit Discrepancies
+--------------------------------------------------------------------------------
+
+  1. Supervisor counts physical currency in the site cash box: ₹17,500.
+  2. Opens "Reconcile & Returns" Tab -> Enters Physical Count: ₹17,500.
+  3. System compares with account `currentBalance` (₹17,500):
+     - Discrepancy = ₹0.
+     - Document written to `pettyCashReconciliations`.
+  4. If discrepancy != 0:
+     - Status marked `DISCREPANCY_REVIEW`.
+     - Manager alerted immediately to conduct site inspection.
+
+--------------------------------------------------------------------------------
+5.5 Flow 5: Surplus Cash Return to Company
+--------------------------------------------------------------------------------
+
+  1. Project completed or supervisor transferring site; ₹5,000 cash remains unspent.
+  2. Supervisor taps "Return Surplus Cash" -> Enters ₹5,000 with reason.
+  3. Saved in `pettyCashReturns` with `status: PENDING_RETURN_CONFIRMATION`.
+  4. Supervisor physically hands cash to Manager.
+  5. Manager verifies and taps "Confirm Cash Return":
+     - `PettyCashService.confirmCashReturn(...)` called.
+     - Atomically decrements site balance by ₹5,000 and credits company treasury.
+     - Appends `RETURN` transaction in ledger.
+     - Account balance safely reaches zero.
+
+--------------------------------------------------------------------------------
+5.6 Flow 6: Monthly Financial Statement & PDF Report Generation
+--------------------------------------------------------------------------------
+
+  1. Org Admin opens `OrgPettyCashPage` -> Selects Month (e.g., "September 2026").
+  2. Taps "Download Petty Cash PDF Report" icon in AppBar.
+  3. `PettyCashReportPdfHelper.generateAndDownloadPdf(...)`:
+     - Queries all `pettyCashRequests` and `pettyCashTransactions` for September 2026.
+     - Compiles summary metrics: Total Inflow, Total Expenses, Active Balances.
+     - Formats category breakdown table with voucher numbers and vendor details.
+     - Generates multi-page vector PDF document with company branding and signature lines.
+     - Opens native print/download share sheet on mobile, desktop, or web browser.
+
+================================================================================
+6. FINANCIAL INVARIANTS, ANTI-FRAUD CONTROLS & EDGE-CASE FAIL-SAFES
+================================================================================
+
+1. Double-Receipt Prevention:
+   - `pettyCashRequests` uses atomic write-lock flags (`receivedAt != null`). If a
+     supervisor taps "Confirm Received" multiple times or has unstable connectivity,
+     only the first execution credits the account balance.
+
+2. Negative Balance Guard:
+   - `managerApproveExpense` checks whether `currentBalance >= expenseAmount`.
+     If field balance is insufficient, Manager is alerted to top-up the account
+     first.
+
+3. Receipt Forgery Protection:
+   - Expenses above the configurable threshold (₹500) strictly reject submission
+     if `receiptUrl` is empty.
+
+4. Immutability of Financial Ledger:
+   - Documents in `pettyCashTransactions` are strictly append-only.
+     Updates and deletions are denied in security rules, ensuring a tamper-proof
+     audit trail for financial auditors.
+
+5. Multi-Tenant Air-Gapping:
+   - Cloud Storage paths and Firestore collections strictly mandate `organisation/{orgId}/`
+     prefix. Tenant A can never view or manipulate receipts or accounts of Tenant B.
+
+================================================================================
+END OF PETTY CASH ARCHITECTURE & LOGIC FLOW SPECIFICATION
+================================================================================

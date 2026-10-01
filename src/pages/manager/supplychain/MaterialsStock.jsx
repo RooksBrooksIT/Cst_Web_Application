@@ -26,7 +26,9 @@ import {
   fetchSiteMaterialPool,
   subscribeAllSiteMaterialPools,
   createMaterialRequest,
+  allocateMaterialToSite,
 } from '../../../services/materialService.js'
+import { resolveSite, getNormalizedSiteOptions } from '../../../utils/siteUtils.js'
 
 function formatDate(raw) {
   if (!raw) return 'N/A'
@@ -52,6 +54,16 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
   const [searchQuery, setSearchQuery] = useState('')
   const [filterState, setFilterState] = useState('ALL') // 'ALL' | 'LOW' | 'OUT'
 
+  // Direct Site Material Allocation Modal (Flow 2)
+  const [showAllocateModal, setShowAllocateModal] = useState(false)
+  const [allocSiteId, setAllocSiteId] = useState('')
+  const [allocMatName, setAllocMatName] = useState('')
+  const [allocQty, setAllocQty] = useState('')
+  const [allocRate, setAllocRate] = useState('')
+  const [allocRemarks, setAllocRemarks] = useState('')
+  const [allocDate, setAllocDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [submittingAlloc, setSubmittingAlloc] = useState(false)
+
   // Requisition Modal
   const [requisitionMaterial, setRequisitionMaterial] = useState(null)
   const [reqSiteId, setReqSiteId] = useState('')
@@ -61,6 +73,11 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
 
   // Site Allocation Breakdown Modal
   const [inspectMaterial, setInspectMaterial] = useState(null)
+
+  // Deduplicated Normalized Sites
+  const normalizedSites = useMemo(() => {
+    return getNormalizedSiteOptions(sites)
+  }, [sites])
 
   const loadData = async () => {
     if (!orgId) return
@@ -128,7 +145,7 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
       })
     })
 
-    // 2. Merge / Add live materialsAvailability documents (/organisation/{orgId}/data/materialsAvailability)
+    // 2. Merge / Add live materialsAvailability documents (/organisation/{orgId}/materialsAvailability)
     warehouseStock.forEach((w) => {
       const matId = w.materialId || w.id
       const name = w.materialName || w.displayName || w.name || ''
@@ -140,42 +157,71 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
         w.companyAvailableCount ?? w.availableCount ?? w.count ?? existing.centralQty ?? 0
       )
 
-      // Process siteInventories array from materialsAvailability schema
+      // Process siteInventories array from materialsAvailability schema if present
       const siteInventories = Array.isArray(w.siteInventories) ? w.siteInventories : []
 
-      let siteTotalAllocated = siteInventories.reduce(
-        (sum, s) => sum + (Number(s.availableCount ?? s.count) || 0),
-        0
-      )
-
-      // Fallback to sitePools if siteInventories array is empty
+      // Match siteMaterialPool records (reading both availableCount and currentBalance)
       const matchedPools = sitePools.filter(
         (p) => (p.materialName || '').toLowerCase() === (name || existing.materialName || '').toLowerCase()
       )
-      if (siteInventories.length === 0 && matchedPools.length > 0) {
-        siteTotalAllocated = matchedPools.reduce((acc, p) => acc + (Number(p.currentBalance) || 0), 0)
+
+      let siteTotalAllocated = 0
+      if (siteInventories.length > 0) {
+        siteTotalAllocated = siteInventories.reduce(
+          (sum, s) => sum + (Number(s.availableCount ?? s.currentBalance ?? s.count) || 0),
+          0
+        )
+      } else if (matchedPools.length > 0) {
+        siteTotalAllocated = matchedPools.reduce(
+          (acc, p) => acc + (Number(p.availableCount ?? p.currentBalance ?? p.count) || 0),
+          0
+        )
       }
 
       const totalAvailableCount = Number(
         w.totalAvailableCount ?? (centralQty + siteTotalAllocated)
       )
 
+      const currentUnitPrice = Number(w.unitPrice ?? existing.unitPrice ?? 0)
+
       const mergedSiteBreakdown = siteInventories.length > 0
-        ? siteInventories.map((s) => ({
-            siteId: s.siteId,
-            siteName: s.siteName || s.siteId,
-            currentBalance: Number(s.availableCount ?? s.count) || 0,
-            count: Number(s.count) || 0,
-            availableCount: Number(s.availableCount ?? s.count) || 0,
-            updatedAt: s.updatedAt,
-          }))
-        : matchedPools.map((p) => ({
-            siteId: p.siteId,
-            siteName: p.siteName || p.siteId,
-            currentBalance: Number(p.currentBalance) || 0,
-            availableCount: Number(p.currentBalance) || 0,
-            updatedAt: p.updatedAt,
-          }))
+        ? siteInventories.map((s) => {
+            const res = resolveSite(s.siteId, s.siteName, sites)
+            const countVal = Number(s.availableCount ?? s.currentBalance ?? s.count ?? 0)
+            return {
+              siteId: res.siteId,
+              siteCode: res.siteCode,
+              siteName: res.siteName,
+              projectName: res.projectName,
+              label: res.label,
+              availableCount: countVal,
+              currentBalance: countVal,
+              count: countVal,
+              totalAllocated: Number(s.totalAllocated ?? countVal),
+              totalConsumed: Number(s.totalConsumed ?? 0),
+              totalValuation: countVal * currentUnitPrice,
+              updatedAt: s.updatedAt || s.lastUpdated,
+            }
+          })
+        : matchedPools.map((p) => {
+            const res = resolveSite(p.siteId, p.siteName, sites)
+            const countVal = Number(p.availableCount ?? p.currentBalance ?? p.count ?? 0)
+            const rateVal = Number(p.unitPrice ?? currentUnitPrice)
+            return {
+              siteId: res.siteId,
+              siteCode: res.siteCode,
+              siteName: res.siteName,
+              projectName: res.projectName,
+              label: res.label,
+              availableCount: countVal,
+              currentBalance: countVal,
+              count: countVal,
+              totalAllocated: Number(p.totalAllocated ?? countVal),
+              totalConsumed: Number(p.totalConsumed ?? 0),
+              totalValuation: Number(p.totalValuation ?? (countVal * rateVal)),
+              updatedAt: p.updatedAt || p.lastUpdated,
+            }
+          })
 
       itemMap.set(cleanName, {
         ...existing,
@@ -190,7 +236,7 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
         siteTotalAllocated: Math.max(0, siteTotalAllocated),
         totalAvailableCount: Math.max(0, totalAvailableCount),
         minReorder: Number(w.minReorder || existing.minReorder || 20),
-        unitPrice: Number(w.unitPrice || existing.unitPrice || 0),
+        unitPrice: currentUnitPrice,
         siteBreakdown: mergedSiteBreakdown,
         siteInventories: mergedSiteBreakdown,
         lastupdated: w.lastupdated || w.updatedAt || existing.lastupdated,
@@ -198,7 +244,7 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
     })
 
     return Array.from(itemMap.values())
-  }, [materials, warehouseStock, sitePools])
+  }, [materials, warehouseStock, sitePools, sites])
 
   // Computed metrics
   const totalCentralWarehouseUnits = useMemo(() => {
@@ -231,9 +277,86 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
     })
   }, [consolidatedTelemetry, searchQuery, filterState])
 
+  // Direct Site Material Allocation Handlers (Flow 2)
+  const handleOpenAllocateModal = (presetMaterial = null) => {
+    if (normalizedSites.length > 0) {
+      setAllocSiteId(normalizedSites[0].siteId || normalizedSites[0].id)
+    }
+    if (presetMaterial) {
+      setAllocMatName(presetMaterial.displayName || presetMaterial.materialName)
+      setAllocRate(String(presetMaterial.unitPrice || ''))
+    } else if (consolidatedTelemetry.length > 0) {
+      const firstMat = consolidatedTelemetry[0]
+      setAllocMatName(firstMat.displayName || firstMat.materialName)
+      setAllocRate(String(firstMat.unitPrice || ''))
+    }
+    setAllocQty('10')
+    setAllocRemarks('Direct site allocation from Manager')
+    setAllocDate(new Date().toISOString().split('T')[0])
+    setShowAllocateModal(true)
+  }
+
+  const handleAllocateSubmit = async (e) => {
+    e.preventDefault()
+    if (!orgId) return
+    if (!allocSiteId) {
+      onNotify?.('Please select a destination project site', 'error')
+      return
+    }
+    if (!allocMatName) {
+      onNotify?.('Please select a material', 'error')
+      return
+    }
+    const qty = Number(allocQty)
+    if (isNaN(qty) || qty <= 0) {
+      onNotify?.('Quantity must be greater than 0', 'error')
+      return
+    }
+
+    const selectedSite = normalizedSites.find((s) => s.siteId === allocSiteId || s.id === allocSiteId)
+    const selectedMat = consolidatedTelemetry.find(
+      (m) => (m.displayName || m.materialName).toLowerCase() === allocMatName.toLowerCase()
+    )
+
+    const unitRate = Number(allocRate) || selectedMat?.unitPrice || 0
+    const totalAmount = qty * unitRate
+
+    setSubmittingAlloc(true)
+    try {
+      await allocateMaterialToSite(
+        orgId,
+        {
+          siteId: selectedSite?.siteId || allocSiteId,
+          siteCode: selectedSite?.siteCode || '',
+          siteName: selectedSite?.siteName || selectedSite?.label || allocSiteId,
+          projectName: selectedSite?.projectName || selectedSite?.siteName || '',
+          materialId: selectedMat?.id || selectedMat?.materialId || '',
+          materialName: allocMatName,
+          quantity: qty,
+          unit: selectedMat?.unitStr || 'Units',
+          unitRate,
+          amount: totalAmount,
+          allocationDate: allocDate,
+          remarks: allocRemarks,
+          deductFromWarehouse: true,
+        },
+        currentUser
+      )
+
+      onNotify?.(`Successfully allocated ${qty} ${selectedMat?.unitStr || 'Units'} to ${selectedSite?.siteName || allocSiteId}!`, 'success')
+      setShowAllocateModal(false)
+      loadData()
+    } catch (err) {
+      console.error(err)
+      onNotify?.(err.message || 'Failed to allocate material to site', 'error')
+    } finally {
+      setSubmittingAlloc(false)
+    }
+  }
+
   const handleOpenRequisition = (mat) => {
     setRequisitionMaterial(mat)
-    if (sites.length > 0) setReqSiteId(sites[0].id)
+    if (normalizedSites.length > 0) setReqSiteId(normalizedSites[0].siteId || normalizedSites[0].id)
     setReqQty(String(mat.minReorder || '50'))
     setReqUrgency('High')
   }
@@ -248,12 +371,14 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
 
     setSubmittingReq(true)
     try {
-      const site = sites.find((s) => s.id === reqSiteId)
+      const site = normalizedSites.find((s) => s.siteId === reqSiteId || s.id === reqSiteId)
       await createMaterialRequest(
         orgId,
         {
-          siteId: reqSiteId,
+          siteId: site?.siteId || reqSiteId,
+          siteCode: site?.siteCode || '',
           siteName: site?.siteName || site?.projectName || 'Primary Site',
+          projectName: site?.projectName || '',
           materialId: requisitionMaterial.id || requisitionMaterial.materialId,
           materialName: requisitionMaterial.displayName || requisitionMaterial.materialName,
           category: requisitionMaterial.category || 'General',
@@ -289,6 +414,16 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
           <p className="text-sm text-slate-500 mt-1">
             Real-time replenishment monitoring across Central Warehouse and On-Site Project Pools with threshold alerts.
           </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => handleOpenAllocateModal()}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#0B3470] text-white hover:bg-blue-800 text-xs font-bold transition-all shadow-xs cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Direct Site Allocation</span>
+          </button>
         </div>
       </div>
 
@@ -706,12 +841,15 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
                   No active project sites currently hold inventory for this material.
                 </p>
               ) : (
-                <div className="border border-slate-200 rounded-xl overflow-hidden max-h-60 overflow-y-auto">
+                <div className="border border-slate-200 rounded-xl overflow-hidden max-h-72 overflow-y-auto">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-slate-50 border-b border-slate-200 font-semibold text-slate-600">
                       <tr>
                         <th className="py-2.5 px-3">Site ID & Site Name</th>
-                        <th className="py-2.5 px-3 text-right">Available Stock</th>
+                        <th className="py-2.5 px-2 text-right">Inward Allocated</th>
+                        <th className="py-2.5 px-2 text-right">Consumed</th>
+                        <th className="py-2.5 px-2 text-right">Available Stock</th>
+                        <th className="py-2.5 px-3 text-right">Valuation (₹)</th>
                         <th className="py-2.5 px-3 text-right">Updated At</th>
                       </tr>
                     </thead>
@@ -719,14 +857,35 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
                       {inspectMaterial.siteInventories.map((siteItem, idx) => (
                         <tr key={siteItem.siteId || idx} className="hover:bg-slate-50/70">
                           <td className="py-2.5 px-3">
-                            <div className="flex items-center gap-1.5">
-                              <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                              <strong className="font-semibold text-slate-900">{siteItem.siteName || siteItem.siteId}</strong>
-                              <span className="font-mono text-[10px] text-slate-400">({siteItem.siteId})</span>
+                            <div className="flex flex-col">
+                              <div className="flex items-center gap-1.5">
+                                <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                <strong className="font-semibold text-slate-900">{siteItem.siteName || siteItem.label || siteItem.siteId}</strong>
+                                {siteItem.siteCode && (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 font-mono">
+                                    {siteItem.siteCode}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-400">
+                                <span>ID: <code className="font-mono text-slate-600">{siteItem.siteId}</code></span>
+                                {siteItem.projectName && siteItem.projectName !== siteItem.siteName && (
+                                  <span>• Project: {siteItem.projectName}</span>
+                                )}
+                              </div>
                             </div>
                           </td>
-                          <td className="py-2.5 px-3 text-right font-black text-emerald-800">
-                            {(siteItem.availableCount ?? siteItem.count ?? siteItem.currentBalance ?? 0).toLocaleString()} {inspectMaterial.unitStr}
+                          <td className="py-2.5 px-2 text-right font-medium text-slate-700">
+                            {(siteItem.totalAllocated || 0).toLocaleString()} {inspectMaterial.unitStr}
+                          </td>
+                          <td className="py-2.5 px-2 text-right font-medium text-amber-700">
+                            {(siteItem.totalConsumed || 0).toLocaleString()} {inspectMaterial.unitStr}
+                          </td>
+                          <td className="py-2.5 px-2 text-right font-black text-emerald-800">
+                            {(siteItem.availableCount ?? siteItem.currentBalance ?? 0).toLocaleString()} {inspectMaterial.unitStr}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-bold text-slate-900">
+                            ₹{Number(siteItem.totalValuation || 0).toLocaleString('en-IN')}
                           </td>
                           <td className="py-2.5 px-3 text-right font-mono text-slate-400 text-[11px]">
                             {formatDate(siteItem.updatedAt)}
@@ -739,15 +898,178 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
               )}
             </div>
 
-            <div className="flex justify-end pt-3 border-t border-slate-100">
+            <div className="flex justify-between items-center pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  const targetMat = inspectMaterial
+                  setInspectMaterial(null)
+                  handleOpenAllocateModal(targetMat)
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 cursor-pointer"
+              >
+                + Allocate Stock to Another Site
+              </button>
               <button
                 type="button"
                 onClick={() => setInspectMaterial(null)}
-                className="px-5 py-2 rounded-xl text-xs font-bold bg-[#0B3470] text-white hover:bg-blue-800"
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-[#0B3470] text-white hover:bg-blue-800 cursor-pointer"
               >
                 Close Breakdown
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================================================= */}
+      {/* DIRECT SITE MATERIAL ALLOCATION MODAL (Flow 2: Manager Direct Allocation) */}
+      {/* ======================================================================================= */}
+      {showAllocateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+              <div>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 uppercase font-mono">
+                  Flow 2 · Direct Allocation
+                </span>
+                <h3 className="text-base font-bold text-slate-900 mt-1">Direct Material Allocation to Site</h3>
+                <p className="text-xs text-slate-500">Transfers inventory from Central Warehouse into the target Site's Material Pool.</p>
+              </div>
+              <button
+                onClick={() => setShowAllocateModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAllocateSubmit} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                  Destination Project Site *
+                </label>
+                <select
+                  required
+                  value={allocSiteId}
+                  onChange={(e) => setAllocSiteId(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 text-xs font-medium"
+                >
+                  {normalizedSites.map((s) => (
+                    <option key={s.id} value={s.siteId || s.id}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                  Material Item *
+                </label>
+                <select
+                  required
+                  value={allocMatName}
+                  onChange={(e) => {
+                    const nextName = e.target.value
+                    setAllocMatName(nextName)
+                    const m = consolidatedTelemetry.find(
+                      (item) => (item.displayName || item.materialName).toLowerCase() === nextName.toLowerCase()
+                    )
+                    if (m) setAllocRate(String(m.unitPrice || ''))
+                  }}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 text-xs font-medium"
+                >
+                  {consolidatedTelemetry.map((m) => (
+                    <option key={m.id} value={m.displayName || m.materialName}>
+                      {m.displayName || m.materialName} ({m.centralQty} {m.unitStr} available in depot)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                    Quantity to Allocate *
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="1"
+                    value={allocQty}
+                    onChange={(e) => setAllocQty(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 font-bold text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                    Standard Rate / Unit (₹)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={allocRate}
+                    onChange={(e) => setAllocRate(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 font-bold text-slate-900"
+                  />
+                </div>
+              </div>
+
+              {/* Total Calculation Card */}
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between text-xs">
+                <span className="font-semibold text-slate-600">Calculated Total Valuation:</span>
+                <span className="text-base font-black text-emerald-800">
+                  ₹{((Number(allocQty) || 0) * (Number(allocRate) || 0)).toLocaleString('en-IN')}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                    Allocation Date
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={allocDate}
+                    onChange={(e) => setAllocDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                    Manager Remarks
+                  </label>
+                  <input
+                    type="text"
+                    value={allocRemarks}
+                    onChange={(e) => setAllocRemarks(e.target.value)}
+                    placeholder="e.g. Inward for Foundation Phase 1"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 font-medium"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowAllocateModal(false)}
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl font-medium cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingAlloc}
+                  className="px-5 py-2 font-bold text-white bg-[#0B3470] hover:bg-[#082855] rounded-xl shadow-xs disabled:opacity-50 cursor-pointer"
+                >
+                  {submittingAlloc ? 'Allocating...' : 'Confirm Allocation'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -782,9 +1104,9 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
                   onChange={(e) => setReqSiteId(e.target.value)}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 text-xs font-medium"
                 >
-                  {sites.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.siteName || s.projectName}
+                  {normalizedSites.map((s) => (
+                    <option key={s.id} value={s.siteId || s.id}>
+                      {s.label}
                     </option>
                   ))}
                 </select>

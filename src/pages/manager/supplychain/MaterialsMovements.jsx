@@ -32,6 +32,7 @@ import {
   returnMaterialSiteToCompany,
   confirmMaterialMovementReceipt,
 } from '../../../services/materialService.js'
+import { resolveSite, getNormalizedSiteOptions, isSameSite } from '../../../utils/siteUtils.js'
 
 export default function MaterialsMovements({ orgId, sites = [], currentUser, onNotify }) {
   const [movements, setMovements] = useState([])
@@ -41,6 +42,11 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
   const [loading, setLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState('ALL') // 'ALL' | 'CompanyToSite' | 'SiteToSite' | 'SiteToCompany'
+
+  // Deduplicated Normalized Sites
+  const normalizedSites = useMemo(() => {
+    return getNormalizedSiteOptions(sites)
+  }, [sites])
 
   // Dispatch Engine Modal State
   const [showDispatchModal, setShowDispatchModal] = useState(false)
@@ -109,7 +115,7 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
     const map = {}
     warehouseStock.forEach((w) => {
       const name = (w.materialName || '').toLowerCase()
-      map[name] = Number(w.availableCount) || 0
+      map[name] = Number(w.companyAvailableCount ?? w.availableCount) || 0
     })
     return map
   }, [warehouseStock])
@@ -123,22 +129,25 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
     return warehouseAvailMap[name] ?? Number(mat.currentTotalStock ?? 0)
   }, [queueMatId, materials, warehouseAvailMap])
 
-  // Site pool stock lookup (for Mode 1 & 2)
+  // Site pool stock lookup (for Mode 1 & 2) - checking isSameSite and reading dual fields
   const fromSiteAvailableStock = useMemo(() => {
     if (!fromSiteId || !singleMatName) return 0
-    const pool = sitePools.find(
-      (p) =>
-        (p.siteId === fromSiteId || p.id?.startsWith(fromSiteId.toLowerCase())) &&
-        (p.materialName || '').toLowerCase() === singleMatName.toLowerCase()
-    )
-    return Number(pool?.currentBalance) || 0
-  }, [fromSiteId, singleMatName, sitePools])
+    const pool = sitePools.find((p) => {
+      const isMat = (p.materialName || '').trim().toLowerCase() === singleMatName.trim().toLowerCase()
+      if (!isMat) return false
+      return isSameSite(p.siteId || p.id, fromSiteId, sites)
+    })
+    return Number(pool?.availableCount ?? pool?.currentBalance ?? pool?.count ?? 0)
+  }, [fromSiteId, singleMatName, sitePools, sites])
 
   const handleOpenDispatchModal = () => {
-    if (sites.length > 0) {
-      setSelectedSiteId(sites[0].id)
-      setFromSiteId(sites[0].id)
-      if (sites.length > 1) setToSiteId(sites[1].id)
+    if (normalizedSites.length > 0) {
+      const firstId = normalizedSites[0].siteId || normalizedSites[0].id
+      setSelectedSiteId(firstId)
+      setFromSiteId(firstId)
+      if (normalizedSites.length > 1) {
+        setToSiteId(normalizedSites[1].siteId || normalizedSites[1].id)
+      }
     }
     if (materials.length > 0) {
       setQueueMatId(materials[0].id || materials[0].materialId)
@@ -217,10 +226,11 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
           return
         }
 
-        const targetSite = sites.find((s) => s.id === selectedSiteId)
+        const targetSite = normalizedSites.find((s) => s.siteId === selectedSiteId || s.id === selectedSiteId)
         await dispatchMaterialsToSite(orgId, {
-          toSiteId: selectedSiteId,
-          toSiteName: targetSite?.siteName || targetSite?.projectName || selectedSiteId,
+          toSiteId: targetSite?.siteId || selectedSiteId,
+          toSiteCode: targetSite?.siteCode || '',
+          toSiteName: targetSite?.siteName || targetSite?.label || selectedSiteId,
           projectName: targetSite?.projectName || targetSite?.siteName || '',
           managerName,
           supervisorName: supervisorName || 'Site Supervisor',
@@ -257,15 +267,17 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
           return
         }
 
-        const fromSite = sites.find((s) => s.id === fromSiteId)
-        const toSite = sites.find((s) => s.id === toSiteId)
+        const fromSite = normalizedSites.find((s) => s.siteId === fromSiteId || s.id === fromSiteId)
+        const toSite = normalizedSites.find((s) => s.siteId === toSiteId || s.id === toSiteId)
         const mat = materials.find((m) => (m.materialName || m.name) === singleMatName)
 
         await transferMaterialSiteToSite(orgId, {
-          fromSiteId,
-          fromSiteName: fromSite?.siteName || fromSite?.projectName || fromSiteId,
-          toSiteId,
-          toSiteName: toSite?.siteName || toSite?.projectName || toSiteId,
+          fromSiteId: fromSite?.siteId || fromSiteId,
+          fromSiteName: fromSite?.siteName || fromSite?.label || fromSiteId,
+          toSiteId: toSite?.siteId || toSiteId,
+          toSiteCode: toSite?.siteCode || '',
+          toSiteName: toSite?.siteName || toSite?.label || toSiteId,
+          projectName: toSite?.projectName || toSite?.siteName || '',
           materialName: singleMatName,
           quantity: qty,
           unit: mat?.materialUnit || mat?.unitName || mat?.unit || 'Bags',
@@ -290,12 +302,12 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
           return
         }
 
-        const fromSite = sites.find((s) => s.id === fromSiteId)
+        const fromSite = normalizedSites.find((s) => s.siteId === fromSiteId || s.id === fromSiteId)
         const mat = materials.find((m) => (m.materialName || m.name) === singleMatName)
 
         await returnMaterialSiteToCompany(orgId, {
-          fromSiteId,
-          fromSiteName: fromSite?.siteName || fromSite?.projectName || fromSiteId,
+          fromSiteId: fromSite?.siteId || fromSiteId,
+          fromSiteName: fromSite?.siteName || fromSite?.label || fromSiteId,
           materialName: singleMatName,
           quantity: qty,
           unit: mat?.materialUnit || mat?.unitName || mat?.unit || 'Bags',
@@ -475,8 +487,30 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
                               ? 'Site → Site'
                               : 'Site → Warehouse'}
                           </span>
-                          <p className="text-slate-500 font-medium mt-0.5">From: {item.from || item.fromSite}</p>
-                          <p className="font-bold text-slate-900">To: {item.toSiteName || item.toSite}</p>
+                          {(() => {
+                            const resFrom = resolveSite(item.fromSiteId || item.fromSite || item.from, item.fromSite || item.from, sites)
+                            const resTo = resolveSite(item.toSiteId || item.toSite, item.toSiteName || item.toSite, sites)
+                            return (
+                              <>
+                                <p className="text-slate-500 font-medium mt-0.5">
+                                  From: <span className="font-semibold text-slate-800">{resFrom.label}</span>
+                                  {resFrom.siteCode && (
+                                    <span className="ml-1 px-1 py-0.2 rounded text-[10px] bg-slate-100 font-mono text-slate-600">
+                                      {resFrom.siteCode}
+                                    </span>
+                                  )}
+                                </p>
+                                <p className="font-bold text-slate-900">
+                                  To: <span>{resTo.label}</span>
+                                  {resTo.siteCode && (
+                                    <span className="ml-1 px-1 py-0.2 rounded text-[10px] bg-blue-50 text-blue-700 font-mono">
+                                      {resTo.siteCode}
+                                    </span>
+                                  )}
+                                </p>
+                              </>
+                            )
+                          })()}
                         </div>
                       </td>
 
@@ -614,9 +648,9 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
                         onChange={(e) => setSelectedSiteId(e.target.value)}
                         className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-semibold"
                       >
-                        {sites.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.siteName || s.projectName || s.id}
+                        {normalizedSites.map((s) => (
+                          <option key={s.id} value={s.siteId || s.id}>
+                            {s.label}
                           </option>
                         ))}
                       </select>
@@ -727,9 +761,9 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
                         onChange={(e) => setFromSiteId(e.target.value)}
                         className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
                       >
-                        {sites.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.siteName || s.projectName || s.id}
+                        {normalizedSites.map((s) => (
+                          <option key={s.id} value={s.siteId || s.id}>
+                            {s.label}
                           </option>
                         ))}
                       </select>
@@ -745,9 +779,9 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
                         onChange={(e) => setToSiteId(e.target.value)}
                         className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
                       >
-                        {sites.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.siteName || s.projectName || s.id}
+                        {normalizedSites.map((s) => (
+                          <option key={s.id} value={s.siteId || s.id}>
+                            {s.label}
                           </option>
                         ))}
                       </select>
@@ -807,9 +841,9 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
                         onChange={(e) => setFromSiteId(e.target.value)}
                         className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
                       >
-                        {sites.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.siteName || s.projectName || s.id}
+                        {normalizedSites.map((s) => (
+                          <option key={s.id} value={s.siteId || s.id}>
+                            {s.label}
                           </option>
                         ))}
                       </select>

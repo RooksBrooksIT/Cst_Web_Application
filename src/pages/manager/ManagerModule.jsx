@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react'
 import { Link, NavLink, useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { useManagerDashboard } from '../../hooks/useManagerDashboard'
-import { useNotifications } from '../../context/NotificationContext'
+import { useNotifications } from '../../hooks/useNotifications'
 import NotificationDrawer from '../../components/common/NotificationDrawer'
 import logo from '../../assets/logo/FinalLogo.jpg'
 
