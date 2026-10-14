@@ -43,6 +43,10 @@ const initialData = {
   pettyCash: [],
   totalSiteExpensesPerDay: [],
   sitePayments: [],
+  projectStages: [],
+  materialsAvailability: [],
+  siteMaterialPool: [],
+  materialAllocations: [],
   subscription: null,
 }
 
@@ -84,6 +88,10 @@ const sources = [
   { key: 'expenses', col: 'expenses', legacy: 'site_expenses' },
   { key: 'totalSiteExpensesPerDay', col: 'totalSiteExpensesPerDay', legacy: null },
   { key: 'sitePayments', col: 'SitePayment', legacy: 'customer_payments' },
+  { key: 'projectStages', col: 'projectStages' },
+  { key: 'materialsAvailability', col: 'materialsAvailability' },
+  { key: 'siteMaterialPool', col: 'siteMaterialPool' },
+  { key: 'materialAllocations', col: 'materialAllocations' },
 ]
 
 export function useOrganizationDashboard(orgId) {
@@ -107,7 +115,15 @@ export function useOrganizationDashboard(orgId) {
           collection(db, 'organisation', orgId, col),
           (snapshot) => {
             if (cancelled) return
-            let items = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))
+            const seenIds = new Set()
+            const uniqueDocs = []
+            for (const d of snapshot.docs) {
+              if (!seenIds.has(d.id)) {
+                seenIds.add(d.id)
+                uniqueDocs.push({ ...d.data(), id: d.id })
+              }
+            }
+            let items = uniqueDocs
 
             // If empty, try legacy alias once
             if (items.length === 0 && legacy) {
@@ -115,7 +131,15 @@ export function useOrganizationDashboard(orgId) {
                 collection(db, 'organisation', orgId, legacy),
                 (legacySnap) => {
                   if (cancelled) return
-                  const legacyItems = legacySnap.docs.map((d) => ({ id: d.id, ...d.data() }))
+                  const legacySeen = new Set()
+                  const uniqueLegacyDocs = []
+                  for (const d of legacySnap.docs) {
+                    if (!legacySeen.has(d.id)) {
+                      legacySeen.add(d.id)
+                      uniqueLegacyDocs.push({ ...d.data(), id: d.id })
+                    }
+                  }
+                  const legacyItems = uniqueLegacyDocs
                   if (legacyItems.length > 0) {
                     nextData[key] = legacyItems
                     // Aliases
@@ -128,6 +152,10 @@ export function useOrganizationDashboard(orgId) {
                 () => {}
               )
               cleanups.push(legacyUnsub)
+            }
+
+            if (key === 'projectStages') {
+              items.sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0))
             }
 
             nextData[key] = items

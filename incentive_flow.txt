@@ -1,0 +1,544 @@
+================================================================================
+                    INCENTIVE FLOW: FRONTEND & BACKEND SPECIFICATION
+================================================================================
+Project: Construction Management System (Ideal CST / eBricks)
+Author: Antigravity AI
+Date: 2026-10-09
+File Format: Plain Text (.txt)
+
+--------------------------------------------------------------------------------
+TABLE OF CONTENTS
+--------------------------------------------------------------------------------
+1. EXECUTIVE OVERVIEW
+2. HIGH-LEVEL ARCHITECTURE & COMPONENT MAP
+3. FRONTEND FLOW (STEP-BY-STEP)
+   3.1 Navigation & Entry Points
+   3.2 Screen 1: Site & Stage Selection (IncentiveCalculation)
+   3.3 Screen 2: Calculation & Approval Sheet (IncentiveCalculationSheet)
+   3.4 UI State Management & User Interactions
+   3.5 Downstream UI Reports & Analytics Integration
+4. BACKEND & FIRESTORE DATABASE FLOW
+   4.1 Read Queries & Dependency Data Sources
+   4.2 Database Collections & Data Schemas
+   4.3 Persistence & Multi-Document Write Operations
+   4.4 ExpenseService Aggregation & Rollup Engine
+   4.5 Atomic Firestore Transaction & Project Financial Sync
+5. MATHEMATICAL FORMULAS & CALCULATION LOGIC
+6. EDGE CASES, GUARDS & ERROR HANDLING
+7. END-TO-END WORKFLOW SUMMARY CHEATSHEET
+
+
+================================================================================
+1. EXECUTIVE OVERVIEW
+================================================================================
+The Incentive Management System is designed to reward Site Supervisors when a
+construction project stage is completed under the approved labour budget.
+
+Key Objectives:
+- Compare planned/approved labor costs against actual labor costs incurred during
+  a specific project stage.
+- Accurately calculate cost savings achieved by efficient site supervision.
+- Allow management/organization to apply a customizable incentive percentage
+  (0% - 100%) to the savings.
+- Formally record the incentive payout as a verified expense in Firestore.
+- Atomically roll up the incentive expense into the overall site expenses
+  and synchronize the project financial balance (Amount Spent vs Remaining Balance).
+
+
+================================================================================
+2. HIGH-LEVEL ARCHITECTURE & COMPONENT MAP
+================================================================================
+
++------------------------------------------------------------------------------+
+|                                FRONTEND (FLUTTER)                            |
++------------------------------------------------------------------------------+
+|                                                                              |
+|  [Entry Point]                                                               |
+|  - Organization Dashboard / Insights Dashboard / Approvals Menu              |
+|          |                                                                   |
+|          v                                                                   |
+|  [Screen 1: IncentiveCalculation]                                            |
+|  - Loads active Sites, Supervisors, and Project Stages                       |
+|  - User selects Site ID -> Auto-resolves Supervisor -> Selects Stage         |
+|  - Form validation -> Navigates to Calculation Sheet                         |
+|          |                                                                   |
+|          v                                                                   |
+|  [Screen 2: IncentiveCalculationSheet]                                       |
+|  - Queries planned schedules vs actual site stage executions                 |
+|  - Renders Labour Comparison Grid (Requested vs Approved vs Actual)          |
+|  - Displays Financial Summary Cards (Approved, Actual, Saved Amount)         |
+|  - Interactive Percentage Slider (0% - 100%) -> Live preview of Incentive    |
+|  - Validates positive incentive -> Calls Save                                |
+|          |                                                                   |
++----------|-------------------------------------------------------------------+
+           |
+           | Writes Firestore Documents & triggers ExpenseService
+           v
++------------------------------------------------------------------------------+
+|                         BACKEND SERVICES & FIRESTORE                         |
++------------------------------------------------------------------------------+
+|                                                                              |
+|  Step A: Save Individual Incentive Audit Document                            |
+|          Collection: 'siteSupervisorIncentives'                              |
+|          Doc ID: '{siteId}_{supervisor}_{projectStage}'                      |
+|                                                                              |
+|  Step B: Set Daily/Site Incentive Expense                                    |
+|          Collection: 'totalSiteExpensesPerDay'                               |
+|          Doc ID: '{siteId}' -> 'totalIncentiveExpenses'                      |
+|                                                                              |
+|  Step C: Trigger ExpenseService.updateTotalSiteExpense(siteId)               |
+|          - Sums Supervisor Expenses ('siteSupervisorEntries')                |
+|          - Sums Manager Expenses ('managerEntries' / bills)                  |
+|          - Sums Organization Expenses ('organizationExpenses')               |
+|          - Sums Contractor Expenses ('contractorEntries')                    |
+|          - Sums Incentive Expenses ('siteSupervisorIncentives')              |
+|                                                                              |
+|  Step D: Atomic Firestore Transaction                                        |
+|          - Upserts 'totalSiteExpensesPerDay/{siteId}' with all category      |
+|            subtotals and 'totalAllExpenses'.                                 |
+|          - Queries 'projects' collection for matching siteId.                |
+|          - Calculates: amountBalance = amountPaid - totalAllExpenses.        |
+|          - Updates project 'amountSpent' and 'amountBalance' with timestamp. |
+|                                                                              |
++----------|-------------------------------------------------------------------+
+           |
+           | Real-time streams & fresh queries
+           v
++------------------------------------------------------------------------------+
+|                         DOWNSTREAM REPORTING UI                              |
++------------------------------------------------------------------------------+
+|  - Site Summary Page (Displays Incentive Expenses Card & PDF Export)         |
+|  - Project Screen (Displays totalIncentiveExpenses in budget breakdown)      |
+|  - Project Stage Site Summary Report (Supervisor incentive items)            |
+|  - Financial Status Reports                                                  |
++------------------------------------------------------------------------------+
+
+
+================================================================================
+3. FRONTEND FLOW (STEP-BY-STEP)
+================================================================================
+
+3.1 NAVIGATION & ENTRY POINTS
+-----------------------------
+Access to the Incentive Calculation feature is available to Management and
+Organization users via:
+1. Organization Dashboard (Organization_Dashboard.dart):
+   - Grid tile / action button triggers:
+     _navigateToIncentiveCaliculation(context) -> IncentiveCalculation()
+2. Insights Dashboard (insights_dashboard.dart):
+   - "Incentive Calculation" card under Analytics & Reports navigates to
+     IncentiveCalculation().
+3. Organization Approvals Menu (org_approvals_menu_page.dart):
+   - "Incentive Calculation" menu item under Approvals navigates to
+     IncentiveCalculation().
+
+
+3.2 SCREEN 1: SITE & STAGE SELECTION (incentive_calculation.dart)
+-----------------------------------------------------------------
+Role: Setup and parameter selection form.
+
+Flow Details:
+1. initState():
+   - Executes _fetchSiteSupervisorData().
+   - Queries 'siteSupervisorEntries' collection from Firestore.
+   - Extracts:
+     * Distinct siteIds set
+     * Mapping of siteId -> supervisorId (supervisorName)
+     * Mapping of siteId -> Set of projectStages recorded for that site
+   - Populates state variables: _siteIds, _siteSupervisors, _siteProjectStages.
+   - Turns off loading spinner (_loading = false).
+
+2. User Selection:
+   a. Site ID Dropdown:
+      - User selects a Site ID from _siteIds.
+      - onChanged callback triggers:
+        * Sets _selectedSiteId = newValue.
+        * Looks up _supervisorName = _siteSupervisors[newValue].
+        * Filters _filteredProjectStages = _siteProjectStages[newValue].
+        * Resets _selectedProjectStage = null.
+   b. Supervisor Name Field:
+      - Read-only TextFormField displaying _supervisorName.
+      - Automatically populated, eliminating manual input errors.
+   c. Project Stage Dropdown:
+      - Populated only with stages relevant to the selected site.
+      - User selects the specific stage to evaluate.
+
+3. Form Actions:
+   - "Calculate" Button:
+     * Executes _formKey.currentState!.validate().
+     * Upon validation, pushes MaterialPageRoute to:
+       IncentiveCalculationSheet(
+         siteId: _selectedSiteId,
+         supervisor: _supervisorName,
+         projectStage: _selectedProjectStage,
+       )
+   - "Reset" Button: Clears selections and resets form state.
+   - "Cancel" Button: Pops navigator back to previous screen.
+
+
+3.3 SCREEN 2: CALCULATION & APPROVAL SHEET (incentive_calculation_sheet.dart)
+-----------------------------------------------------------------------------
+Role: Detailed financial analysis, labor breakdown, interactive incentive slider,
+and confirmation screen.
+
+Flow Details:
+1. Data Fetching (initState -> _fetchLabourData):
+   - Two concurrent queries are dispatched:
+     Query 1: 'siteSupervisorProjectStageSchedule'
+              where('siteId', isEqualTo: siteId)
+              where('projectStage', isEqualTo: projectStage)
+              limit(1)
+     Query 2: 'siteSupervisorProjectStageActual'
+              where('siteId', isEqualTo: siteId)
+              where('projectStage', isEqualTo: projectStage)
+              limit(1)
+
+2. Data Processing & Computation:
+   - Schedule Document:
+     * reqLabours list (Requested labor roles and counts)
+     * appLabours list (Approved labor roles and counts)
+     * estimatedPayment (Total estimated payment in ₹)
+     * approvedPayment (Total approved budget in ₹)
+     * reqDays (Planned duration in days)
+     * appDays (Approved duration in days)
+   - Actual Document:
+     * actLabours list (Actual labor roles and counts deployed)
+     * actDays (Actual duration in days taken)
+     * actPayment (Per-day actual payment rate in ₹)
+   - Computed Values:
+     * actualTotal = actDays * actPayment (Total actual cost in ₹)
+     * savedAmount = math.max(approvedTotal - actualTotal, 0)
+     (Ensures negative savings do not create negative incentives)
+
+3. UI Rendering & Components:
+   - Guard Check: If requestedDays == 0 || approvedDays == 0 || actualDays == 0,
+     the sheet presents a clear notice: "Request is not available for this site."
+   - Header Cards:
+     * Site ID, Project Stage, and Supervisor Name.
+     * Duration Badges: Requested Days | Approved Days | Actual Days.
+   - Labour Breakdown Table:
+     * Lists each labour designation (e.g. Mason, Helper, Carpenter).
+     * Displays columns: Labour Type | Requested | Approved | Actual.
+   - Financial Summary Cards:
+     * Card 1: Estimated Payment (₹)
+     * Card 2: Approved Payment (₹)
+     * Card 3: Actual Payment (₹)
+     * Card 4: Savings Amount (₹) [Highlighted in green]
+   - Interactive Incentive Slider:
+     * Range: 0% to 100% (default: 10%).
+     * Dynamic label showing selected percentage.
+     * Real-time calculation:
+       Incentive Amount = savedAmount * (percentage / 100)
+     * Display badge: Prominently renders final incentive in Indian Rupees (₹).
+
+4. Save & Confirmation Flow (_save):
+   - Pre-save Validation:
+     * Checks if amountToAdd <= 0.
+     * If incentive is 0, displays SnackBar: "Incentive amount must be greater than 0"
+       and halts execution.
+   - Execution:
+     * Generates document ID: '{siteId}_{supervisor}_{projectStage}'.
+     * Writes document to 'siteSupervisorIncentives' collection.
+     * Updates 'totalSiteExpensesPerDay' document for siteId.
+     * Awaits ExpenseService.updateTotalSiteExpense(siteId) to recalculate all totals.
+     * Displays success SnackBar: "Data saved successfully".
+   - Unsaved Changes Protection:
+     * WillPopScope / PopScope intercepts back navigation.
+     * Displays modal dialog asking user to confirm leaving if unsaved.
+
+
+3.4 DOWNSTREAM UI REPORTS & ANALYTICS INTEGRATION
+-------------------------------------------------
+Once saved, the incentive data automatically surfaces in multiple app views:
+
+1. Site Summary Page (site_summary_page.dart):
+   - Method: fetchContractorAndIncentiveExpenses()
+   - Reads 'totalIncentiveExpenses' from 'totalSiteExpensesPerDay/{siteId}'.
+   - Renders "Incentive Expenses" metric card.
+   - Includes incentive in "Total Site Expenses" calculation.
+   - Embeds "Incentive Expenses" row in the generated PDF summary report.
+
+2. Project Screen (project_screen.dart):
+   - Reads 'totalIncentiveExpenses' from site expense document.
+   - Incorporates the figure into the total site expenditure summary.
+
+3. Project Stage Site Summary Report (projectStage_site_summary_report.dart):
+   - Queries 'siteSupervisorIncentives' filtered by siteId.
+   - Renders dedicated "_buildIncentiveExpensesSection" widget.
+   - Shows line-item list of incentives awarded by supervisor and stage.
+
+
+================================================================================
+4. BACKEND & FIRESTORE DATABASE FLOW
+================================================================================
+
+4.1 DATABASE COLLECTIONS & SCHEMAS
+----------------------------------
+
+1. Collection: 'siteSupervisorProjectStageSchedule'
+   Purpose: Stores stage schedules planned by supervisor and approved by management.
+   Fields:
+   - siteId (String)                  : Identifier of the site.
+   - projectStage (String)            : Construction stage name.
+   - reqDays (int)                    : Requested working days.
+   - appDays (int)                    : Management approved days.
+   - estimatedPayment (double / num)  : Estimated labor budget.
+   - approvedPayment (double / num)   : Approved labor budget ceiling.
+   - reqLabours (List<Map>)           : Requested labor counts per designation.
+   - appLabours (List<Map>)           : Approved labor counts per designation.
+
+2. Collection: 'siteSupervisorProjectStageActual'
+   Purpose: Stores actual stage completion data submitted from the field.
+   Fields:
+   - siteId (String)                  : Identifier of the site.
+   - projectStage (String)            : Construction stage name.
+   - actDays (int)                    : Actual days taken to complete stage.
+   - actPayment (double / num)        : Actual daily labor rate / daily payment.
+   - actLabours (List<Map>)           : Actual labor counts deployed.
+
+3. Collection: 'siteSupervisorIncentives'
+   Purpose: Primary audit trail of authorized supervisor incentive payouts.
+   Document ID Convention: '${siteId}_${supervisorName}_${projectStage}'
+   Fields:
+   - siteId (String)                  : Identifier of the site.
+   - projectName (String)             : Project identifier / name.
+   - projectStage (String)            : Stage for which incentive is awarded.
+   - supervisorName (String)          : Name of recipient supervisor.
+   - estimatedAmount (double)         : Initial estimated amount.
+   - approvedAmount (double)          : Approved labor budget.
+   - actualAmount (double)            : Actual cost incurred.
+   - savedAmount (double)             : Net budget savings (approved - actual).
+   - incentivePercentage (int)        : Approved percentage rate (e.g., 10).
+   - incentiveAmount (double)         : Net incentive payout in ₹.
+   - updatedAt (FieldValue)           : Server timestamp.
+
+4. Collection: 'totalSiteExpensesPerDay'
+   Purpose: Aggregated expense roll-up document per construction site.
+   Document ID Convention: '${siteId}'
+   Fields:
+   - siteId (String)                  : Identifier of the site.
+   - totalSiteExpense (double)        : Supervisor field expenses.
+   - totalMgrExpense (double)         : Manager approved expenses.
+   - totalOrgExpense (double)         : Organization level expenses.
+   - totalContractorExpense (double)  : Contractor payments.
+   - totalIncentiveExpenses (double)  : Total supervisor incentives paid.
+   - totalAllExpenses (double)        : Sum of all 5 expense categories.
+   - updatedAt (FieldValue)           : Server timestamp.
+
+5. Collection: 'projects'
+   Purpose: Master project financial ledger.
+   Document ID: Auto-ID or Site Code.
+   Fields:
+   - siteId (String)                  : Corresponding site identifier.
+   - amountPaid (double)              : Total funds paid by client / allocated.
+   - amountSpent (double)             : Synced totalAllExpenses.
+   - amountBalance (double)           : Remaining balance (amountPaid - amountSpent).
+   - updatedAt (FieldValue)           : Server timestamp.
+
+
+4.2 BACKEND WRITE OPERATIONS (SEQUENCE)
+---------------------------------------
+
+When the user taps "Save" on the Incentive Sheet:
+
+Write 1: Save Detailed Audit Record
+------------------------------------
+Firestore Reference:
+FirebaseFirestore.instance
+    .collection('siteSupervisorIncentives')
+    .doc('${siteId}_${supervisor}_${projectStage}')
+
+Payload:
+{
+  'siteId': siteId,
+  'projectName': siteId,
+  'projectStage': projectStage,
+  'supervisorName': supervisor,
+  'actualAmount': actualTotal,
+  'approvedAmount': approvedTotal,
+  'estimatedAmount': requestedTotal,
+  'savedAmount': savedAmount,
+  'incentivePercentage': incentivePercentage.round(),
+  'incentiveAmount': amountToAdd,
+  'updatedAt': FieldValue.serverTimestamp()
+}
+Options: SetOptions(merge: true)
+
+
+Write 2: Update Site Expense Document
+-------------------------------------
+Firestore Reference:
+FirebaseFirestore.instance
+    .collection('totalSiteExpensesPerDay')
+    .doc(siteId)
+
+Payload:
+{
+  'totalIncentiveExpenses': amountToAdd,
+  'updatedAt': FieldValue.serverTimestamp()
+}
+Options: SetOptions(merge: true)
+
+
+Write 3: Aggregation & Project Financial Sync (ExpenseService)
+--------------------------------------------------------------
+The client invokes:
+await ExpenseService.updateTotalSiteExpense(siteId);
+
+This delegates to ExpenseService.recalcTotalsAndSyncProject(siteId):
+
+1. Asynchronous Aggregation Queries:
+   - _sumSupervisorExpenses(siteId)
+     Iterates 'siteSupervisorEntries' where siteId == siteId -> sums totalAmount.
+   - _sumManagerExpenses(siteId)
+     Iterates manager bills where siteId == siteId -> sums amount.
+   - _sumOrganizationExpenses(siteId)
+     Iterates 'organizationExpenses' where siteId == siteId -> sums amount.
+   - _sumContractorExpenses(siteId)
+     Iterates 'contractorEntries' where siteId == siteId -> sums totalAmount.
+   - _sumIncentiveExpenses(siteId)
+     Iterates 'siteSupervisorIncentives' where siteId == siteId -> sums incentiveAmount.
+
+2. Total Calculation:
+   totalAllExpenses = supervisorTotal +
+                      managerTotal +
+                      organizationTotal +
+                      contractorTotal +
+                      incentiveTotal
+
+3. Atomic Firestore Transaction (firestore.runTransaction):
+   a. Reads:
+      - Reads 'projects' document where siteId == siteId (if found).
+      - Reads amountPaid from project document.
+   b. Computations:
+      - amountBalance = amountPaid - totalAllExpenses.
+   c. Atomic Writes:
+      - Set 'totalSiteExpensesPerDay/{siteId}':
+        {
+          'siteId': siteId,
+          'totalSiteExpense': supervisorTotal,
+          'totalMgrExpense': managerTotal,
+          'totalOrgExpense': organizationTotal,
+          'totalContractorExpense': contractorTotal,
+          'totalIncentiveExpenses': incentiveTotal,
+          'totalAllExpenses': totalAllExpenses,
+          'updatedAt': FieldValue.serverTimestamp(),
+        } (merge: true)
+
+      - If project exists, updates 'projects/{projectId}':
+        {
+          'amountSpent': totalAllExpenses,
+          'amountBalance': amountBalance,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }
+
+
+================================================================================
+5. MATHEMATICAL FORMULAS & CALCULATION LOGIC
+================================================================================
+
+1. Actual Total Expenditure:
+   Actual Total = Actual Days * Daily Actual Rate
+   Formula:
+   actualTotal = actDays * actPayment
+
+2. Budget Savings:
+   Savings = Approved Budget - Actual Total
+   (Clamped to 0 to prevent negative savings from creating penalties)
+   Formula:
+   savedAmount = max(approvedTotal - actualTotal, 0)
+
+3. Incentive Payout:
+   Incentive = Savings * (Incentive Percentage / 100)
+   Formula:
+   incentiveAmount = savedAmount * (incentivePercentage / 100)
+
+4. Total Site Expenditure:
+   Total Site Expenses = Supervisor Expenses
+                       + Manager Expenses
+                       + Organization Expenses
+                       + Contractor Expenses
+                       + Incentive Expenses
+   Formula:
+   totalAllExpenses = supervisorTotal + managerTotal + orgTotal + contractorTotal + incentiveTotal
+
+5. Remaining Project Balance:
+   Remaining Balance = Client Funds Paid - Total Expenses Incurred
+   Formula:
+   amountBalance = amountPaid - totalAllExpenses
+
+---
+CONCRETE NUMERICAL EXAMPLE:
+---------------------------
+- Planned / Approved Stage Payment : ₹ 1,00,000
+- Actual Days Taken                : 10 days
+- Actual Payment Rate Per Day      : ₹ 8,000
+- Computed Actual Total            : 10 * 8,000 = ₹ 80,000
+- Savings Achieved                 : ₹ 1,00,000 - ₹ 80,000 = ₹ 20,000
+- Selected Incentive Rate          : 15%
+- Incentive Payout to Supervisor   : 20,000 * 0.15 = ₹ 3,000
+
+Financial Rollup:
+- Previous All Expenses            : ₹ 5,00,000
+- New Total All Expenses           : ₹ 5,03,000
+- Client Amount Paid               : ₹ 10,00,000
+- New Project Amount Balance       : ₹ 10,00,000 - ₹ 5,03,000 = ₹ 4,97,000
+
+
+================================================================================
+6. EDGE CASES, GUARDS & ERROR HANDLING
+================================================================================
+
+1. Zero or Negative Savings (Cost Overrun):
+   - Condition: actualTotal >= approvedTotal
+   - Handling: savedAmount is clamped using math.max(..., 0).
+   - Result: savedAmount = 0, incentiveAmount = 0.
+   - Protection: If user attempts to save when incentive is 0, a SnackBar warns:
+     "Incentive amount must be greater than 0" and database write is prevented.
+
+2. Missing Schedule or Actual Submissions:
+   - Condition: reqDays == 0 || approvedDays == 0 || actualDays == 0
+   - Handling: The screen replaces the form with an informative empty state:
+     "Request is not available for this site." Prevents calculating against
+     incomplete stage records.
+
+3. Concurrency & Audit Integrity:
+   - The docId format '${siteId}_${supervisor}_${projectStage}' acts as a natural
+     composite primary key, preventing duplicate records for the same stage.
+   - SetOptions(merge: true) ensures existing metadata is preserved when updated.
+   - FieldValue.serverTimestamp() prevents client device clock skew.
+
+4. Orphaned Project Document Handling:
+   - If no project document is found in 'projects' matching siteId,
+     ExpenseService logs a warning and proceeds with updating
+     'totalSiteExpensesPerDay' without throwing an unhandled exception or
+     corrupting project records.
+
+5. Unsaved Changes Alert:
+   - PopScope / WillPopScope intercepts back button and navigation actions,
+     prompting an AlertDialog so users do not accidentally discard configured
+     incentive values.
+
+
+================================================================================
+7. END-TO-END WORKFLOW SUMMARY CHEATSHEET
+================================================================================
+
+Step | Component               | Layer    | Action & Data Transformation
+-----+-------------------------+----------+-------------------------------------------------------------
+1    | Org/Insights Dashboard  | Frontend | User clicks "Incentive Calculation".
+2    | IncentiveCalculation    | Frontend | Fetches site list & supervisors from 'siteSupervisorEntries'.
+3    | IncentiveCalculation    | Frontend | User selects Site ID -> auto-sets Supervisor & filtered stages.
+4    | IncentiveCalculationSheet| Frontend| Fetches planned schedule & actual logs for selected stage.
+5    | IncentiveCalculationSheet| Frontend| Computes actualTotal = actDays * actPayment; savedAmount = max(app - act, 0).
+6    | IncentiveCalculationSheet| Frontend| User adjusts percentage slider (0-100%); previews incentive in ₹.
+7    | IncentiveCalculationSheet| Frontend| User clicks "Save"; validates incentiveAmount > 0.
+8    | Firestore (Collection 1)| Backend  | Writes audit doc in 'siteSupervisorIncentives/${siteId}_${sup}_${stage}'.
+9    | Firestore (Collection 2)| Backend  | Updates 'totalIncentiveExpenses' in 'totalSiteExpensesPerDay/${siteId}'.
+10   | ExpenseService          | Backend  | Sums supervisor, manager, org, contractor, and incentive expenses.
+11   | Firestore (Transaction) | Backend  | Atomically writes 'totalSiteExpensesPerDay' and updates 'projects'.
+12   | Reports & Dashboards    | Frontend | Site Summary, Project Screen & PDF reports display updated totals.
+
+================================================================================
+                                END OF DOCUMENT
+================================================================================

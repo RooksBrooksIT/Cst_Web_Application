@@ -84,10 +84,10 @@ export default function ManagerPettyCashHub({
     fundType: 'INITIAL_FLOAT', // INITIAL_FLOAT | TOP_UP
   })
 
-  // 2. Request Review Modal (Verify & Forward or Reject)
+  // 2. Request Review Modal (Verify & Forward, Request Revision, or Reject)
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false)
   const [selectedRequest, setSelectedRequest] = useState(null)
-  const [reviewDecision, setReviewDecision] = useState('VERIFY') // VERIFY | REJECT
+  const [reviewDecision, setReviewDecision] = useState('VERIFY') // VERIFY | REVISION | REJECT
   const [reviewRemarks, setReviewRemarks] = useState('')
 
   // 3. Disburse Funds Modal
@@ -95,6 +95,7 @@ export default function ManagerPettyCashHub({
   const [disburseRequest, setDisburseRequest] = useState(null)
   const [disburseAmount, setDisburseAmount] = useState('')
   const [disburseMethod, setDisburseMethod] = useState('Cash')
+  const [disburseRef, setDisburseRef] = useState('')
   const [disburseRemarks, setDisburseRemarks] = useState('')
 
   // 4. Reject Expense Modal
@@ -162,7 +163,12 @@ export default function ManagerPettyCashHub({
 
   const pendingRequestsCount = useMemo(() => {
     return pettyCashRequests.filter(
-      (r) => r.status === PETTY_CASH_REQUEST_STATUS.PENDING_MANAGER_REVIEW
+      (r) =>
+        r.status === PETTY_CASH_REQUEST_STATUS.PENDING_MANAGER_REVIEW ||
+        r.status === 'PENDING_MANAGER_APPROVAL' ||
+        r.status === 'pending_manager_review' ||
+        r.status === 'SUBMITTED' ||
+        r.currentStep === 1
     ).length
   }, [pettyCashRequests])
 
@@ -170,7 +176,10 @@ export default function ManagerPettyCashHub({
     return pettyCashRequests.filter(
       (r) =>
         r.status === PETTY_CASH_REQUEST_STATUS.AWAITING_DISBURSEMENT ||
-        r.status === PETTY_CASH_REQUEST_STATUS.APPROVED
+        r.status === PETTY_CASH_REQUEST_STATUS.APPROVED ||
+        r.status === 'PENDING_ORG_DISBURSAL' ||
+        r.status === 'PENDING_DISBURSAL' ||
+        r.currentStep === 3
     ).length
   }, [pettyCashRequests])
 
@@ -244,9 +253,14 @@ export default function ManagerPettyCashHub({
     if (!selectedRequest || !orgId) return
     setActionLoading(true)
     try {
-      const decision = reviewDecision === 'VERIFY' ? 'VERIFY' : 'REJECT'
+      const decision = reviewDecision === 'VERIFY' ? 'VERIFY' : reviewDecision === 'REVISION' ? 'REVISION' : 'REJECT'
       await managerReviewRequest(orgId, selectedRequest.id, decision, reviewRemarks, managerActor)
-      showMessage('success', `Request ${selectedRequest.requestId || selectedRequest.id} marked as ${decision === 'VERIFY' ? 'Forwarded to HQ' : 'Rejected'}.`)
+      showMessage(
+        'success',
+        `Request ${selectedRequest.requestId || selectedRequest.id} marked as ${
+          decision === 'VERIFY' ? 'Forwarded to HQ' : decision === 'REVISION' ? 'Returned for Revision' : 'Rejected'
+        }.`
+      )
       setIsReviewModalOpen(false)
       setSelectedRequest(null)
       setReviewRemarks('')
@@ -267,11 +281,12 @@ export default function ManagerPettyCashHub({
     }
     setActionLoading(true)
     try {
-      await managerDisburseFunds(orgId, disburseRequest.id, amt, disburseMethod, disburseRemarks, managerActor)
+      await managerDisburseFunds(orgId, disburseRequest.id, amt, disburseMethod, disburseRef, disburseRemarks, managerActor)
       showMessage('success', `Funds of ${money(amt)} disbursed via ${disburseMethod}. Awaiting field confirmation.`)
       setIsDisburseModalOpen(false)
       setDisburseRequest(null)
       setDisburseAmount('')
+      setDisburseRef('')
       setDisburseRemarks('')
     } catch (err) {
       showMessage('error', err.message || 'Failed to disburse funds.')
@@ -723,14 +738,14 @@ export default function ManagerPettyCashHub({
                   <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                     <span>Supervisor Requests Pending Manager Review</span>
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800">
-                      {filteredRequests.filter((r) => r.status === PETTY_CASH_REQUEST_STATUS.PENDING_MANAGER_REVIEW).length}
+                      {filteredRequests.filter((r) => r.status === PETTY_CASH_REQUEST_STATUS.PENDING_MANAGER_REVIEW || r.status === 'PENDING_MANAGER_APPROVAL' || r.status === 'pending_manager_review' || r.currentStep === 1).length}
                     </span>
                   </h3>
-                  <p className="text-xs text-slate-500">Step 2: Verify and recommend to HQ, or reject with feedback</p>
+                  <p className="text-xs text-slate-500">Step 2: Verify and recommend to HQ, request revision, or reject with feedback</p>
                 </div>
               </div>
 
-              {filteredRequests.filter((r) => r.status === PETTY_CASH_REQUEST_STATUS.PENDING_MANAGER_REVIEW).length === 0 ? (
+              {filteredRequests.filter((r) => r.status === PETTY_CASH_REQUEST_STATUS.PENDING_MANAGER_REVIEW || r.status === 'PENDING_MANAGER_APPROVAL' || r.status === 'pending_manager_review' || r.currentStep === 1).length === 0 ? (
                 <div className="p-6 rounded-xl bg-slate-50 border border-slate-200/80 text-center text-xs text-slate-500">
                   🎉 No supervisor requests currently awaiting manager review.
                 </div>
@@ -750,19 +765,19 @@ export default function ManagerPettyCashHub({
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {filteredRequests
-                        .filter((r) => r.status === PETTY_CASH_REQUEST_STATUS.PENDING_MANAGER_REVIEW)
+                        .filter((r) => r.status === PETTY_CASH_REQUEST_STATUS.PENDING_MANAGER_REVIEW || r.status === 'PENDING_MANAGER_APPROVAL' || r.status === 'pending_manager_review' || r.currentStep === 1)
                         .map((r) => (
                           <tr key={r.id} className="hover:bg-slate-50/70 transition-colors">
                             <td className="py-2.5 px-3 font-mono text-slate-700 font-bold">{r.requestId || r.id}</td>
                             <td className="py-2.5 px-3 font-semibold text-slate-900">{siteMap[r.siteId] || r.siteId}</td>
-                            <td className="py-2.5 px-3 text-slate-600">{r.requesterName || 'Field Supervisor'}</td>
+                            <td className="py-2.5 px-3 text-slate-600">{r.requesterName || r.supervisorName || 'Field Supervisor'}</td>
                             <td className="py-2.5 px-3 font-bold text-blue-700">{money(r.requestedAmount)}</td>
                             <td className="py-2.5 px-3 text-slate-600 max-w-xs truncate" title={r.reason}>
                               <span className="font-semibold text-slate-800 block text-[11px]">{r.expenseCategory || 'Site Operational Float'}</span>
                               {r.reason}
                             </td>
                             <td className="py-2.5 px-3 text-slate-500">{formatDate(r.createdAt || r.submittedAt)}</td>
-                            <td className="py-2.5 px-3 text-right">
+                            <td className="py-2.5 px-3 text-right whitespace-nowrap">
                               <div className="flex items-center justify-end gap-1.5">
                                 <button
                                   type="button"
@@ -772,9 +787,22 @@ export default function ManagerPettyCashHub({
                                     setReviewRemarks('')
                                     setIsReviewModalOpen(true)
                                   }}
-                                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
+                                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors cursor-pointer"
                                 >
-                                  ✓ Verify & Forward
+                                  ✓ Verify
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedRequest(r)
+                                    setReviewDecision('REVISION')
+                                    setReviewRemarks('')
+                                    setIsReviewModalOpen(true)
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 transition-colors cursor-pointer"
+                                  title="Request revision or price quotation from supervisor"
+                                >
+                                  ✎ Revise
                                 </button>
                                 <button
                                   type="button"
@@ -784,7 +812,7 @@ export default function ManagerPettyCashHub({
                                     setReviewRemarks('')
                                     setIsReviewModalOpen(true)
                                   }}
-                                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition-colors"
+                                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition-colors cursor-pointer"
                                 >
                                   ✕ Reject
                                 </button>
@@ -805,14 +833,14 @@ export default function ManagerPettyCashHub({
                   <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                     <span>HQ Authorized — Awaiting Manager Disbursement</span>
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-100 text-blue-800">
-                      {filteredRequests.filter((r) => r.status === PETTY_CASH_REQUEST_STATUS.AWAITING_DISBURSEMENT || r.status === PETTY_CASH_REQUEST_STATUS.APPROVED).length}
+                      {filteredRequests.filter((r) => r.status === PETTY_CASH_REQUEST_STATUS.AWAITING_DISBURSEMENT || r.status === PETTY_CASH_REQUEST_STATUS.APPROVED || r.status === 'PENDING_ORG_DISBURSAL' || r.status === 'PENDING_DISBURSAL' || r.currentStep === 3).length}
                     </span>
                   </h3>
                   <p className="text-xs text-slate-500">Step 4: HQ has approved. Manager hands over physical cash or executes transfer</p>
                 </div>
               </div>
 
-              {filteredRequests.filter((r) => r.status === PETTY_CASH_REQUEST_STATUS.AWAITING_DISBURSEMENT || r.status === PETTY_CASH_REQUEST_STATUS.APPROVED).length === 0 ? (
+              {filteredRequests.filter((r) => r.status === PETTY_CASH_REQUEST_STATUS.AWAITING_DISBURSEMENT || r.status === PETTY_CASH_REQUEST_STATUS.APPROVED || r.status === 'PENDING_ORG_DISBURSAL' || r.status === 'PENDING_DISBURSAL' || r.currentStep === 3).length === 0 ? (
                 <div className="p-6 rounded-xl bg-slate-50 border border-slate-200/80 text-center text-xs text-slate-500">
                   No requests currently awaiting manager disbursement.
                 </div>
@@ -831,17 +859,17 @@ export default function ManagerPettyCashHub({
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {filteredRequests
-                        .filter((r) => r.status === PETTY_CASH_REQUEST_STATUS.AWAITING_DISBURSEMENT || r.status === PETTY_CASH_REQUEST_STATUS.APPROVED)
+                        .filter((r) => r.status === PETTY_CASH_REQUEST_STATUS.AWAITING_DISBURSEMENT || r.status === PETTY_CASH_REQUEST_STATUS.APPROVED || r.status === 'PENDING_ORG_DISBURSAL' || r.status === 'PENDING_DISBURSAL' || r.currentStep === 3)
                         .map((r) => (
                           <tr key={r.id} className="hover:bg-slate-50/70 transition-colors">
                             <td className="py-2.5 px-3 font-mono text-slate-700 font-bold">{r.requestId || r.id}</td>
                             <td className="py-2.5 px-3 font-semibold text-slate-900">{siteMap[r.siteId] || r.siteId}</td>
                             <td className="py-2.5 px-3 font-bold text-emerald-700">{money(r.approvedAmount || r.requestedAmount)}</td>
                             <td className="py-2.5 px-3 text-slate-600">
-                              <span className="font-semibold text-slate-800 block text-[11px]">{r.authorizedByName || 'HQ Admin'}</span>
-                              <span className="text-slate-500">{r.organizationRemarks || 'Approved'}</span>
+                              <span className="font-semibold text-slate-800 block text-[11px]">{r.authorizedByName || r.orgApprovedBy || 'HQ Admin'}</span>
+                              <span className="text-slate-500">{r.organizationRemarks || r.orgApprovalRemarks || 'Approved'}</span>
                             </td>
-                            <td className="py-2.5 px-3 text-slate-500">{formatDate(r.authorizedAt || r.updatedAt)}</td>
+                            <td className="py-2.5 px-3 text-slate-500">{formatDate(r.authorizedAt || r.orgApprovedAt || r.updatedAt)}</td>
                             <td className="py-2.5 px-3 text-right">
                               <button
                                 type="button"
@@ -849,10 +877,11 @@ export default function ManagerPettyCashHub({
                                   setDisburseRequest(r)
                                   setDisburseAmount(String(r.approvedAmount || r.requestedAmount))
                                   setDisburseMethod('Cash')
+                                  setDisburseRef('')
                                   setDisburseRemarks('')
                                   setIsDisburseModalOpen(true)
                                 }}
-                                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#0B3470] text-white hover:bg-blue-800 shadow-xs transition-colors"
+                                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#0B3470] text-white hover:bg-blue-800 shadow-xs transition-colors cursor-pointer"
                               >
                                 💵 Disburse Funds
                               </button>
@@ -1638,7 +1667,7 @@ export default function ManagerPettyCashHub({
       </Modal>
 
       {/* ------------------------------------------------------------- */}
-      {/* MODAL 2: Request Review (Verify / Reject) */}
+      {/* MODAL 2: Request Review (Verify / Revise / Reject) */}
       {/* ------------------------------------------------------------- */}
       <Modal
         isOpen={isReviewModalOpen}
@@ -1646,10 +1675,53 @@ export default function ManagerPettyCashHub({
           setIsReviewModalOpen(false)
           setSelectedRequest(null)
         }}
-        title={reviewDecision === 'VERIFY' ? 'Verify & Forward Request to HQ' : 'Reject Supervisor Request'}
+        title={
+          reviewDecision === 'VERIFY'
+            ? 'Verify & Forward Request to HQ'
+            : reviewDecision === 'REVISION'
+            ? 'Request Revision / Details from Supervisor'
+            : 'Reject Supervisor Request'
+        }
         subtitle={`Request ${selectedRequest?.requestId || selectedRequest?.id} for ${siteMap[selectedRequest?.siteId] || selectedRequest?.siteId}`}
       >
         <form onSubmit={handleReviewSubmit} className="p-6 space-y-4">
+          {/* 3-way action switch */}
+          <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-100 rounded-xl">
+            <button
+              type="button"
+              onClick={() => setReviewDecision('VERIFY')}
+              className={`py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                reviewDecision === 'VERIFY'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              ✓ Verify & Forward
+            </button>
+            <button
+              type="button"
+              onClick={() => setReviewDecision('REVISION')}
+              className={`py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                reviewDecision === 'REVISION'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              ✎ Request Revision
+            </button>
+            <button
+              type="button"
+              onClick={() => setReviewDecision('REJECT')}
+              className={`py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                reviewDecision === 'REJECT'
+                  ? 'bg-rose-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              ✕ Reject
+            </button>
+          </div>
+
           <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1">
             <div className="flex justify-between">
               <span className="text-slate-500">Requested Amount:</span>
@@ -1667,7 +1739,11 @@ export default function ManagerPettyCashHub({
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">
-              {reviewDecision === 'VERIFY' ? 'Manager Recommendation & Verification Notes' : 'Rejection Reason *'}
+              {reviewDecision === 'VERIFY'
+                ? 'Manager Recommendation & Verification Notes'
+                : reviewDecision === 'REVISION'
+                ? 'Revision Notes / Quotation Requirement *'
+                : 'Rejection Reason *'}
             </label>
             <textarea
               rows={3}
@@ -1676,10 +1752,12 @@ export default function ManagerPettyCashHub({
               placeholder={
                 reviewDecision === 'VERIFY'
                   ? 'e.g. Verified with supervisor site needs. Recommended for HQ approval.'
+                  : reviewDecision === 'REVISION'
+                  ? 'e.g. Please cap requested expenses or attach pro-forma quotation before resubmitting.'
                   : 'Please enter mandatory justification for rejecting this request.'
               }
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 outline-none focus:border-blue-600"
-              required={reviewDecision === 'REJECT'}
+              required={reviewDecision === 'REJECT' || reviewDecision === 'REVISION'}
             />
           </div>
 
@@ -1687,18 +1765,28 @@ export default function ManagerPettyCashHub({
             <button
               type="button"
               onClick={() => setIsReviewModalOpen(false)}
-              className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors"
+              className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={actionLoading}
-              className={`px-5 py-2 rounded-xl text-xs font-bold text-white shadow-xs transition-colors ${
-                reviewDecision === 'VERIFY' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'
+              className={`px-5 py-2 rounded-xl text-xs font-bold text-white shadow-xs transition-colors cursor-pointer ${
+                reviewDecision === 'VERIFY'
+                  ? 'bg-emerald-600 hover:bg-emerald-700'
+                  : reviewDecision === 'REVISION'
+                  ? 'bg-amber-600 hover:bg-amber-700'
+                  : 'bg-rose-600 hover:bg-rose-700'
               }`}
             >
-              {actionLoading ? 'Processing...' : reviewDecision === 'VERIFY' ? 'Verify & Forward to HQ' : 'Confirm Rejection'}
+              {actionLoading
+                ? 'Processing...'
+                : reviewDecision === 'VERIFY'
+                ? 'Verify & Forward to HQ'
+                : reviewDecision === 'REVISION'
+                ? 'Send Back for Revision'
+                : 'Confirm Rejection'}
             </button>
           </div>
         </form>
@@ -1753,15 +1841,27 @@ export default function ManagerPettyCashHub({
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Payment Reference / Remarks</label>
-            <input
-              type="text"
-              value={disburseRemarks}
-              onChange={(e) => setDisburseRemarks(e.target.value)}
-              placeholder="e.g. Cash handed to Supervisor / Cheque #492819"
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 outline-none focus:border-blue-600"
-            />
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Transaction Ref / UTR / Cheque #</label>
+              <input
+                type="text"
+                value={disburseRef}
+                onChange={(e) => setDisburseRef(e.target.value)}
+                placeholder="e.g. UTR-2026-992140 / CHQ-10492"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 outline-none focus:border-blue-600 font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Payment Reference / Remarks</label>
+              <input
+                type="text"
+                value={disburseRemarks}
+                onChange={(e) => setDisburseRemarks(e.target.value)}
+                placeholder="e.g. Cash handed to Supervisor / Cheque #492819"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 outline-none focus:border-blue-600"
+              />
+            </div>
           </div>
 
           <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100">

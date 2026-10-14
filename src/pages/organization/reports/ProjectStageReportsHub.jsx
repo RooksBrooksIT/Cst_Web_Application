@@ -1,12 +1,14 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   money,
   parseAmount,
-  PROJECT_STAGES,
   calculateProjectStageReport,
   formatDateDisplay,
 } from '../../../services/reportService'
 import { exportToCSV, printReport } from '../../../services/exportService'
+import { useAuth } from '../../../hooks/useAuth'
+import { CONFIG_SECTIONS, subscribeConfigItems } from '../../../services/projectConfigService'
+import { DEFAULT_PROJECT_STAGES } from '../../../services/projectService'
 
 export default function ProjectStageReportsHub({
   sites = [],
@@ -16,23 +18,95 @@ export default function ProjectStageReportsHub({
   contractorEntries = [],
   initialStage = null,
   subReport = null,
+  projectStages = null,
+  orgId = null,
 }) {
-  const [selectedStage, setSelectedStage] = useState(initialStage || PROJECT_STAGES[0])
-  const [activeSubTab, setActiveSubTab] = useState(subReport || 'summary') // 'summary' or 'detail'
+  const { orgId: authOrgId } = useAuth()
+  const activeOrgId = orgId || authOrgId
+  const [stagesFromConfig, setStagesFromConfig] = useState([])
 
-  React.useEffect(() => {
-    if (initialStage && PROJECT_STAGES.includes(initialStage)) {
-      setSelectedStage(initialStage)
+  useEffect(() => {
+    if (projectStages && projectStages.length > 0) return
+    if (!activeOrgId) return
+    const unsub = subscribeConfigItems(
+      activeOrgId,
+      CONFIG_SECTIONS.stage,
+      (list) => setStagesFromConfig(list || []),
+      (err) => console.error('Error subscribing to project stages:', err)
+    )
+    return () => unsub()
+  }, [activeOrgId, projectStages])
+
+  const availableStages = useMemo(() => {
+    const sourceList = (projectStages && projectStages.length > 0)
+      ? projectStages
+      : (stagesFromConfig && stagesFromConfig.length > 0)
+      ? stagesFromConfig
+      : []
+    let names = (sourceList || [])
+      .map((st) => (typeof st === 'string' ? st : st.projectStage || st.name || '').trim())
+      .filter(Boolean)
+
+    if (sites && sites.length > 0) {
+      sites.forEach((s) => {
+        const st = (s.projectStage || s.stage || '').trim()
+        if (st && !names.includes(st)) names.push(st)
+      })
     }
-  }, [initialStage])
 
-  React.useEffect(() => {
-    if (subReport && (subReport === 'summary' || subReport === 'detail')) {
+    if (names.length === 0) {
+      names = DEFAULT_PROJECT_STAGES.map((s) => s.name)
+    }
+
+    return [...new Set(names)]
+  }, [projectStages, stagesFromConfig, sites])
+
+  const [selectedStage, setSelectedStage] = useState(initialStage || '')
+  const [activeSubTab, setActiveSubTab] = useState(
+    subReport === 'detail' ? 'detail' : 'summary'
+  )
+
+  useEffect(() => {
+    if (availableStages.length > 0) {
+      if (!selectedStage || !availableStages.includes(selectedStage)) {
+        if (initialStage && availableStages.includes(initialStage)) {
+          setSelectedStage(initialStage)
+        } else {
+          setSelectedStage(availableStages[0])
+        }
+      }
+    } else {
+      setSelectedStage('')
+    }
+  }, [availableStages, initialStage, selectedStage])
+
+  useEffect(() => {
+    if (subReport === 'detail' || subReport === 'summary') {
       setActiveSubTab(subReport)
+    } else {
+      setActiveSubTab('summary')
     }
   }, [subReport])
 
   const stageData = useMemo(() => {
+    if (!selectedStage) {
+      return {
+        selectedStage: 'None',
+        sitesCountInStage: 0,
+        stageEstimatedBudget: 0,
+        grandStageSpend: 0,
+        stageVariance: 0,
+        stageCompletionPct: 0,
+        scheduleAlert: 'N/A',
+        alertTone: 'slate',
+        stageTotalLabour: 0,
+        stageTotalMaterial: 0,
+        stageTotalFoodTransport: 0,
+        stageTotalBills: 0,
+        stageSiteSummary: [],
+        detailedEntries: [],
+      }
+    }
     return calculateProjectStageReport({
       selectedStage,
       sites,
@@ -156,49 +230,53 @@ export default function ProjectStageReportsHub({
         <div className="space-y-1.5 pt-3 border-t border-slate-100">
           <label className="block text-[11px] font-bold text-slate-600">Select Construction Stage</label>
           <div className="flex gap-1.5 overflow-x-auto pb-1">
-            {PROJECT_STAGES.map((stg) => (
-              <button
-                key={stg}
-                type="button"
-                onClick={() => setSelectedStage(stg)}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-                  selectedStage === stg
-                    ? 'bg-[#0B3470] text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900 bg-transparent'
-                }`}
-              >
-                {stg}
-              </button>
-            ))}
+            {availableStages.length > 0 ? (
+              availableStages.map((stg) => (
+                <button
+                  key={stg}
+                  type="button"
+                  onClick={() => setSelectedStage(stg)}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                    selectedStage === stg
+                      ? 'bg-[#0B3470] text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 bg-transparent'
+                  }`}
+                >
+                  {stg}
+                </button>
+              ))
+            ) : (
+              <p className="text-xs text-slate-400 py-1 italic">No construction stages configured in backend.</p>
+            )}
           </div>
         </div>
       </div>
 
       {/* Stage KPI Banner */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 sm:gap-3">
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
           <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Active Stage</span>
-          <strong className="text-xl font-extrabold text-slate-900 block font-mono mt-0.5">{stageData.selectedStage}</strong>
+          <strong className="text-base sm:text-xl font-extrabold text-slate-900 block font-mono mt-0.5 truncate">{stageData.selectedStage}</strong>
           <small className="text-[10px] text-slate-400">{stageData.sitesCountInStage} active sites in stage</small>
         </div>
-        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
           <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider block">Estimated Stage Budget</span>
-          <strong className="text-xl font-extrabold text-blue-700 font-mono block mt-0.5">{money(stageData.stageEstimatedBudget)}</strong>
+          <strong className="text-base sm:text-xl font-extrabold text-blue-700 font-mono block mt-0.5 truncate">{money(stageData.stageEstimatedBudget)}</strong>
           <small className="text-[10px] text-slate-400">Sanctioned allocation</small>
         </div>
-        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
           <span className="text-[10px] font-bold text-rose-700 uppercase tracking-wider block">Actual Stage Spend</span>
-          <strong className="text-xl font-extrabold text-rose-600 font-mono block mt-0.5">{money(stageData.grandStageSpend)}</strong>
+          <strong className="text-base sm:text-xl font-extrabold text-rose-600 font-mono block mt-0.5 truncate">{money(stageData.grandStageSpend)}</strong>
           <small className="text-[10px] text-slate-400">{stageData.stageCompletionPct}% budget consumed</small>
         </div>
-        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
           <span className="text-[10px] font-bold text-purple-700 uppercase tracking-wider block">Stage Variance</span>
-          <strong className={`text-xl font-extrabold font-mono block mt-0.5 ${stageData.stageVariance >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
+          <strong className={`text-base sm:text-xl font-extrabold font-mono block mt-0.5 truncate ${stageData.stageVariance >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
             {money(stageData.stageVariance)}
           </strong>
           <small className="text-[10px] text-slate-400">{stageData.stageVariance >= 0 ? 'Under budget cushion' : 'Over budget deficit'}</small>
         </div>
-        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
+        <div className="col-span-2 sm:col-span-1 p-3.5 sm:p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1">
           <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Schedule Alert Indicator</span>
           <div className="mt-1">
             <span
@@ -219,11 +297,11 @@ export default function ProjectStageReportsHub({
       </div>
 
       {/* Sub-Reports Switcher Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-2 overflow-x-auto touch-pan-x scrollbar-none">
         <button
           type="button"
           onClick={() => setActiveSubTab('summary')}
-          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
             activeSubTab === 'summary' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900 bg-transparent'
           }`}
         >
@@ -232,7 +310,7 @@ export default function ProjectStageReportsHub({
         <button
           type="button"
           onClick={() => setActiveSubTab('detail')}
-          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
             activeSubTab === 'detail' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900 bg-transparent'
           }`}
         >
@@ -243,8 +321,11 @@ export default function ProjectStageReportsHub({
       {/* 2A. Project Stage Site Summary View */}
       {activeSubTab === 'summary' && (
         <div className="bg-white border border-slate-200/90 rounded-2xl shadow-xs overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-slate-700">
+          <div className="block sm:hidden text-center py-1.5 px-3 bg-slate-50 border-b border-slate-100 text-[11px] font-medium text-slate-500">
+            ← Swipe horizontally to inspect stage summary →
+          </div>
+          <div className="overflow-x-auto touch-pan-x">
+            <table className="w-full text-left text-xs text-slate-700 min-w-[680px]">
               <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
                 <tr>
                   <th className="p-3.5">Site / Project</th>
@@ -298,8 +379,11 @@ export default function ProjectStageReportsHub({
       {/* 2B. Detailed Stage Ledger View */}
       {activeSubTab === 'detail' && (
         <div className="bg-white border border-slate-200/90 rounded-2xl shadow-xs overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-slate-700">
+          <div className="block sm:hidden text-center py-1.5 px-3 bg-slate-50 border-b border-slate-100 text-[11px] font-medium text-slate-500">
+            ← Swipe horizontally to inspect detailed expenses →
+          </div>
+          <div className="overflow-x-auto touch-pan-x">
+            <table className="w-full text-left text-xs text-slate-700 min-w-[680px]">
               <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
                 <tr>
                   <th className="p-3.5">Date</th>

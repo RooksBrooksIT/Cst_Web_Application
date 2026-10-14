@@ -34,22 +34,28 @@ export const COLLECTION_ALIASES = {
   siteMaterialsRequest: ['siteMaterialsRequest', 'material_requests', 'material_indents', 'indents'],
   siteToolsRequest: ['siteToolsRequest', 'tool_allocations', 'equipment_movement'],
   siteSupervisorProjectStageSchedule: ['siteSupervisorProjectStageSchedule', 'project_stage_schedules'],
+  siteSupervisorProjectStageActual: ['siteSupervisorProjectStageActual', 'project_stage_actuals'],
+  siteSupervisorIncentives: ['siteSupervisorIncentives', 'incentives'],
   materials: ['materials', 'inventory', 'Material', 'material_inventory'],
   materialsAvailability: [
     'materialsAvailability',
-    'data/materialsAvailability',
     'materials_availability',
     'materialsAvailabilityData',
   ],
   materialCategories: ['materialCategories'],
-  materialSubCategory: ['materialSubCategory'],
-  units: ['units'],
+  materialSubCategories: ['materialSubCategories', 'materialSubCategory'],
+  materialSubCategory: ['materialSubCategories', 'materialSubCategory'],
+  materialUnits: ['materialUnits', 'units'],
+  units: ['materialUnits', 'units'],
   materialMovements: ['materialMovements', 'materialTransactions'],
   materialTransactions: ['materialTransactions', 'materialMovements'],
-  materialAllocations: ['materialAllocations'],
+  siteMaterialAllocations: ['siteMaterialAllocations', 'materialAllocations'],
+  materialAllocations: ['siteMaterialAllocations', 'materialAllocations'],
+  materialTransfer: ['materialTransfer', 'materialTransfers'],
   siteMaterialPool: ['siteMaterialPool', 'materialPool'],
   materialPool: ['siteMaterialPool', 'materialPool'],
-  materialConsumption: ['materialConsumption'],
+  materialConsumption: ['materialConsumption', 'dailyMaterialConsumptions'],
+  dailyMaterialConsumptions: ['dailyMaterialConsumptions', 'materialConsumption'],
   materialRequisition: ['materialRequisition', 'siteMaterialsRequest'],
   tools: ['tools', 'toolsMaster', 'equipment', 'Machinery', 'Tool'],
   toolsInventory: ['toolsInventory'],
@@ -72,7 +78,10 @@ export const COLLECTION_ALIASES = {
   vehicleDetails: ['vehicleDetails', 'vehicles', 'fleet', 'Vehicle'],
   vehicleDrivers: ['vehicleDrivers', 'drivers'],
   vehicleLogs: ['vehicleLogs', 'vehicle_logs', 'fuel_logs', 'trip_logs'],
-  layoutAndDrawings: ['layoutAndDrawings', 'drawings', 'blueprints'],
+  siteDrawings: ['siteDrawings', 'layoutAndDrawings', 'drawings', 'blueprints'],
+  siteDrawingsUsage: ['siteDrawingsUsage'],
+  layoutAndDrawings: ['siteDrawings', 'layoutAndDrawings', 'drawings', 'blueprints'],
+  drawings: ['siteDrawings', 'layoutAndDrawings', 'drawings', 'blueprints'],
   totalSiteExpensesPerDay: ['totalSiteExpensesPerDay'],
   managerExpenses: ['managerExpenses', 'manager_expenses'],
   pettyCashAccounts: ['pettyCashAccounts', 'petty_cash_accounts', 'petty_cash', 'pettyCash'],
@@ -122,7 +131,7 @@ export async function fetchWithFallback(orgId, primaryCollection) {
     try {
       const snap = await getDocs(collection(db, 'organisation', orgId, colName))
       if (!snap.empty) {
-        return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+        return snap.docs.map((d) => ({ ...d.data(), id: d.id }))
       }
     } catch (e) {
       // Continue to next alias
@@ -142,7 +151,7 @@ export function subscribeWithFallback(orgId, primaryCollection, onData, onError)
     colRef,
     async (snapshot) => {
       if (!snapshot.empty) {
-        onData(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })))
+        onData(snapshot.docs.map((d) => ({ ...d.data(), id: d.id })))
       } else {
         // If primary is empty, check legacy aliases once
         const aliases = (COLLECTION_ALIASES[primaryCollection] || []).filter((c) => c !== primaryCollection)
@@ -152,7 +161,7 @@ export function subscribeWithFallback(orgId, primaryCollection, onData, onError)
             const aliasSnap = await getDocs(collection(db, 'organisation', orgId, alias))
             if (!aliasSnap.empty) {
               found = true
-              onData(aliasSnap.docs.map((d) => ({ id: d.id, ...d.data() })))
+              onData(aliasSnap.docs.map((d) => ({ ...d.data(), id: d.id })))
               break
             }
           } catch (e) {}

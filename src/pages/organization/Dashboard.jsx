@@ -9,6 +9,7 @@ import logo from '../../assets/logo/FinalLogo.jpg'
 import OrganizationModule from './Module'
 import ProjectAlertBadge from '../../components/common/ProjectAlertBadge'
 import { evaluateAllProjectAlerts } from '../../utils/projectAlerts'
+import { getNormalizedSiteOptions } from '../../utils/siteUtils.js'
 import {
   Building2,
   Wallet,
@@ -32,9 +33,13 @@ import {
   Compass,
   Briefcase,
   Layers3,
+  LayoutDashboard,
+  IndianRupee,
+  CreditCard,
+  Settings,
+  Receipt,
+  Award,
 } from 'lucide-react'
-
-const stages = ['Foundation', 'Plinth', 'Superstructure', 'Finishing', 'Handover']
 
 function value(record, fields, fallback = '') {
   return fields.map((field) => record?.[field]).find((item) => item !== undefined && item !== null && item !== '') ?? fallback
@@ -256,9 +261,15 @@ export default function OrganizationDashboard() {
     siteSupervisorProjectStageSchedule,
     siteSupervisorEntries,
     vehicleMovements,
+    projectStages,
+    materialsAvailability,
+    siteMaterialPool,
+    materialAllocations,
   } = orgDashboardData
   const [selectedProjectId, setSelectedProjectId] = useState('all')
   const [globalQuery, setGlobalQuery] = useState('')
+
+  const normalizedSites = useMemo(() => getNormalizedSiteOptions(sites), [sites])
 
   const filteredSites = useMemo(
     () => (selectedProjectId === 'all' ? sites : sites.filter((site) => site.id === selectedProjectId)),
@@ -420,21 +431,63 @@ export default function OrganizationDashboard() {
     return 0
   }, [filteredSites, workerSiteMapping, workerAttendance, workersConfig, workers, selectedProjectId])
 
+  const subscriptionExpiryInfo = useMemo(() => {
+    if (!subscription) return null
+    const isEnterprise = String(subscription.planName || '').toLowerCase() === 'enterprise'
+    if (isEnterprise) return null
+
+    const endDateRaw = subscription.subscriptionEndDate || subscription.endDate
+    let endDate = null
+    if (endDateRaw?.toDate) endDate = endDateRaw.toDate()
+    else if (endDateRaw?.seconds) endDate = new Date(endDateRaw.seconds * 1000)
+    else if (endDateRaw) endDate = new Date(endDateRaw)
+
+    const now = new Date()
+    let daysRemaining = subscription.daysRemaining
+    if (daysRemaining === undefined && endDate && !isNaN(endDate.getTime())) {
+      daysRemaining = Math.max(0, Math.ceil((endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
+    }
+
+    const isExpired =
+      subscription.isSubscriptionActive === false ||
+      (daysRemaining !== undefined && daysRemaining <= 0) ||
+      (endDate && endDate.getTime() <= now.getTime())
+
+    const isExpiringSoon = !isExpired && daysRemaining !== undefined && daysRemaining <= 5
+
+    return {
+      planName: subscription.planName || 'Free Trial',
+      daysRemaining: daysRemaining ?? 0,
+      isExpired,
+      isExpiringSoon,
+      isQueuedUpgrade: Boolean(subscription.isUpgradeQueued && subscription.queuedPlan),
+      queuedPlanName: subscription.queuedPlan?.planName,
+    }
+  }, [subscription])
+
   const organizationName = value(userData, ['organizationName', 'orgName', 'companyName'], 'Your Organization')
   const currentDate = new Intl.DateTimeFormat('en-IN', { dateStyle: 'full' }).format(new Date())
-  const stageNames = [...new Set([...stages, ...filteredSites.map((site) => value(site, ['projectStage', 'stage', 'currentStage'], '')).filter(Boolean)])]
+  const configuredStageNames = (projectStages || [])
+    .map((s) => (s.projectStage || s.name || '').trim())
+    .filter(Boolean)
+  const stageNames = configuredStageNames.length > 0
+    ? configuredStageNames
+    : [...new Set(filteredSites.map((site) => value(site, ['projectStage', 'stage', 'currentStage'], '')).filter(Boolean))]
   const activeModule = location.pathname.split('/').filter(Boolean)[1] || 'dashboard'
 
   const navigation = [
-    ['Dashboard', '/organization/dashboard', '⌂'],
-    ['Sites', '/organization/sites', '▦'],
-    ['Staff & Workforce', '/organization/team', '👥'],
-    ['Inventory & Assets', '/organization/inventory', '📦'],
-    ['Finance', '/organization/finance', '₹'],
-    ['Approvals', '/organization/approvals', '✓'],
-    ['Petty Cash', '/organization/petty-cash', '◈'],
-    ['Reports', '/organization/reports', '▤'],
-    ['Subscription', '/organization/subscription', '○'],
+    ['Dashboard', '/organization/dashboard', LayoutDashboard],
+    ['Sites', '/organization/sites', Building2],
+    ['Layout & Drawings', '/organization/drawings', Compass],
+    ['Staff & Workforce', '/organization/team', Users],
+    ['Inventory & Assets', '/organization/inventory', Boxes],
+    ['Finance', '/organization/finance', IndianRupee],
+    ['Organization Expenses', '/organization/expenses', Receipt],
+    ['Approvals', '/organization/approvals', CheckCircle2],
+    ['Incentives', '/organization/incentive-calculation', Award],
+    ['Petty Cash', '/organization/petty-cash', Wallet],
+    ['Reports', '/organization/reports', BarChart3],
+    ['Subscription', '/organization/subscription', CreditCard],
   ]
 
   async function handleLogout() {
@@ -485,7 +538,7 @@ export default function OrganizationDashboard() {
 
           <div className="space-y-1">
             <p className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-blue-200/60">CORPORATE MODULES</p>
-            {navigation.map(([label, href, icon]) => (
+            {navigation.map(([label, href, Icon]) => (
               <NavLink
                 key={label}
                 to={href}
@@ -499,12 +552,14 @@ export default function OrganizationDashboard() {
                   }`
                 }
               >
-                <span className="flex items-center gap-3">
-                  <span>{icon}</span>
-                  {label}
+                <span className="flex items-center gap-3 min-w-0">
+                  <span className="flex items-center justify-center w-5 h-5 shrink-0 text-white">
+                    <Icon className="w-4 h-4 text-white shrink-0" />
+                  </span>
+                  <span className="truncate">{label}</span>
                 </span>
                 {label === 'Approvals' && pendingApprovals > 0 && (
-                  <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-400 text-slate-950 rounded-full shadow-xs">
+                  <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-400 text-slate-950 rounded-full shadow-xs shrink-0">
                     {pendingApprovals}
                   </span>
                 )}
@@ -518,12 +573,19 @@ export default function OrganizationDashboard() {
             to="/organization/settings"
             onClick={() => setIsMobileMenuOpen(false)}
             className={({ isActive }) =>
-              `flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-blue-100/75 hover:text-white hover:bg-white/10 transition-colors ${
-                isActive ? 'text-white bg-white/15 font-bold' : ''
+              `flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-medium transition-colors ${
+                isActive
+                  ? 'text-white bg-white/15 font-bold border border-white/20 shadow-xs'
+                  : 'text-blue-100/75 hover:text-white hover:bg-white/10'
               }`
             }
           >
-            <span>⚙</span> Settings
+            <span className="flex items-center gap-3 min-w-0">
+              <span className="flex items-center justify-center w-5 h-5 shrink-0 text-white">
+                <Settings className="w-4 h-4 text-white shrink-0" />
+              </span>
+              <span className="truncate">Settings</span>
+            </span>
           </NavLink>
         </div>
       </aside>
@@ -572,9 +634,63 @@ export default function OrganizationDashboard() {
 
         {/* Module Content Surface */}
         <main className="p-6 md:p-8 max-w-7xl w-full mx-auto space-y-8 flex-1">
+          {/* Subscription Expiry / Warning Banner */}
+          {subscriptionExpiryInfo?.isExpired && (
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-rose-950">
+                    Subscription Plan Expired ({subscriptionExpiryInfo.planName})
+                  </h4>
+                  <p className="text-xs text-rose-700 mt-0.5">
+                    Your active plan cycle has ended. Creating new sites, managers, and supervisors is temporarily suspended until renewed.
+                  </p>
+                </div>
+              </div>
+              <Link
+                to="/organization/subscription"
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shrink-0 flex items-center justify-center gap-2 shadow-xs transition-colors"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                Renew / Upgrade Plan
+              </Link>
+            </div>
+          )}
+
+          {subscriptionExpiryInfo?.isExpiringSoon && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <Clock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-amber-950">
+                    Plan Expiring Soon: {subscriptionExpiryInfo.daysRemaining} {subscriptionExpiryInfo.daysRemaining === 1 ? 'day' : 'days'} remaining ({subscriptionExpiryInfo.planName})
+                  </h4>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    {subscriptionExpiryInfo.isQueuedUpgrade
+                      ? `Your queued plan "${subscriptionExpiryInfo.queuedPlanName}" will automatically activate when this cycle ends.`
+                      : 'Renew or upgrade your subscription now to prevent operational disruption.'}
+                  </p>
+                </div>
+              </div>
+              <Link
+                to="/organization/subscription"
+                className="px-4 py-2 bg-[#0B3470] hover:bg-blue-800 text-white text-xs font-bold rounded-xl shrink-0 flex items-center justify-center gap-2 shadow-xs transition-colors"
+              >
+                Manage Subscription →
+              </Link>
+            </div>
+          )}
+
           {activeModule !== 'dashboard' ? (
             <OrganizationModule
               module={activeModule}
+              orgId={orgId}
+              user={user}
               projects={projects}
               sites={sites}
               materials={materials}
@@ -605,6 +721,10 @@ export default function OrganizationDashboard() {
               totalSiteExpensesPerDay={totalSiteExpensesPerDay}
               sitePayments={sitePayments}
               subscription={subscription}
+              projectStages={projectStages}
+              materialsAvailability={materialsAvailability}
+              siteMaterialPool={siteMaterialPool}
+              materialAllocations={materialAllocations}
               loading={loading}
               error={error}
             />
@@ -640,10 +760,10 @@ export default function OrganizationDashboard() {
                         onChange={(e) => setSelectedProjectId(e.target.value)}
                         className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all cursor-pointer shadow-2xs"
                       >
-                        <option value="all">All Portfolio Projects ({sites.length})</option>
-                        {sites.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.projectName || s.siteName || s.id}
+                        <option value="all">All Portfolio Projects ({normalizedSites.length})</option>
+                        {normalizedSites.map((s, idx) => (
+                          <option key={`dash-proj-${s.id || s.siteId || idx}-${idx}`} value={s.id || s.siteId}>
+                            {s.label || s.projectName || s.siteName || s.id}
                           </option>
                         ))}
                       </select>
@@ -846,6 +966,17 @@ export default function OrganizationDashboard() {
                           <span>Executive Reports & Audit</span>
                         </div>
                         <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-purple-700" />
+                      </Link>
+
+                      <Link
+                        to="/organization/incentive-calculation"
+                        className="flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-amber-50/60 border border-slate-200/70 transition-colors group"
+                      >
+                        <div className="flex items-center gap-2.5 text-xs font-bold text-slate-800 group-hover:text-amber-900">
+                          <Award className="w-4 h-4 text-amber-600" />
+                          <span>Incentive Calculation Engine</span>
+                        </div>
+                        <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-amber-700" />
                       </Link>
                     </div>
                   </div>

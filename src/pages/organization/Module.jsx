@@ -19,12 +19,19 @@ import { OrganizationSubscriptionPage } from './subscription/OrganizationSubscri
 import OrganizationReportsHub from './reports/OrganizationReportsHub'
 import OrgFinancePage from './finance/OrgFinancePage'
 import SiteFinancialDetailsPage from './finance/SiteFinancialDetailsPage'
+import OrganizationExpenses from './operations/OrganizationExpenses'
 import PettyCashGovernance from './pettycash/PettyCashGovernance'
 import OrganizationApprovalsCenter from './approvals/OrganizationApprovalsCenter'
 import TeamManagement from './team/TeamManagement'
 import OrganizationInventoryHub from './inventory/OrganizationInventoryHub'
+import BlueprintsDrawings from '../manager/projects/BlueprintsDrawings'
+import ConstructionDocuments from '../common/ConstructionDocuments'
+import IncentiveCalculation from './incentives/IncentiveCalculation'
+import { SubscriptionLimitService, isFeatureAllowedForPlan } from '../../services/subscriptionLimitService'
+import SubscriptionLimitModal from '../../components/common/SubscriptionLimitModal'
+import { ShieldAlert, ArrowUpRight } from 'lucide-react'
 
-export { OrgFinancePage, SiteFinancialDetailsPage, PettyCashGovernance, OrganizationApprovalsCenter, TeamManagement }
+export { OrgFinancePage, SiteFinancialDetailsPage, OrganizationExpenses, PettyCashGovernance, OrganizationApprovalsCenter, TeamManagement, BlueprintsDrawings, ConstructionDocuments, IncentiveCalculation }
 
 function displayValue(record, fields, fallback = 'Not available') {
   return fields.map((field) => record?.[field]).find((item) => item !== undefined && item !== null && item !== '') ?? fallback
@@ -129,13 +136,18 @@ function statusBadgeColor(status) {
 // ------------------------------------------------------------------------------------------------
 // 3. PROJECT & SITES MASTER MODULE
 // ------------------------------------------------------------------------------------------------
-export function SiteManagement({ sites = [], managers = [], loading, error }) {
+export function SiteManagement({ sites = [], managers = [], subscription, loading, error }) {
   const { orgId } = useAuth()
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const [limitModalData, setLimitModalData] = useState(null)
   const [editingSite, setEditingSite] = useState(null)
   const [saving, setSaving] = useState(false)
+
+  const planName = subscription?.subscriptionPlan || 'Free Trial'
+  const maxSites = subscription?.maxProjects || (planName === 'Gold' ? 10 : planName === 'Silver' ? 5 : 1)
+  const isAtLimit = sites.length >= maxSites
 
   const [formData, setFormData] = useState({
     name: '',
@@ -150,7 +162,25 @@ export function SiteManagement({ sites = [], managers = [], loading, error }) {
     managerName: '',
   })
 
-  function handleOpenCreate() {
+  async function handleOpenCreate() {
+    const check = await SubscriptionLimitService.canCreateSite({
+      orgId,
+      currentSitesCount: sites.length,
+      currentPlanName: planName,
+    })
+    if (!check.isAllowed) {
+      setLimitModalData({
+        title: check.title || 'Site Quota Reached',
+        message: check.message,
+        planName: check.planName || planName,
+        currentCount: check.currentCount !== undefined ? check.currentCount : sites.length,
+        maxLimit: check.maxLimit !== undefined ? check.maxLimit : maxSites,
+        recommendedPlan: check.upgradePlan || 'Silver',
+        resourceType: 'Site',
+      })
+      return
+    }
+
     setEditingSite(null)
     setFormData({
       name: '',
@@ -196,7 +226,20 @@ export function SiteManagement({ sites = [], managers = [], loading, error }) {
       }
       setIsModalOpen(false)
     } catch (err) {
-      alert('Error saving project: ' + err.message)
+      if (err.code === 'SITE_LIMIT_REACHED' || err.code === 'SUBSCRIPTION_EXPIRED') {
+        setIsModalOpen(false)
+        setLimitModalData({
+          title: err.code === 'SUBSCRIPTION_EXPIRED' ? 'Subscription Expired' : 'Site Quota Reached',
+          message: err.message,
+          planName,
+          currentCount: sites.length,
+          maxLimit,
+          recommendedPlan: err.upgradePlan || 'Silver',
+          resourceType: 'Site',
+        })
+      } else {
+        alert('Error saving project: ' + err.message)
+      }
     } finally {
       setSaving(false)
     }
@@ -290,7 +333,14 @@ export function SiteManagement({ sites = [], managers = [], loading, error }) {
           <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Construction Sites Portfolio</h1>
           <p className="text-xs text-slate-500 mt-1">Multi-site milestone tracking, financial budgets, and spatial management.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <button
+            type="button"
+            onClick={handleOpenCreate}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-[#0B3470] hover:bg-blue-900 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer"
+          >
+            <span>+ Create Project</span>
+          </button>
           <ExportButton
             filename="ebricks_projects"
             headers={['Project Code', 'Project Name', 'Client', 'Budget (INR)', 'Stage', 'Status']}
@@ -306,6 +356,34 @@ export function SiteManagement({ sites = [], managers = [], loading, error }) {
           />
         </div>
       </div>
+
+      {/* Subscription Quota Status Banner */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 bg-white rounded-2xl border border-slate-200/80 shadow-xs text-xs">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-slate-500 font-medium">Subscription Quota:</span>
+          <span className="font-bold text-slate-800">
+            {sites.length} / {maxSites === 999999 ? 'Unlimited' : maxSites} Active Sites
+          </span>
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+            {planName} Plan
+          </span>
+        </div>
+        {isAtLimit && (
+          <Link
+            to="/organization/subscription"
+            className="flex items-center gap-1 text-xs font-bold text-amber-700 bg-amber-50 px-3 py-1 rounded-xl border border-amber-200 hover:bg-amber-100 transition-colors shrink-0"
+          >
+            <span>Quota Reached — Upgrade to add more</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </Link>
+        )}
+      </div>
+
+      <SubscriptionLimitModal
+        isOpen={Boolean(limitModalData)}
+        onClose={() => setLimitModalData(null)}
+        {...limitModalData}
+      />
 
       <FilterBar
         searchQuery={search}
@@ -331,7 +409,7 @@ export function SiteManagement({ sites = [], managers = [], loading, error }) {
       {/* Project Modal */}
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingSite ? 'Edit Project Master' : 'Create New Construction Project'}>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block text-xs font-medium text-slate-700">
               Project Name *
               <input
@@ -352,7 +430,7 @@ export function SiteManagement({ sites = [], managers = [], loading, error }) {
             </label>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <label className="block text-xs font-medium text-slate-700">
               Client Name
               <input
@@ -383,7 +461,7 @@ export function SiteManagement({ sites = [], managers = [], loading, error }) {
             </label>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block text-xs font-medium text-slate-700">
               Site Location / Address
               <input
@@ -406,7 +484,7 @@ export function SiteManagement({ sites = [], managers = [], loading, error }) {
             </label>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block text-xs font-medium text-slate-700">
               Start Date
               <input
@@ -427,18 +505,18 @@ export function SiteManagement({ sites = [], managers = [], loading, error }) {
             </label>
           </div>
 
-          <div className="flex gap-3 pt-2">
+          <div className="flex flex-col-reverse sm:flex-row gap-2.5 sm:gap-3 pt-2">
             <button
               type="button"
               onClick={() => setIsModalOpen(false)}
-              className="w-1/2 py-2.5 rounded-xl font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs transition-colors"
+              className="w-full sm:w-1/2 py-2.5 rounded-xl font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs transition-colors cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="w-1/2 py-2.5 rounded-xl font-bold bg-[#0B3470] hover:bg-blue-800 text-white text-xs shadow-sm transition-colors"
+              className="w-full sm:w-1/2 py-2.5 rounded-xl font-bold bg-[#0B3470] hover:bg-blue-800 text-white text-xs shadow-sm transition-colors cursor-pointer disabled:opacity-50"
             >
               {saving ? 'Saving...' : editingSite ? 'Save Changes' : '✓ Create Project'}
             </button>
@@ -780,15 +858,69 @@ export function ReportsEngine(rawData) {
 }
 
 // ------------------------------------------------------------------------------------------------
+// Plan Feature Gate Component
+// ------------------------------------------------------------------------------------------------
+function PlanFeatureGate({ featureName, requiredTier = 'Gold', planName = 'Free Trial', description }) {
+  return (
+    <div className="bg-white rounded-3xl p-8 md:p-12 border border-slate-200 text-center max-w-2xl mx-auto shadow-xs my-8 space-y-5 animate-fade-in">
+      <div className="w-16 h-16 rounded-2xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center mx-auto shadow-xs">
+        <ShieldAlert className="w-8 h-8" />
+      </div>
+      <div>
+        <span className="text-[10px] font-extrabold uppercase tracking-widest text-blue-600 bg-blue-50 border border-blue-200 px-3 py-1 rounded-full">
+          {requiredTier} Plan Feature
+        </span>
+        <h2 className="text-2xl font-black text-slate-900 mt-3">{featureName}</h2>
+        <p className="text-sm text-slate-600 mt-2 leading-relaxed">
+          {description || `This module requires the ${requiredTier} plan or above. Your organization is currently on the ${planName} plan.`}
+        </p>
+      </div>
+
+      <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-xs text-left max-w-md mx-auto space-y-2">
+        <div className="flex justify-between items-center">
+          <span className="text-slate-500">Current Plan:</span>
+          <span className="font-bold text-slate-800 px-2 py-0.5 bg-slate-200/70 rounded-md text-[11px]">{planName}</span>
+        </div>
+        <div className="flex justify-between items-center">
+          <span className="text-slate-500">Required Plan:</span>
+          <strong className="text-blue-700">{requiredTier}</strong>
+        </div>
+      </div>
+
+      <div className="pt-2">
+        <Link
+          to="/organization/subscription"
+          className="inline-flex items-center gap-2 px-6 py-3 bg-[#0B3470] hover:bg-blue-900 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer"
+        >
+          <span>Upgrade to {requiredTier}</span>
+          <ArrowUpRight className="w-4 h-4" />
+        </Link>
+      </div>
+    </div>
+  )
+}
+
+// ------------------------------------------------------------------------------------------------
 // 8. MAIN ORGANIZATION MODULE DISPATCHER
 // ------------------------------------------------------------------------------------------------
 export default function OrganizationModule(props) {
   const { module } = useParams()
   const activeModule = props.module || module || 'sites'
+  const planName = props.subscription?.subscriptionPlan || 'Free Trial'
 
   switch (activeModule) {
     case 'finance':
     case 'financials':
+      if (!isFeatureAllowedForPlan('petty_cash_expenses', planName)) {
+        return (
+          <PlanFeatureGate
+            featureName="Finance & Expense Management"
+            requiredTier="Silver"
+            planName={planName}
+            description="Financial expense tracking, daily entries submissions, and vendor cost ledgers require the Silver plan or above."
+          />
+        )
+      }
       return (
         <OrgFinancePage
           sites={props.sites}
@@ -796,14 +928,51 @@ export default function OrganizationModule(props) {
           sitePayments={props.sitePayments}
         />
       )
+    case 'expenses':
+    case 'organization-expenses':
+    case 'org-expenses':
+      return (
+        <OrganizationExpenses
+          orgId={props.orgId}
+          sites={props.sites}
+          currentUser={props.user}
+          onNotify={props.onNotify}
+        />
+      )
     case 'sites':
     case 'projects':
-      return <SiteManagement sites={props.sites} managers={props.managers} loading={props.loading} error={props.error} />
+      return (
+        <SiteManagement
+          sites={props.sites}
+          managers={props.managers}
+          subscription={props.subscription}
+          loading={props.loading}
+          error={props.error}
+        />
+      )
+    case 'drawings':
+    case 'blueprints':
+    case 'layouts':
+    case 'layout-drawings':
+      return <BlueprintsDrawings orgId={props.orgId} sites={props.sites} currentUser={props.user} onNotify={props.onNotify} />
+    case 'construction-documents':
+    case 'construction-docs':
+      return <ConstructionDocuments orgId={props.orgId} sites={props.sites} currentUser={props.user} onNotify={props.onNotify} />
     case 'materials':
     case 'inventory':
     case 'tools':
     case 'assets':
     case 'equipment':
+      if (!isFeatureAllowedForPlan('materials_inventory', planName)) {
+        return (
+          <PlanFeatureGate
+            featureName="Inventory & Supply Chain"
+            requiredTier="Silver"
+            planName={planName}
+            description="Material indent, purchasing, vendor tracking, and equipment movements require the Silver plan or above."
+          />
+        )
+      }
       return <OrganizationInventoryHub {...props} />
     case 'team':
     case 'users':
@@ -821,13 +990,38 @@ export default function OrganizationModule(props) {
     case 'approvals':
     case 'approval':
     case 'authorizations':
+      if (!isFeatureAllowedForPlan('approvals_workflow', planName)) {
+        return (
+          <PlanFeatureGate
+            featureName="Multi-Tier Approvals Center"
+            requiredTier="Silver"
+            planName={planName}
+            description="Multi-tier payment approval workflows, milestone authorizations, and contractor sign-offs require the Silver plan or above."
+          />
+        )
+      }
       return <OrganizationApprovalsCenter {...props} />
     case 'petty-cash':
+      if (!isFeatureAllowedForPlan('petty_cash_expenses', planName)) {
+        return (
+          <PlanFeatureGate
+            featureName="Petty Cash Governance"
+            requiredTier="Silver"
+            planName={planName}
+            description="Petty cash floats, expense tracking, and reimbursement workflows require the Silver plan or above."
+          />
+        )
+      }
       return <PettyCashGovernance {...props} />
     case 'reports':
     case 'insights':
     case 'analytics':
       return <OrganizationReportsHub {...props} />
+    case 'incentives':
+    case 'incentive':
+    case 'incentive-calculation':
+    case 'supervisor-incentives':
+      return <IncentiveCalculation {...props} />
     case 'subscription':
     case 'plans':
     case 'billing':
@@ -839,6 +1033,14 @@ export default function OrganizationModule(props) {
         />
       )
     default:
-      return <SiteManagement sites={props.sites} managers={props.managers} loading={props.loading} error={props.error} />
+      return (
+        <SiteManagement
+          sites={props.sites}
+          managers={props.managers}
+          subscription={props.subscription}
+          loading={props.loading}
+          error={props.error}
+        />
+      )
   }
 }

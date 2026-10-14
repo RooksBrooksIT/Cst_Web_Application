@@ -10,7 +10,7 @@ export default function FilterBar({
   return (
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-white border border-slate-200/90 rounded-2xl shadow-xs">
       {/* Search Input */}
-      <div className="relative flex-1 max-w-sm">
+      <div className="relative flex-1 w-full sm:max-w-sm">
         <span className="absolute inset-y-0 left-3 flex items-center text-slate-400 text-xs">⌕</span>
         <input
           type="text"
@@ -22,9 +22,9 @@ export default function FilterBar({
       </div>
 
       {/* Tabs & Actions */}
-      <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
         {tabs.length > 0 && (
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl overflow-x-auto max-w-full [scrollbar-width:none] [&::-webkit-scrollbar]:hidden touch-pan-x">
             {tabs.map((tab) => {
               const isActive = activeTab === tab.id
               return (
@@ -32,7 +32,7 @@ export default function FilterBar({
                   key={tab.id}
                   type="button"
                   onClick={() => onTabChange(tab.id)}
-                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all whitespace-nowrap cursor-pointer shrink-0 ${
                     isActive
                       ? 'bg-[#0B3470] text-white shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'

@@ -19,6 +19,21 @@ import {
   subscribeWithFallback,
 } from './firestoreService.js'
 import { notifySiteAssignment } from './notificationService.js'
+import { SubscriptionLimitService } from './subscriptionLimitService.js'
+import {
+  isGlobalUsernameUnique,
+  warmupUsernameCache,
+  isUsernameCachedAsTaken,
+  addTakenUsernameToCache,
+} from './usernameValidationService.js'
+
+export {
+  isGlobalUsernameUnique,
+  warmupUsernameCache,
+  isUsernameCachedAsTaken,
+  addTakenUsernameToCache,
+}
+
 
 /**
  * CST White Label - Supervisor & Field Operations Service
@@ -163,6 +178,15 @@ export function subscribeSupervisors(orgId, onData, onError) {
 export async function checkSupervisorUniqueness(orgId, { username, phone, email, currentId = null }) {
   if (!orgId) return { isUnique: true }
 
+  // 1. Universal Case-Insensitive Global Username Validation
+  if (username && String(username).trim()) {
+    const userRes = await isGlobalUsernameUnique(username, { orgId, excludeDocId: currentId })
+    if (!userRes.isUnique) {
+      return { isUnique: false, field: 'username', message: 'Username already exists' }
+    }
+  }
+
+  // 2. Phone and Email Uniqueness Check within Organization
   const checked = new Set()
   const collectionsToCheck = ['supervisor', 'siteSupervisor', 'supervisors']
 
@@ -180,12 +204,6 @@ export async function checkSupervisorUniqueness(orgId, { username, phone, email,
           continue
         }
 
-        if (
-          username &&
-          String(data.UserName || data.username || '').toLowerCase() === String(username).toLowerCase().trim()
-        ) {
-          return { isUnique: false, field: 'username', message: `Username "${username}" is already taken.` }
-        }
         if (phone && String(data.ContactNo || data.phone || '').trim() === String(phone).trim()) {
           return { isUnique: false, field: 'phone', message: `Contact Number "${phone}" is already registered.` }
         }
@@ -199,7 +217,7 @@ export async function checkSupervisorUniqueness(orgId, { username, phone, email,
     } catch (e) {}
   }
 
-  return { isUnique: true }
+  return { isUnique: true, message: 'Username is available ✓' }
 }
 
 /**
@@ -216,6 +234,16 @@ export async function createSupervisor(orgId, supervisorData, managerActor) {
   if (!supervisorData.username?.trim()) throw new Error('Username is required')
   if (!supervisorData.password?.trim()) throw new Error('Password is required')
   if (!supervisorData.phone?.trim()) throw new Error('Contact Phone is required')
+
+  // Enforce Subscription Plan Limit (Section 5.3 of SUBSCRIPTION_PLAN_LIMITATIONS.txt)
+  const validation = await SubscriptionLimitService.canCreateSupervisor({ orgId })
+  if (!validation.isAllowed) {
+    const error = new Error(validation.message)
+    error.code = validation.reason
+    error.upgradePlan = validation.upgradePlan
+    error.limits = validation.limits
+    throw error
+  }
 
   const uniqueCheck = await checkSupervisorUniqueness(orgId, {
     username: supervisorData.username,
@@ -303,16 +331,12 @@ export async function createSupervisor(orgId, supervisorData, managerActor) {
   }
 
   // 3. Document ID MUST BE EXACTLY the generated SupervisorId (no random IDs)
+  // Store newly created supervisor data only in the existing `supervisor` Firestore collection
   const supRef = doc(db, 'organisation', orgId, 'supervisor', supervisorId)
   await setDoc(supRef, payload)
 
-  // Mirror to legacy siteSupervisor alias collection with identical Document ID
-  try {
-    const siteSupRef = doc(db, 'organisation', orgId, 'siteSupervisor', supervisorId)
-    await setDoc(siteSupRef, payload)
-  } catch (err) {
-    console.warn('Could not mirror supervisor to siteSupervisor collection:', err)
-  }
+  addTakenUsernameToCache(supervisorData.username)
+  addTakenUsernameToCache(supervisorId)
 
   return { id: supervisorId, SupervisorId: supervisorId, ...payload }
 }
@@ -401,33 +425,171 @@ export function subscribeSiteSupervisorMappings(orgId, onData, onError) {
   return subscribeWithFallback(orgId, 'siteSupervisorMap', onData, onError)
 }
 
+// Helper to resolve canonical siteDocId (e.g. ST001_Testing), siteId (ST001), and siteName (Testing)
+export function parseSiteIdentifiers(mapData) {
+  const siteObj = mapData.site || {}
+  const rawSiteDocId = String(mapData.siteDocId || siteObj.siteDocId || '').trim()
+  const rawSiteId = String(mapData.siteId || siteObj.siteId || siteObj.siteCode || mapData.siteCode || '').trim()
+  const rawSiteName = String(mapData.siteName || siteObj.siteName || mapData.projectName || siteObj.projectName || '').trim()
+
+  let siteDocId = ''
+  let siteId = ''
+  let siteName = ''
+
+  // 1. If explicit siteDocId provided (e.g. "ST001_Testing")
+  if (rawSiteDocId && rawSiteDocId.includes('_')) {
+    siteDocId = rawSiteDocId
+    const parts = siteDocId.split('_').filter(Boolean)
+    siteId = parts[0]
+    siteName = parts.slice(1).join('_')
+  }
+
+  // 2. If compound ID with 3 or more parts (e.g. "PR003_ST003_RooksAndBrooks" or "PR001_ST001_Testing")
+  if (!siteDocId && rawSiteId.includes('_')) {
+    const parts = rawSiteId.split('_').filter(Boolean)
+    if (parts.length >= 3 && parts[0].toUpperCase().startsWith('PR')) {
+      const codePart = parts[1].toUpperCase().startsWith('PR') ? `ST${parts[1].substring(2)}` : parts[1]
+      const namePart = parts.slice(2).join('_')
+      siteDocId = `${codePart}_${namePart}`
+      siteId = codePart
+      siteName = namePart
+    } else if (parts.length >= 2) {
+      const codePart = parts[0].toUpperCase().startsWith('PR') ? `ST${parts[0].substring(2)}` : parts[0]
+      const namePart = parts.slice(1).join('_')
+      siteDocId = `${codePart}_${namePart}`
+      siteId = codePart
+      siteName = namePart
+    }
+  }
+
+  // 3. Fallback: construct from siteCode/siteId and siteName
+  if (!siteDocId) {
+    const code = rawSiteId.toUpperCase().startsWith('PR') ? `ST${rawSiteId.substring(2)}` : (rawSiteId || 'ST001')
+    const name = (rawSiteName || 'Site').replace(/\s+/g, '')
+    siteDocId = `${code}_${name}`
+    siteId = code
+    siteName = rawSiteName || name
+  }
+
+  if (!siteId && siteDocId.includes('_')) {
+    siteId = siteDocId.split('_')[0]
+  }
+  if (!siteName && siteDocId.includes('_')) {
+    siteName = siteDocId.split('_').slice(1).join('_')
+  }
+
+  return { siteDocId, siteId, siteName }
+}
+
 export async function mapSupervisorToSite(orgId, mapData, managerActor) {
   if (!orgId) throw new Error('orgId is required')
-  if (!mapData.siteId) throw new Error('Site is required')
-  if (!mapData.supervisorId) throw new Error('Supervisor is required')
+  if (!mapData.siteId && !mapData.siteDocId && !mapData.site) throw new Error('Site is required')
+  if (!mapData.supervisorId && !mapData.SupervisorId && !mapData['Supervisor ID']) throw new Error('Supervisor is required')
 
-  const supervisorId = mapData.supervisorId
-  const mappingId = `MAP_${mapData.siteId}_${supervisorId}`
+  const { siteDocId, siteId, siteName } = parseSiteIdentifiers(mapData)
+
+  const supervisorName = (
+    mapData.FullName ||
+    mapData.supervisorName ||
+    mapData.supervisor ||
+    'Supervisor'
+  ).trim()
+  const cleanSupName = supervisorName.replace(/\s+/g, '')
+
+  const supervisorId = String(
+    mapData.supervisorId ||
+    mapData.SupervisorId ||
+    mapData['Supervisor ID'] ||
+    'SUP001'
+  ).trim()
+
+  // Format: site document ID / site name format + supervisor name (e.g. ST001_Testing_Abinesh)
+  const mappingId = `${siteDocId}_${cleanSupName}`
+
+  const managerName = (
+    managerActor?.name ||
+    managerActor?.displayName ||
+    managerActor?.fullName ||
+    mapData.managerName ||
+    mapData.manager ||
+    mapData.assignedByManager ||
+    'Sharan'
+  ).trim()
+
+  const managerId = (
+    managerActor?.id ||
+    managerActor?.uid ||
+    mapData.managerId ||
+    ''
+  ).trim()
+
+  const projectName = (
+    mapData.projectName ||
+    mapData.project ||
+    siteName ||
+    'Testing'
+  ).trim()
+
+  const stage = (
+    mapData.projectStage ||
+    mapData.stage ||
+    'Ground'
+  ).trim()
+
+  const formatIsoDate = (d) => {
+    if (!d) return ''
+    if (typeof d === 'string') return d
+    if (d instanceof Date) return d.toISOString().split('T')[0]
+    if (d?.toDate) return d.toDate().toISOString().split('T')[0]
+    if (d?.seconds) return new Date(d.seconds * 1000).toISOString().split('T')[0]
+    return ''
+  }
+
+  const startDate = formatIsoDate(mapData.startDate)
+  const endDate = formatIsoDate(mapData.endDate)
+  const joinedDate = formatIsoDate(mapData.joinedDate)
+  const joinedOn = mapData['Joined On'] || mapData.joinedOn || ''
+
+  const siteObj = mapData.site || {}
+  const location = (
+    mapData.location ||
+    siteObj.location ||
+    siteObj.siteLocation ||
+    ''
+  ).trim()
+
+  const siteComments = (
+    mapData.siteComments ||
+    mapData.comments ||
+    ''
+  ).trim()
+
   const payload = {
-    siteId: mapData.siteId,
-    siteName: mapData.siteName || '',
-    siteCode: mapData.siteCode || '',
-    projectId: mapData.projectId || mapData.siteId,
-    projectName: mapData.projectName || mapData.siteName || '',
-    SupervisorId: supervisorId,
-    supervisorId: supervisorId,
+    FullName: supervisorName,
+    'Joined On': joinedOn,
     'Supervisor ID': supervisorId,
-    supervisorName: mapData.supervisorName || '',
-    supervisor: mapData.supervisorName || '',
-    projectStage: mapData.projectStage || 'Foundation & Plinth',
-    location: mapData.location || '',
-    joinedDate: mapData.joinedDate ? new Date(mapData.joinedDate) : serverTimestamp(),
-    startDate: mapData.startDate ? new Date(mapData.startDate) : serverTimestamp(),
-    endDate: mapData.endDate ? new Date(mapData.endDate) : null,
-    comments: mapData.comments || '',
-    managerId: managerActor?.id || 'mgr_lead',
-    managerName: managerActor?.name || 'Operations Manager',
-    createdAt: serverTimestamp(),
+    SupervisorId: supervisorId,
+    assignedByManager: managerName,
+    endDate: endDate,
+    joinedDate: joinedDate,
+    location: location,
+    manager: managerName,
+    managerId: managerId,
+    managerName: managerName,
+    project: projectName,
+    projectName: projectName,
+    projectStage: stage,
+    site: siteDocId,
+    siteComments: siteComments,
+    siteDocId: siteDocId,
+    siteId: siteId,
+    siteName: siteName,
+    stage: stage,
+    startDate: startDate,
+    supervisor: supervisorName,
+    supervisorId: supervisorId,
+    supervisorName: supervisorName,
+    updatedAt: serverTimestamp(),
   }
 
   const mapRef = doc(db, 'organisation', orgId, 'siteSupervisorMap', mappingId)
@@ -441,9 +603,10 @@ export async function mapSupervisorToSite(orgId, mapData, managerActor) {
       const supSnap = await getDoc(supRef)
       if (supSnap.exists()) {
         const existing = supSnap.data().assignedSites || []
-        if (!existing.includes(mapData.siteId)) {
+        const siteToAssign = siteDocId || mapData.siteId
+        if (!existing.includes(siteToAssign)) {
           await updateDoc(supRef, {
-            assignedSites: [...existing, mapData.siteId],
+            assignedSites: [...existing, siteToAssign],
             updatedAt: serverTimestamp(),
           })
         }
@@ -457,10 +620,10 @@ export async function mapSupervisorToSite(orgId, mapData, managerActor) {
   try {
     await notifySiteAssignment({
       orgId,
-      siteId: mapData.siteId,
-      siteName: mapData.siteName || mapData.projectName || 'Assigned Site',
-      supervisorId: mapData.supervisorId,
-      supervisorName: mapData.supervisorName || 'Supervisor',
+      siteId: siteDocId || mapData.siteId,
+      siteName: siteName || projectName || 'Assigned Site',
+      supervisorId: supervisorId,
+      supervisorName: supervisorName,
       senderUser: managerActor,
       senderRole: 'manager',
     })
@@ -476,7 +639,7 @@ export async function removeSupervisorMapping(orgId, mappingId, siteId, supervis
   const mapRef = doc(db, 'organisation', orgId, 'siteSupervisorMap', mappingId)
   await deleteDoc(mapRef)
 
-  if (supervisorId && siteId) {
+  if (supervisorId) {
     const collections = ['supervisor', 'siteSupervisor']
     for (const col of collections) {
       try {
@@ -485,7 +648,9 @@ export async function removeSupervisorMapping(orgId, mappingId, siteId, supervis
         if (supSnap.exists()) {
           const existing = supSnap.data().assignedSites || []
           await updateDoc(supRef, {
-            assignedSites: existing.filter((s) => s !== siteId),
+            assignedSites: existing.filter(
+              (s) => s !== siteId && s !== mappingId && !mappingId.startsWith(s + '_')
+            ),
             updatedAt: serverTimestamp(),
           })
         }

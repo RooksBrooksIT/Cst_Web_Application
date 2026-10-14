@@ -13,7 +13,10 @@ import {
   User,
   Shield,
   HelpCircle,
+  Loader2,
 } from 'lucide-react'
+import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore'
+import { db } from '../../../services/firebase.js'
 import {
   fetchSiteSupervisorMappings,
   mapSupervisorToSite,
@@ -32,13 +35,159 @@ export default function SiteSupervisorMap({ orgId, sites = [], currentUser, onNo
   const [showAddModal, setShowAddModal] = useState(false)
   const [formSiteId, setFormSiteId] = useState('')
   const [formSupervisorId, setFormSupervisorId] = useState('')
-  const [formProjectStage, setFormProjectStage] = useState('Superstructure Columns & RCC Slabs')
+  const [formProjectStage, setFormProjectStage] = useState('')
+  const [stageLoading, setStageLoading] = useState(false)
+  const [stageError, setStageError] = useState('')
   const [formStartDate, setFormStartDate] = useState(new Date().toISOString().split('T')[0])
   const [formComments, setFormComments] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   // Unlink modal
   const [unlinkModal, setUnlinkModal] = useState(null)
+
+  const handleCloseModal = () => {
+    setShowAddModal(false)
+    setFormSiteId('')
+    setFormSupervisorId('')
+    setFormProjectStage('')
+    setStageError('')
+    setFormComments('')
+  }
+
+  const handleOpenAddModal = () => {
+    const initialSiteId = sites.length > 0 ? sites[0].id : ''
+    const initialSupervisorId =
+      supervisors.length > 0
+        ? supervisors[0].SupervisorId || supervisors[0].supervisorId || supervisors[0].id
+        : ''
+    setFormSiteId(initialSiteId)
+    setFormSupervisorId(initialSupervisorId)
+    setFormComments('')
+    setFormStartDate(new Date().toISOString().split('T')[0])
+    setShowAddModal(true)
+  }
+
+  // Dynamically fetch projectStage from the `projects` Firestore collection when target site changes
+  useEffect(() => {
+    let isCancelled = false
+
+    async function loadProjectStage() {
+      if (!orgId || !formSiteId) {
+        setFormProjectStage('')
+        setStageError('')
+        setStageLoading(false)
+        return
+      }
+
+      setStageLoading(true)
+      setStageError('')
+
+      try {
+        let matchedStage = null
+        let projectDoc = null
+
+        // 1. Direct document lookup in /organisation/{orgId}/projects/{formSiteId}
+        const directDocRef = doc(db, 'organisation', orgId, 'projects', formSiteId)
+        const directSnap = await getDoc(directDocRef)
+
+        if (directSnap.exists()) {
+          projectDoc = directSnap.data()
+        } else {
+          // 2. Query where siteId == formSiteId or projectId == formSiteId
+          const qSite = query(
+            collection(db, 'organisation', orgId, 'projects'),
+            where('siteId', '==', formSiteId)
+          )
+          const siteSnap = await getDocs(qSite)
+          if (!siteSnap.empty) {
+            projectDoc = siteSnap.docs[0].data()
+          } else {
+            const qProj = query(
+              collection(db, 'organisation', orgId, 'projects'),
+              where('projectId', '==', formSiteId)
+            )
+            const projSnap = await getDocs(qProj)
+            if (!projSnap.empty) {
+              projectDoc = projSnap.docs[0].data()
+            } else {
+              // 3. Fallback scan across projects collection for compound keys (e.g. PR001_ST001_Testing)
+              const allSnap = await getDocs(collection(db, 'organisation', orgId, 'projects'))
+              const found = allSnap.docs.find((d) => {
+                const data = d.data() || {}
+                return (
+                  d.id === formSiteId ||
+                  data.siteId === formSiteId ||
+                  data.projectId === formSiteId ||
+                  data.siteCode === formSiteId ||
+                  data.projectCode === formSiteId ||
+                  (formSiteId && d.id.toLowerCase().includes(formSiteId.toLowerCase())) ||
+                  (data.siteId && formSiteId.toLowerCase().includes(data.siteId.toLowerCase()))
+                )
+              })
+              if (found) {
+                projectDoc = found.data()
+              }
+            }
+          }
+        }
+
+        if (isCancelled) return
+
+        if (projectDoc) {
+          const rawStage =
+            projectDoc.projectStage !== undefined && projectDoc.projectStage !== null && String(projectDoc.projectStage).trim() !== ''
+              ? projectDoc.projectStage
+              : projectDoc.currentStage || projectDoc.stage || ''
+
+          if (rawStage && String(rawStage).trim()) {
+            matchedStage = String(rawStage).trim()
+          }
+        }
+
+        // Secondary fallback to sites prop if document exists there
+        if (!matchedStage) {
+          const localMatch = sites.find(
+            (s) => s.id === formSiteId || s.siteId === formSiteId
+          )
+          if (localMatch?.projectStage && String(localMatch.projectStage).trim()) {
+            matchedStage = String(localMatch.projectStage).trim()
+          }
+        }
+
+        if (matchedStage) {
+          setFormProjectStage(matchedStage)
+          setStageError('')
+        } else {
+          setFormProjectStage('')
+          setStageError('No project stage defined for this project in Project Setup.')
+        }
+      } catch (err) {
+        console.error('Error fetching project stage from projects collection:', err)
+        if (!isCancelled) {
+          const localMatch = sites.find(
+            (s) => s.id === formSiteId || s.siteId === formSiteId
+          )
+          if (localMatch?.projectStage && String(localMatch.projectStage).trim()) {
+            setFormProjectStage(String(localMatch.projectStage).trim())
+            setStageError('')
+          } else {
+            setFormProjectStage('')
+            setStageError('Failed to fetch project stage from projects collection.')
+          }
+        }
+      } finally {
+        if (!isCancelled) {
+          setStageLoading(false)
+        }
+      }
+    }
+
+    loadProjectStage()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [formSiteId, orgId, sites])
 
   const loadData = async () => {
     if (!orgId) return
@@ -72,7 +221,9 @@ export default function SiteSupervisorMap({ orgId, sites = [], currentUser, onNo
 
     setSubmitting(true)
     try {
-      const site = sites.find((s) => s.id === formSiteId)
+      const site = sites.find(
+        (s) => s.id === formSiteId || s.siteDocId === formSiteId || s.siteId === formSiteId
+      )
       const sup = supervisors.find(
         (s) => (s.SupervisorId || s.supervisorId || s.id) === formSupervisorId
       )
@@ -80,24 +231,27 @@ export default function SiteSupervisorMap({ orgId, sites = [], currentUser, onNo
       await mapSupervisorToSite(
         orgId,
         {
+          site,
           siteId: formSiteId,
-          siteName: site?.siteName || site?.projectName || 'Project Site',
-          siteCode: site?.siteCode || '',
+          siteDocId: site?.siteDocId,
+          siteName: site?.siteName || site?.name || site?.projectName || 'Project Site',
+          siteCode: site?.siteCode || site?.siteId || '',
+          projectName: site?.projectName || site?.siteName || '',
           supervisorId: formSupervisorId,
           supervisorName: sup?.fullName || sup?.FullName || sup?.name || 'Supervisor',
+          FullName: sup?.fullName || sup?.FullName || sup?.name || 'Supervisor',
           projectStage: formProjectStage,
-          location: site?.location || '',
+          stage: formProjectStage,
+          location: site?.location || site?.siteLocation || '',
           startDate: formStartDate,
+          siteComments: formComments,
           comments: formComments,
         },
         currentUser
       )
 
       onNotify?.('Supervisor successfully assigned to site!', 'success')
-      setShowAddModal(false)
-      setFormSiteId('')
-      setFormSupervisorId('')
-      setFormComments('')
+      handleCloseModal()
       await loadData()
     } catch (err) {
       console.error(err)
@@ -113,8 +267,8 @@ export default function SiteSupervisorMap({ orgId, sites = [], currentUser, onNo
       await removeSupervisorMapping(
         orgId,
         unlinkModal.id,
-        unlinkModal.siteId,
-        unlinkModal.supervisorId || unlinkModal['Supervisor ID']
+        unlinkModal.siteDocId || unlinkModal.site || unlinkModal.siteId,
+        unlinkModal.supervisorId || unlinkModal.SupervisorId || unlinkModal['Supervisor ID']
       )
       onNotify?.('Supervisor assignment removed from site', 'info')
       setUnlinkModal(null)
@@ -128,9 +282,9 @@ export default function SiteSupervisorMap({ orgId, sites = [], currentUser, onNo
   const filteredMappings = useMemo(() => {
     return mappings.filter((m) => {
       const siteName = (m.siteName || m.projectName || '').toLowerCase()
-      const supName = (m.supervisorName || m.supervisor || '').toLowerCase()
+      const supName = (m.supervisorName || m.supervisor || m.FullName || '').toLowerCase()
       const supId = (m.SupervisorId || m.supervisorId || m['Supervisor ID'] || '').toLowerCase()
-      const stage = (m.projectStage || '').toLowerCase()
+      const stage = (m.projectStage || m.stage || '').toLowerCase()
       const q = searchQuery.toLowerCase().trim()
       const matchesSearch =
         !q ||
@@ -139,7 +293,12 @@ export default function SiteSupervisorMap({ orgId, sites = [], currentUser, onNo
         supId.includes(q) ||
         stage.includes(q)
 
-      const matchesSite = selectedSiteFilter === 'ALL' || m.siteId === selectedSiteFilter
+      const matchesSite =
+        selectedSiteFilter === 'ALL' ||
+        m.siteId === selectedSiteFilter ||
+        m.siteDocId === selectedSiteFilter ||
+        m.site === selectedSiteFilter ||
+        (selectedSiteFilter && m.siteDocId && selectedSiteFilter.includes(m.siteDocId))
 
       return matchesSearch && matchesSite
     })
@@ -161,14 +320,7 @@ export default function SiteSupervisorMap({ orgId, sites = [], currentUser, onNo
           </p>
         </div>
         <button
-          onClick={() => {
-            if (sites.length > 0 && !formSiteId) setFormSiteId(sites[0].id)
-            if (supervisors.length > 0 && !formSupervisorId)
-              setFormSupervisorId(
-                supervisors[0].SupervisorId || supervisors[0].supervisorId || supervisors[0].id
-              )
-            setShowAddModal(true)
-          }}
+          onClick={handleOpenAddModal}
           className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-[#0B3470] hover:bg-[#082855] text-white text-sm font-semibold rounded-xl transition-all shadow-xs cursor-pointer"
         >
           <Plus className="w-4 h-4" />
@@ -304,7 +456,7 @@ export default function SiteSupervisorMap({ orgId, sites = [], currentUser, onNo
                 <h3 className="text-base font-bold text-slate-900">Assign Field Supervisor</h3>
                 <p className="text-xs text-slate-500">Connect a supervisor to a project site for daily log authority.</p>
               </div>
-              <button onClick={() => setShowAddModal(false)} className="p-1 text-slate-400 hover:text-slate-600">
+              <button onClick={handleCloseModal} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer">
                 ✕
               </button>
             </div>
@@ -353,15 +505,52 @@ export default function SiteSupervisorMap({ orgId, sites = [], currentUser, onNo
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Assigned Project Stage
-                  </label>
-                  <input
-                    type="text"
-                    value={formProjectStage}
-                    onChange={(e) => setFormProjectStage(e.target.value)}
-                    className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
-                  />
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                      Assigned Project Stage
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-medium bg-slate-100 px-1.5 py-0.5 rounded">
+                      Read-Only
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      readOnly
+                      disabled
+                      value={formProjectStage}
+                      placeholder={
+                        !formSiteId
+                          ? 'Select site to populate stage...'
+                          : stageLoading
+                          ? 'Fetching project stage...'
+                          : 'No stage defined for this project'
+                      }
+                      className={`w-full px-3.5 py-2 text-sm rounded-xl border transition-colors cursor-not-allowed select-none ${
+                        formProjectStage
+                          ? 'bg-slate-100 text-slate-800 font-medium border-slate-200'
+                          : 'bg-slate-50 text-slate-400 border-dashed border-slate-300'
+                      }`}
+                    />
+                    {stageLoading && (
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                        <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
+                      </div>
+                    )}
+                  </div>
+                  {/* Graceful empty/validation state */}
+                  {formSiteId && !stageLoading && !formProjectStage && (
+                    <p className="mt-1 text-[11px] text-amber-600 flex items-center gap-1 font-medium">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+                      <span>{stageError || 'No project stage defined in Project Setup.'}</span>
+                    </p>
+                  )}
+                  {formSiteId && !stageLoading && formProjectStage && (
+                    <p className="mt-1 text-[11px] text-emerald-600 flex items-center gap-1 font-medium">
+                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+                      <span>Dynamically loaded from project configuration</span>
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -393,8 +582,8 @@ export default function SiteSupervisorMap({ orgId, sites = [], currentUser, onNo
               <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl"
+                  onClick={handleCloseModal}
+                  className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
                 >
                   Cancel
                 </button>

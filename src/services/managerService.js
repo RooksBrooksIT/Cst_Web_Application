@@ -11,6 +11,7 @@ import {
 } from 'firebase/firestore'
 import { db } from './firebase'
 import { fetchWithFallback, subscribeWithFallback } from './firestoreService'
+import { SubscriptionLimitService } from './subscriptionLimitService'
 
 /**
  * CST Manager Governance & Uniqueness Engine
@@ -27,80 +28,20 @@ export async function fetchManagers(orgId) {
   return fetchWithFallback(orgId, 'manager')
 }
 
-/**
- * Validates requested username against all role collections case-insensitively.
- * Checks: manager, supervisor, siteSupervisor, users, config_users, organisation docs.
- */
-export async function checkGlobalUsernameUniqueness(orgId, targetUsername) {
-  if (!targetUsername || !targetUsername.trim()) {
-    return { isUnique: false, message: 'Username is required.' }
-  }
+import {
+  isGlobalUsernameUnique,
+  checkGlobalUsernameUniqueness,
+  warmupUsernameCache,
+  isUsernameCachedAsTaken,
+  addTakenUsernameToCache,
+} from './usernameValidationService'
 
-  const cleanTarget = targetUsername.trim().toLowerCase()
-  const checkedPaths = new Set()
-
-  // 1. Organization-level subcollections
-  const subColNames = ['manager', 'managers', 'supervisor', 'supervisors', 'siteSupervisor', 'config_users', 'users']
-  if (orgId) {
-    for (const subCol of subColNames) {
-      try {
-        const snap = await getDocs(collection(db, 'organisation', orgId, subCol))
-        for (const d of snap.docs) {
-          if (checkedPaths.has(d.ref.path)) continue
-          checkedPaths.add(d.ref.path)
-          const data = d.data() || {}
-          const un = String(data.UserName || data.userName || data.username || data.name || '').trim().toLowerCase()
-          if (un && un === cleanTarget) {
-            return {
-              isUnique: false,
-              message: 'Username already exists. Please use another username.',
-            }
-          }
-        }
-      } catch (_err) {}
-    }
-  }
-
-  // 2. Root-level role collections
-  const rootCols = ['manager', 'managers', 'supervisor', 'supervisors', 'users', 'organisation', 'organisations', 'invitations']
-  for (const rootCol of rootCols) {
-    try {
-      const snap = await getDocs(collection(db, rootCol))
-      for (const d of snap.docs) {
-        if (checkedPaths.has(d.ref.path)) continue
-        checkedPaths.add(d.ref.path)
-        const data = d.data() || {}
-        const un = String(data.UserName || data.userName || data.username || data.code || '').trim().toLowerCase()
-        if (un && un === cleanTarget) {
-          return {
-            isUnique: false,
-            message: 'Username already exists. Please use another username.',
-          }
-        }
-      }
-    } catch (_err) {}
-  }
-
-  // 3. Collection Group cross-checking for manager and supervisor
-  for (const colGroup of ['manager', 'supervisor']) {
-    try {
-      const groupSnap = await getDocs(collectionGroup(db, colGroup))
-      for (const d of groupSnap.docs) {
-        if (checkedPaths.has(d.ref.path)) continue
-        checkedPaths.add(d.ref.path)
-        const data = d.data() || {}
-        const un = String(data.UserName || data.userName || data.username || '').trim().toLowerCase()
-        if (un && un === cleanTarget) {
-          return {
-            isUnique: false,
-            message: 'Username already exists. Please use another username.',
-          }
-        }
-      }
-    } catch (_err) {}
-  }
-
-  return { isUnique: true }
+export {
+  isGlobalUsernameUnique,
+  checkGlobalUsernameUniqueness,
+  warmupUsernameCache,
+  isUsernameCachedAsTaken,
+  addTakenUsernameToCache,
 }
 
 /**
@@ -143,6 +84,16 @@ export async function createManager(orgId, managerData) {
   if (!password) throw new Error('Password is required')
   if (!phone) throw new Error('Contact Number is required')
 
+  // Enforce Subscription Plan Limit (Section 5.2 of SUBSCRIPTION_PLAN_LIMITATIONS.txt)
+  const validation = await SubscriptionLimitService.canCreateManager({ orgId })
+  if (!validation.isAllowed) {
+    const error = new Error(validation.message)
+    error.code = validation.reason
+    error.upgradePlan = validation.upgradePlan
+    error.limits = validation.limits
+    throw error
+  }
+
   // Global case-insensitive username validation
   const uniqueCheck = await checkGlobalUsernameUniqueness(orgId, username)
   if (!uniqueCheck.isUnique) {
@@ -170,10 +121,8 @@ export async function createManager(orgId, managerData) {
   // Write to /organisation/{orgId}/manager/{managerId}
   await setDoc(doc(db, 'organisation', orgId, 'manager', managerId), payload)
 
-  // Write to top-level /manager/{managerId} for cross-tenant auth compatibility
-  try {
-    await setDoc(doc(db, 'manager', managerId), payload, { merge: true })
-  } catch (_e) {}
+  addTakenUsernameToCache(username)
+  addTakenUsernameToCache(managerId)
 
   return { id: managerId, ...payload }
 }

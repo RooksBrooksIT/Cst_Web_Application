@@ -118,7 +118,9 @@ export async function fetchSiteGranularExpenses(orgId, siteId, siteObj = null) {
   const sources = [
     { col: 'siteSupervisorEntries', category: 'Supervisor Entry' },
     { col: 'pettyCashTransactions', category: 'Petty Cash' },
+    { col: 'organizationExpenses', category: 'Organization Expense' },
     { col: 'organizationEntries', category: 'Organization Bill' },
+    { col: 'managerExpenses', category: 'Manager Direct Expense' },
     { col: 'managerEntries', category: 'Manager Approved' },
     { col: 'contractorEntries', category: 'Contractor Payment' },
     { col: 'siteSupervisorIncentives', category: 'Supervisor Incentive' },
@@ -141,6 +143,12 @@ export async function fetchSiteGranularExpenses(orgId, siteId, siteObj = null) {
 
         if (isMatch) {
           const rawAmount = data.totalAmount ?? data.amount ?? data.billAmount ?? data.incentiveAmount ?? data.paymentAmount ?? 0
+          const billWithDoc =
+            data.billUrl ||
+            data.imageUrl ||
+            (Array.isArray(data.bills) && data.bills.find((b) => b.billUrl || b.imageUrl)?.billUrl) ||
+            (Array.isArray(data.bills) && data.bills.find((b) => b.billUrl || b.imageUrl)?.imageUrl) ||
+            ''
           results.push({
             id: d.id,
             sourceCollection: col,
@@ -150,6 +158,9 @@ export async function fetchSiteGranularExpenses(orgId, siteId, siteObj = null) {
             amount: parseAmount(rawAmount),
             date: data.date || data.transactionDate || data.createdAt || data.paymentDate || '',
             stage: data.projectStage || data.stage || '',
+            billUrl: billWithDoc,
+            imageUrl: billWithDoc,
+            bills: data.bills || [],
             ...data,
           })
         }

@@ -32,7 +32,7 @@ import {
   returnMaterialSiteToCompany,
   confirmMaterialMovementReceipt,
 } from '../../../services/materialService.js'
-import { resolveSite, getNormalizedSiteOptions, isSameSite } from '../../../utils/siteUtils.js'
+import { resolveSite, getNormalizedSiteOptions, isSameSite, formatTransferLocation } from '../../../utils/siteUtils.js'
 
 export default function MaterialsMovements({ orgId, sites = [], currentUser, onNotify }) {
   const [movements, setMovements] = useState([])
@@ -177,7 +177,7 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
 
     if (qty > currentSelectedMatAvailable) {
       onNotify?.(
-        `Cannot dispatch ${qty} units. Central Warehouse only has ${currentSelectedMatAvailable} available.`,
+        `Cannot dispatch ${qty} units. Company only has ${currentSelectedMatAvailable} available.`,
         'error'
       )
       return
@@ -317,7 +317,7 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
           challanNumber,
         })
 
-        onNotify?.('Surplus material returned to Central Warehouse stock!', 'success')
+        onNotify?.('Surplus material returned to Company stock!', 'success')
       }
 
       setShowDispatchModal(false)
@@ -373,7 +373,7 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
           </div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Material Information</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Multi-mode dispatch engine for Warehouse-to-Site transfers, Inter-Site transfers, and Central Depot returns.
+            Multi-mode dispatch engine for Company-to-Site transfers, Inter-Site transfers, and Company returns.
           </p>
         </div>
 
@@ -422,7 +422,7 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
           <Truck className="w-12 h-12 text-slate-300 mx-auto mb-2" />
           <p className="text-sm font-semibold text-slate-700">No material transactions recorded</p>
           <p className="text-xs text-slate-400 mt-1">
-            Click "Launch Dispatch Engine" to authorize shipment between central godowns and project sites.
+            Click "Launch Dispatch Engine" to authorize shipment between Company and project sites.
           </p>
         </div>
       ) : (
@@ -482,31 +482,31 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
                             }`}
                           >
                             {modeType === 'CompanyToSite'
-                              ? 'Warehouse → Site'
+                              ? 'Company → Site'
                               : modeType === 'SiteToSite'
                               ? 'Site → Site'
-                              : 'Site → Warehouse'}
+                              : 'Site → Company'}
                           </span>
                           {(() => {
-                            const resFrom = resolveSite(item.fromSiteId || item.fromSite || item.from, item.fromSite || item.from, sites)
-                            const resTo = resolveSite(item.toSiteId || item.toSite, item.toSiteName || item.toSite, sites)
+                            const fromDisplay = formatTransferLocation(
+                              item.fromSiteId || item.fromSite || item.from,
+                              item.fromSite || item.from,
+                              sites,
+                              item.fromProjectName || item.projectName
+                            )
+                            const toDisplay = formatTransferLocation(
+                              item.toSiteId || item.toSite,
+                              item.toSiteName || item.toSite,
+                              sites,
+                              item.toProjectName || item.projectName
+                            )
                             return (
                               <>
                                 <p className="text-slate-500 font-medium mt-0.5">
-                                  From: <span className="font-semibold text-slate-800">{resFrom.label}</span>
-                                  {resFrom.siteCode && (
-                                    <span className="ml-1 px-1 py-0.2 rounded text-[10px] bg-slate-100 font-mono text-slate-600">
-                                      {resFrom.siteCode}
-                                    </span>
-                                  )}
+                                  From: <span className="font-semibold text-slate-800">{fromDisplay}</span>
                                 </p>
                                 <p className="font-bold text-slate-900">
-                                  To: <span>{resTo.label}</span>
-                                  {resTo.siteCode && (
-                                    <span className="ml-1 px-1 py-0.2 rounded text-[10px] bg-blue-50 text-blue-700 font-mono">
-                                      {resTo.siteCode}
-                                    </span>
-                                  )}
+                                  To: <span>{toDisplay}</span>
                                 </p>
                               </>
                             )
@@ -599,7 +599,7 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
                   dispatchMode === 0 ? 'bg-white text-[#0B3470] shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Mode 0: Depot → Site
+                Mode 0: Company → Site
               </button>
               <button
                 type="button"
@@ -617,12 +617,12 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
                   dispatchMode === 2 ? 'bg-white text-[#0B3470] shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Mode 2: Site → Depot
+                Mode 2: Site → Company
               </button>
             </div>
 
             <form onSubmit={handleExecuteDispatch} className="space-y-4">
-              {/* MODE 0: COMPANY WAREHOUSE -> SITE (Multi-Item Queue) */}
+              {/* MODE 0: COMPANY -> SITE (Multi-Item Queue) */}
               {dispatchMode === 0 && (
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-3">
@@ -633,7 +633,7 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
                       <input
                         type="text"
                         disabled
-                        value="Central Warehouse / Main Depot"
+                        value="Company"
                         className="w-full px-3 py-2 text-sm bg-slate-100 border border-slate-200 rounded-xl text-slate-700 font-semibold"
                       />
                     </div>
@@ -664,7 +664,7 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
                         Add Materials to Dispatch Queue
                       </span>
                       <span className="text-xs text-blue-900 font-medium">
-                        Depot Available:{' '}
+                        Company Available:{' '}
                         <strong className="text-blue-900">{currentSelectedMatAvailable} units</strong>
                       </span>
                     </div>
@@ -856,7 +856,7 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
                       <input
                         type="text"
                         disabled
-                        value="Central Warehouse / Main Godown"
+                        value="Company"
                         className="w-full px-3 py-2 text-sm bg-slate-100 border border-slate-200 rounded-xl text-slate-700 font-semibold"
                       />
                     </div>
@@ -994,11 +994,25 @@ export default function MaterialsMovements({ orgId, sites = [], currentUser, onN
               <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
                 <div>
                   <p className="font-semibold text-slate-400 uppercase tracking-wider text-[10px]">Dispatch Origin</p>
-                  <p className="font-bold text-slate-900 mt-0.5">{printPassDoc.from || printPassDoc.fromSite}</p>
+                  <p className="font-bold text-slate-900 mt-0.5">
+                    {formatTransferLocation(
+                      printPassDoc.fromSiteId || printPassDoc.fromSite || printPassDoc.from,
+                      printPassDoc.fromSite || printPassDoc.from,
+                      sites,
+                      printPassDoc.fromProjectName || printPassDoc.projectName
+                    )}
+                  </p>
                 </div>
                 <div>
                   <p className="font-semibold text-slate-400 uppercase tracking-wider text-[10px]">Destination Site</p>
-                  <p className="font-bold text-slate-900 mt-0.5">{printPassDoc.toSiteName || printPassDoc.toSite}</p>
+                  <p className="font-bold text-slate-900 mt-0.5">
+                    {formatTransferLocation(
+                      printPassDoc.toSiteId || printPassDoc.toSite,
+                      printPassDoc.toSiteName || printPassDoc.toSite,
+                      sites,
+                      printPassDoc.toProjectName || printPassDoc.projectName
+                    )}
+                  </p>
                 </div>
               </div>
 

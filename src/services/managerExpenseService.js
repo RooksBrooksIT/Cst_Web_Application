@@ -40,17 +40,24 @@ export async function recordManagerExpense(orgId, expenseData, managerActor) {
   const bills = Array.isArray(expenseData.bills) ? expenseData.bills : []
   const totalAmount = bills.reduce((acc, b) => acc + (Number(b.amount) || 0), 0) || (Number(expenseData.totalAmount || expenseData.amount) || 0)
 
+  const primaryBill = bills.find((b) => b.billUrl || b.imageUrl) || {}
+  const primaryBillUrl = expenseData.billUrl || expenseData.imageUrl || primaryBill.billUrl || primaryBill.imageUrl || null
+  const primaryStoragePath = expenseData.storagePath || primaryBill.storagePath || null
+
   const payload = {
     expenseId,
     siteId: expenseData.siteId,
     siteName: expenseData.siteName || '',
     projectStage: expenseData.projectStage || 'Superstructure & RCC Slabs',
     expenseDate: expenseData.expenseDate ? new Date(expenseData.expenseDate) : serverTimestamp(),
-    managerId: managerActor?.id || 'mgr_lead',
-    managerName: managerActor?.name || 'Operations Manager',
+    managerId: managerActor?.id || managerActor?.uid || 'mgr_lead',
+    managerName: managerActor?.fullName || managerActor?.name || managerActor?.displayName || 'Operations Manager',
     raiserRole: 'Manager',
     bills,
     totalAmount,
+    billUrl: primaryBillUrl,
+    imageUrl: primaryBillUrl,
+    storagePath: primaryStoragePath,
     remarks: expenseData.remarks || '',
     status: 'recorded',
     createdAt: serverTimestamp(),

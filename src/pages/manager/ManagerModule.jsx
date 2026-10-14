@@ -17,6 +17,7 @@ import BlueprintsDrawings from './projects/BlueprintsDrawings'
 // Group 4: Field & Supervisor
 import SupervisorSetup from './operations/SupervisorSetup'
 import SiteSupervisorMap from './operations/SiteSupervisorMap'
+import ConstructionDocuments from '../common/ConstructionDocuments'
 import DailySiteEntry from './operations/DailySiteEntry'
 import ManagerExpenses from './operations/ManagerExpenses'
 
@@ -42,6 +43,7 @@ import VehicleFleetHub from './fleet/VehicleFleetHub'
 import ManagerPettyCashHub from './pettycash/ManagerPettyCashHub'
 import ManagerNotificationsHub from './notifications/ManagerNotificationsHub'
 import ManagerSupportHub from './support/ManagerSupportHub'
+import IncentiveCalculation from '../organization/incentives/IncentiveCalculation'
 
 import {
   Building2,
@@ -68,6 +70,7 @@ import {
   Menu,
   X,
   Search,
+  Award,
 } from 'lucide-react'
 
 function ManagerProfileMenu({ user, userData, onLogout }) {
@@ -225,6 +228,7 @@ export default function ManagerModule() {
       items: [
         { id: 'supervisors', label: 'Supervisor Configuration', path: '/manager/supervisors', icon: Users },
         { id: 'supervisor-map', label: 'Site-Supervisor Map', path: '/manager/supervisor-map', icon: Link2 },
+        { id: 'construction-documents', label: 'Construction Documents', path: '/manager/construction-documents', icon: Compass },
         { id: 'daily-logs', label: 'Manager Daily Site Entry', path: '/manager/daily-logs', icon: FileText },
         { id: 'manager-expenses', label: 'Manager Expenses', path: '/manager/manager-expenses', icon: Receipt },
       ],
@@ -265,6 +269,12 @@ export default function ManagerModule() {
           path: '/manager/petty-cash',
           icon: DollarSign,
           badge: totalPettyCashPending,
+        },
+        {
+          id: 'incentive-calculation',
+          label: 'Incentive Calculation',
+          path: '/manager/incentive-calculation',
+          icon: Award,
         },
         { id: 'notifications', label: 'Notifications', path: '/manager/notifications', icon: Bell },
         { id: 'support', label: 'Manager Support', path: '/manager/support', icon: HelpCircle },
@@ -309,7 +319,12 @@ export default function ManagerModule() {
       case 'project-configuration':
         return <MasterConfigurations orgId={orgId} onNotify={showToast} />
       case 'drawings':
+      case 'layout-drawings':
+      case 'blueprints':
         return <BlueprintsDrawings orgId={orgId} sites={sites} currentUser={currentUser} onNotify={showToast} />
+      case 'construction-documents':
+      case 'construction-docs':
+        return <ConstructionDocuments orgId={orgId} sites={sites} currentUser={currentUser} onNotify={showToast} />
 
       // Group 4: Field & Supervisor
       case 'supervisors':
@@ -368,6 +383,18 @@ export default function ManagerModule() {
         )
       case 'support':
         return <ManagerSupportHub orgId={orgId} currentUser={currentUser} onNotify={showToast} />
+
+      case 'incentives':
+      case 'incentive':
+      case 'incentive-calculation':
+        return (
+          <IncentiveCalculation
+            orgId={orgId}
+            sites={sites}
+            user={currentUser}
+            onNotify={showToast}
+          />
+        )
 
       default:
         return <SitesPortfolio sites={sites} onNotify={showToast} />

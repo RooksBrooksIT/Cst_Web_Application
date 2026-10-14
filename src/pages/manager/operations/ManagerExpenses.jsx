@@ -18,12 +18,18 @@ import {
   CreditCard,
   Table,
   LayoutGrid,
+  Image as ImageIcon,
+  Paperclip,
+  Eye,
+  UploadCloud,
 } from 'lucide-react'
 import {
   fetchManagerExpenses,
   recordManagerExpense,
   deleteManagerExpense,
 } from '../../../services/managerExpenseService.js'
+import AppStorageService from '../../../services/appStorageService.js'
+import BillImagePreviewModal from '../../../components/common/BillImagePreviewModal.jsx'
 
 export default function ManagerExpenses({ orgId, sites = [], currentUser, onNotify }) {
   const [viewMode, setViewMode] = useState('table') // 'table' | 'cards'
@@ -33,6 +39,17 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
   const [selectedSiteFilter, setSelectedSiteFilter] = useState('ALL')
   const [expandedId, setExpandedId] = useState(null)
 
+  // Preview Modal State
+  const [previewModal, setPreviewModal] = useState({
+    isOpen: false,
+    imageUrl: '',
+    title: '',
+    vendor: '',
+    amount: '',
+    billNo: '',
+    date: '',
+  })
+
   // Create Modal State
   const [showModal, setShowModal] = useState(false)
   const [formSiteId, setFormSiteId] = useState('')
@@ -40,7 +57,18 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
   const [formDate, setFormDate] = useState(new Date().toISOString().split('T')[0])
   const [formRemarks, setFormRemarks] = useState('')
   const [bills, setBills] = useState([
-    { description: 'Structural Testing Lab Fee', vendor: 'Apex QC Labs', billNo: 'INV-883', amount: '4500' },
+    {
+      description: 'Structural Testing Lab Fee',
+      vendor: 'Apex QC Labs',
+      billNo: 'INV-883',
+      amount: '4500',
+      file: null,
+      fileName: '',
+      billUrl: '',
+      storagePath: '',
+      previewUrl: '',
+      isUploading: false,
+    },
   ])
   const [submitting, setSubmitting] = useState(false)
 
@@ -67,7 +95,21 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
   }, [bills])
 
   const handleAddBill = () => {
-    setBills([...bills, { description: '', vendor: '', billNo: '', amount: '' }])
+    setBills([
+      ...bills,
+      {
+        description: '',
+        vendor: '',
+        billNo: '',
+        amount: '',
+        file: null,
+        fileName: '',
+        billUrl: '',
+        storagePath: '',
+        previewUrl: '',
+        isUploading: false,
+      },
+    ])
   }
 
   const handleUpdateBill = (index, field, value) => {
@@ -78,6 +120,53 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
 
   const handleRemoveBill = (index) => {
     setBills(bills.filter((_, i) => i !== index))
+  }
+
+  // Handle direct file upload for a bill item row
+  const handleBillFileChange = async (index, file) => {
+    if (!file) return
+
+    const updated = [...bills]
+    const previewUrl = file.type.startsWith('image/') ? URL.createObjectURL(file) : ''
+    updated[index].file = file
+    updated[index].fileName = file.name
+    updated[index].previewUrl = previewUrl
+    updated[index].isUploading = true
+    setBills([...updated])
+
+    // If site is already selected, upload immediately to Firebase Storage under the exact required path
+    if (orgId && formSiteId) {
+      try {
+        const site = sites.find((s) => s.id === formSiteId)
+        const siteName = site?.siteName || site?.projectName || 'Project_Site'
+
+        const uploadResult = await AppStorageService.uploadExpenseBillDoc({
+          tenantId: orgId,
+          expenseType: 'manager expenses',
+          siteId: formSiteId,
+          siteName,
+          fileName: file.name,
+          file,
+          sitesList: sites,
+        })
+
+        const nextBills = [...bills]
+        nextBills[index].billUrl = uploadResult.downloadUrl
+        nextBills[index].storagePath = uploadResult.storagePath
+        nextBills[index].isUploading = false
+        setBills(nextBills)
+        onNotify?.(`Bill "${file.name}" uploaded successfully`, 'success')
+      } catch (err) {
+        console.error('Instant bill upload error:', err)
+        const nextBills = [...bills]
+        nextBills[index].isUploading = false
+        setBills(nextBills)
+        onNotify?.(`Upload note: ${err.message}. Will upload on submit.`, 'warning')
+      }
+    } else {
+      updated[index].isUploading = false
+      setBills([...updated])
+    }
   }
 
   const handleSubmitExpense = async (e) => {
@@ -91,6 +180,44 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
     setSubmitting(true)
     try {
       const site = sites.find((s) => s.id === formSiteId)
+      const siteName = site?.siteName || site?.projectName || 'Project_Site'
+
+      // Ensure all bill files are uploaded under the exact required folder path:
+      // manager expenses/organisation/{tenantId}/manager expenses/{siteId_siteName}/{image}
+      const processedBills = await Promise.all(
+        bills
+          .filter((b) => b.description?.trim())
+          .map(async (b) => {
+            let billUrl = b.billUrl || ''
+            let storagePath = b.storagePath || ''
+
+            if (b.file && !billUrl) {
+              const uploadRes = await AppStorageService.uploadExpenseBillDoc({
+                tenantId: orgId,
+                expenseType: 'manager expenses',
+                siteId: formSiteId,
+                siteName,
+                fileName: b.fileName || b.file.name,
+                file: b.file,
+                sitesList: sites,
+              })
+              billUrl = uploadRes.downloadUrl
+              storagePath = uploadRes.storagePath
+            }
+
+            return {
+              description: b.description,
+              vendor: b.vendor,
+              billNo: b.billNo,
+              amount: b.amount,
+              billUrl,
+              imageUrl: billUrl,
+              storagePath,
+              fileName: b.fileName || '',
+            }
+          })
+      )
+
       await recordManagerExpense(
         orgId,
         {
@@ -99,7 +226,7 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
           projectStage: formStage,
           expenseDate: formDate,
           remarks: formRemarks,
-          bills: bills.filter((b) => b.description?.trim()),
+          bills: processedBills,
           totalAmount: totalCalculatedAmount,
         },
         currentUser
@@ -108,7 +235,20 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
       onNotify?.('Manager expense claim recorded and synched to project total!', 'success')
       setShowModal(false)
       setFormRemarks('')
-      setBills([{ description: '', vendor: '', billNo: '', amount: '' }])
+      setBills([
+        {
+          description: '',
+          vendor: '',
+          billNo: '',
+          amount: '',
+          file: null,
+          fileName: '',
+          billUrl: '',
+          storagePath: '',
+          previewUrl: '',
+          isUploading: false,
+        },
+      ])
       await loadData()
     } catch (err) {
       console.error(err)
@@ -135,7 +275,7 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
   const handleExportCSV = () => {
     if (expenses.length === 0) return
     const rows = [
-      ['Expense ID', 'Site Name', 'Stage', 'Date', 'Total Amount', 'Manager', 'Remarks'],
+      ['Expense ID', 'Site Name', 'Stage', 'Date', 'Total Amount', 'Manager', 'Remarks', 'Bill Attached'],
       ...expenses.map((e) => [
         e.expenseId || e.id,
         e.siteName || '',
@@ -144,6 +284,7 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
         e.totalAmount || 0,
         e.managerName || '',
         `"${(e.remarks || '').replace(/"/g, '""')}"`,
+        e.billUrl || e.bills?.some((b) => b.billUrl) ? 'Yes' : 'No',
       ]),
     ]
     const csvContent = 'data:text/csv;charset=utf-8,' + rows.map((r) => r.join(',')).join('\n')
@@ -178,25 +319,29 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="text-xs font-semibold uppercase tracking-wider text-purple-600 bg-purple-50 px-2.5 py-0.5 rounded-full">
-              Operations Expenditures
+              Operations Control
             </span>
+            <span className="text-xs text-slate-400">• Out-of-Pocket Disbursements</span>
           </div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Manager Expenses</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Log direct field disbursements, consultant fees, and emergency procurements directly into site ledgers.
+          <p className="text-xs text-slate-500 mt-1">
+            Log and reconcile site manager expenses, emergency vendor bills, testing invoices, and materials vouchers with attached bill receipts.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <button
+            type="button"
             onClick={handleExportCSV}
             disabled={expenses.length === 0}
-            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-all disabled:opacity-50 cursor-pointer"
+            className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200/80 text-slate-700 text-xs font-bold rounded-xl transition-all disabled:opacity-50 cursor-pointer"
           >
             <Download className="w-4 h-4" />
             <span>Export CSV</span>
           </button>
+
           <button
+            type="button"
             onClick={() => {
               if (sites.length > 0 && !formSiteId) setFormSiteId(sites[0].id)
               setShowModal(true)
@@ -311,6 +456,7 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                   <th className="py-3.5 px-4">Site & Stage</th>
                   <th className="py-3.5 px-4">Date</th>
                   <th className="py-3.5 px-4">Bill Items</th>
+                  <th className="py-3.5 px-4">Bill Document</th>
                   <th className="py-3.5 px-4">Total Amount</th>
                   <th className="py-3.5 px-4">Remarks / Notes</th>
                   <th className="py-3.5 px-4 text-right">Actions</th>
@@ -327,6 +473,10 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                     : 'Recent'
                   const billsCount = Array.isArray(item.bills) ? item.bills.length : 1
                   const totalAmt = Number(item.totalAmount) || 0
+
+                  const billWithDoc =
+                    (Array.isArray(item.bills) && item.bills.find((b) => b.billUrl || b.imageUrl)) ||
+                    (item.billUrl ? { billUrl: item.billUrl, description: item.remarks } : null)
 
                   return (
                     <tr key={item.id || item.expenseId} className="hover:bg-slate-50/70 transition-colors">
@@ -354,6 +504,33 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                         </span>
                       </td>
 
+                      {/* Bill Document Column with Instant Preview */}
+                      <td className="py-3.5 px-4">
+                        {billWithDoc ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPreviewModal({
+                                isOpen: true,
+                                imageUrl: billWithDoc.billUrl || billWithDoc.imageUrl,
+                                title: billWithDoc.description || item.siteName,
+                                vendor: billWithDoc.vendor || 'Manager Direct Expense',
+                                amount: billWithDoc.amount || totalAmt,
+                                billNo: billWithDoc.billNo || '',
+                                date: expenseDate,
+                              })
+                            }
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 text-xs font-semibold transition-all cursor-pointer shadow-2xs"
+                            title="Click to view uploaded bill image"
+                          >
+                            <ImageIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            <span>View Bill</span>
+                          </button>
+                        ) : (
+                          <span className="text-[11px] text-slate-400 italic">No file</span>
+                        )}
+                      </td>
+
                       <td className="py-3.5 px-4 font-black text-slate-900 text-sm">
                         ₹{totalAmt.toLocaleString('en-IN')}
                       </td>
@@ -379,6 +556,7 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
           </div>
         </div>
       ) : (
+        /* EXPENSES CARDS FEED FORMAT */
         <div className="space-y-4">
           {filteredExpenses.map((item) => {
             const isExpanded = expandedId === (item.id || item.expenseId)
@@ -391,6 +569,8 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
               : 'Recent'
 
             const billsCount = Array.isArray(item.bills) ? item.bills.length : 1
+            const hasBillsWithDoc =
+              item.billUrl || (Array.isArray(item.bills) && item.bills.some((b) => b.billUrl || b.imageUrl))
 
             return (
               <div
@@ -414,6 +594,12 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                         <span className="px-2 py-0.5 text-[11px] font-semibold bg-emerald-50 text-emerald-700 rounded-md">
                           {billsCount} {billsCount === 1 ? 'Bill Item' : 'Bill Items'}
                         </span>
+                        {hasBillsWithDoc && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 rounded-full">
+                            <ImageIcon className="w-3 h-3" />
+                            Receipt Attached
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-3 text-xs text-slate-500 mt-1.5 flex-wrap">
                         <span className="flex items-center gap-1 font-medium text-slate-700">
@@ -445,7 +631,7 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                           e.stopPropagation()
                           handleDelete(item.id || item.expenseId)
                         }}
-                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg"
+                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
                         title="Delete voucher"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -463,16 +649,40 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                     <div className="bg-white rounded-xl border border-slate-200/80 overflow-hidden divide-y divide-slate-100 text-xs">
                       {item.bills.map((bill, bIdx) => (
                         <div key={bIdx} className="p-3 flex items-center justify-between gap-4">
-                          <div>
-                            <p className="font-semibold text-slate-900">{bill.description || 'Disbursement'}</p>
+                          <div className="min-w-0">
+                            <p className="font-semibold text-slate-900 truncate">{bill.description || 'Disbursement'}</p>
                             <p className="text-slate-500 mt-0.5">
                               Vendor: <span className="font-medium text-slate-700">{bill.vendor || 'Direct Cash'}</span>
                               {bill.billNo && ` • Bill #${bill.billNo}`}
                             </p>
                           </div>
-                          <span className="text-sm font-bold text-slate-900">
-                            ₹{(Number(bill.amount) || 0).toLocaleString('en-IN')}
-                          </span>
+
+                          <div className="flex items-center gap-3 shrink-0">
+                            {bill.billUrl || bill.imageUrl ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPreviewModal({
+                                    isOpen: true,
+                                    imageUrl: bill.billUrl || bill.imageUrl,
+                                    title: bill.description || 'Bill Receipt',
+                                    vendor: bill.vendor || '',
+                                    amount: bill.amount || '',
+                                    billNo: bill.billNo || '',
+                                    date: expenseDate,
+                                  })
+                                }
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 font-semibold cursor-pointer shadow-2xs"
+                              >
+                                <ImageIcon className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>View Receipt</span>
+                              </button>
+                            ) : null}
+
+                            <span className="text-sm font-bold text-slate-900">
+                              ₹{(Number(bill.amount) || 0).toLocaleString('en-IN')}
+                            </span>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -487,13 +697,15 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
       {/* Record Expense Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 my-8">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 my-8">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
               <div>
                 <h3 className="text-base font-bold text-slate-900">Record Direct Site Expense</h3>
-                <p className="text-xs text-slate-500">Disbursed by Manager on behalf of site operations.</p>
+                <p className="text-xs text-slate-500">
+                  Disbursed by Manager on behalf of site operations. Store receipts in Cloud Storage under tenant folder.
+                </p>
               </div>
-              <button onClick={() => setShowModal(false)} className="p-1 text-slate-400 hover:text-slate-600">
+              <button onClick={() => setShowModal(false)} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -544,55 +756,122 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                 />
               </div>
 
-              {/* Itemized Bills */}
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+              {/* Itemized Bills & Document Uploads */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-800">Bills & Invoices</span>
+                  <div>
+                    <span className="text-xs font-bold text-slate-800 block">Bills, Invoices & Uploads</span>
+                    <span className="text-[10px] text-slate-400">
+                      Uploads store directly to Cloud Storage under respective tenant folder.
+                    </span>
+                  </div>
                   <button
                     type="button"
                     onClick={handleAddBill}
-                    className="text-xs font-semibold text-blue-600 hover:underline flex items-center gap-1"
+                    className="text-xs font-semibold text-blue-600 hover:underline flex items-center gap-1 cursor-pointer"
                   >
                     <Plus className="w-3 h-3" /> Add Bill
                   </button>
                 </div>
+
                 {bills.map((b, idx) => (
-                  <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                    <input
-                      type="text"
-                      placeholder="Item description"
-                      value={b.description}
-                      onChange={(e) => handleUpdateBill(idx, 'description', e.target.value)}
-                      className="col-span-4 px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg"
-                    />
-                    <input
-                      type="text"
-                      placeholder="Vendor name"
-                      value={b.vendor}
-                      onChange={(e) => handleUpdateBill(idx, 'vendor', e.target.value)}
-                      className="col-span-3 px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg"
-                    />
-                    <input
-                      type="text"
-                      placeholder="Bill / Ref #"
-                      value={b.billNo}
-                      onChange={(e) => handleUpdateBill(idx, 'billNo', e.target.value)}
-                      className="col-span-2 px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg"
-                    />
-                    <input
-                      type="number"
-                      placeholder="Amount (₹)"
-                      value={b.amount}
-                      onChange={(e) => handleUpdateBill(idx, 'amount', e.target.value)}
-                      className="col-span-2 px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveBill(idx)}
-                      className="col-span-1 text-slate-400 hover:text-rose-600 text-center"
-                    >
-                      ✕
-                    </button>
+                  <div key={idx} className="p-3 bg-white border border-slate-200 rounded-xl space-y-2 shadow-2xs">
+                    <div className="grid grid-cols-12 gap-2 items-center">
+                      <input
+                        type="text"
+                        placeholder="Item description *"
+                        value={b.description}
+                        onChange={(e) => handleUpdateBill(idx, 'description', e.target.value)}
+                        className="col-span-12 sm:col-span-4 px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Vendor name"
+                        value={b.vendor}
+                        onChange={(e) => handleUpdateBill(idx, 'vendor', e.target.value)}
+                        className="col-span-6 sm:col-span-3 px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Bill / Ref #"
+                        value={b.billNo}
+                        onChange={(e) => handleUpdateBill(idx, 'billNo', e.target.value)}
+                        className="col-span-6 sm:col-span-2 px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg"
+                      />
+                      <input
+                        type="number"
+                        placeholder="Amount (₹) *"
+                        value={b.amount}
+                        onChange={(e) => handleUpdateBill(idx, 'amount', e.target.value)}
+                        className="col-span-10 sm:col-span-2 px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg font-semibold"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveBill(idx)}
+                        className="col-span-2 sm:col-span-1 text-slate-400 hover:text-rose-600 text-center cursor-pointer"
+                        title="Remove Bill"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    {/* Document Upload Control */}
+                    <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100 flex-wrap">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg cursor-pointer transition-colors">
+                          <Paperclip className="w-3.5 h-3.5 text-slate-500" />
+                          <span>
+                            {b.file || b.billUrl ? 'Change Bill Document' : 'Upload Bill Image / PDF'}
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/*,application/pdf"
+                            className="hidden"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0]
+                              if (f) handleBillFileChange(idx, f)
+                            }}
+                          />
+                        </label>
+
+                        {b.isUploading && (
+                          <span className="text-[11px] text-purple-600 font-medium animate-pulse flex items-center gap-1">
+                            <UploadCloud className="w-3.5 h-3.5 animate-bounce" />
+                            Uploading...
+                          </span>
+                        )}
+
+                        {b.billUrl ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            Uploaded
+                          </span>
+                        ) : b.fileName ? (
+                          <span className="text-[11px] text-slate-500 truncate max-w-xs">{b.fileName}</span>
+                        ) : null}
+                      </div>
+
+                      {(b.billUrl || b.previewUrl) && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPreviewModal({
+                              isOpen: true,
+                              imageUrl: b.billUrl || b.previewUrl,
+                              title: b.description || 'Bill Preview',
+                              vendor: b.vendor,
+                              amount: b.amount,
+                              billNo: b.billNo,
+                              date: formDate,
+                            })
+                          }
+                          className="inline-flex items-center gap-1 text-xs text-purple-600 font-semibold hover:underline cursor-pointer"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Preview Attachment</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -622,22 +901,34 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                 <button
                   type="button"
                   onClick={() => setShowModal(false)}
-                  className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl"
+                  className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={submitting || totalCalculatedAmount <= 0}
-                  className="px-5 py-2 text-xs font-semibold text-white bg-[#0B3470] hover:bg-[#082855] rounded-xl shadow-xs disabled:opacity-50"
+                  className="px-5 py-2 text-xs font-semibold text-white bg-[#0B3470] hover:bg-[#082855] rounded-xl shadow-xs disabled:opacity-50 cursor-pointer"
                 >
-                  {submitting ? 'Recording...' : 'Record Voucher & Sync Spent'}
+                  {submitting ? 'Recording & Uploading...' : 'Record Voucher & Sync Spent'}
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
+
+      {/* Universal Bill Image / Document Previewer Modal */}
+      <BillImagePreviewModal
+        isOpen={previewModal.isOpen}
+        onClose={() => setPreviewModal({ ...previewModal, isOpen: false })}
+        imageUrl={previewModal.imageUrl}
+        title={previewModal.title}
+        vendor={previewModal.vendor}
+        amount={previewModal.amount}
+        billNo={previewModal.billNo}
+        date={previewModal.date}
+      />
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   Bell,
   CheckCircle2,
@@ -23,13 +23,40 @@ export default function ManagerNotificationsHub({
   onNavigate,
   onNotify,
 }) {
-  const { notifications, markAsRead, markAllAsRead } = useNotifications()
+  const { notifications, unreadCount, markAsRead, markAllAsRead, refreshNotifications } = useNotifications()
   const [filterType, setFilterType] = useState('ALL') // 'ALL' | 'UNREAD' | 'APPROVAL' | 'STOCK' | 'SYSTEM'
-  const [localReadIds, setLocalReadIds] = useState(new Set())
+  const [localReadIds, setLocalReadIds] = useState(() => {
+    try {
+      const stored = localStorage.getItem(`cst_read_alerts_${orgId || 'default'}`)
+      return stored ? new Set(JSON.parse(stored)) : new Set()
+    } catch {
+      return new Set()
+    }
+  })
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(`cst_read_alerts_${orgId || 'default'}`, JSON.stringify(Array.from(localReadIds)))
+    } catch {
+      // ignore
+    }
+  }, [localReadIds, orgId])
 
   // Dynamically compute real-time priority alerts from dashboard streams + real-time Firestore notifications
   const alerts = useMemo(() => {
     const list = []
+    const seenAlertIds = new Set()
+
+    // Deduplication tracker: collect all IDs from real Firestore notifications to prevent duplicate cards
+    const existingRefIds = new Set()
+    notifications.forEach((item) => {
+      if (item.id) existingRefIds.add(String(item.id))
+      if (item.notificationId) existingRefIds.add(String(item.notificationId))
+      if (item.requestId) existingRefIds.add(String(item.requestId))
+      if (item.docId) existingRefIds.add(String(item.docId))
+      if (item.data?.requestId) existingRefIds.add(String(item.data.requestId))
+      if (item.data?.docId) existingRefIds.add(String(item.data.docId))
+    })
 
     // 0. Real-Time Firestore Notifications (Section 2.1 & 2.5)
     notifications.forEach((item) => {
@@ -83,21 +110,26 @@ export default function ManagerNotificationsHub({
         ? new Date(item.createdAt).getTime()
         : Date.now()
 
-      list.push({
-        id: item.id,
-        isFirestoreNotification: true,
-        originalItem: item,
-        type: filterCategory,
-        category,
-        title,
-        message,
-        timestamp: ts,
-        targetTab,
-        priority: item.priority || 'normal',
-        icon,
-        color,
-        isReadInFirestore: item.isRead || item.status === 'read',
-      })
+      const alertId = String(item.id || item.notificationId)
+      if (!seenAlertIds.has(alertId)) {
+        seenAlertIds.add(alertId)
+        list.push({
+          id: alertId,
+          firestoreDocId: item.firestoreDocId || item.id,
+          isFirestoreNotification: true,
+          originalItem: item,
+          type: filterCategory,
+          category,
+          title,
+          message,
+          timestamp: ts,
+          targetTab,
+          priority: item.priority || 'normal',
+          icon,
+          color,
+          isReadInFirestore: Boolean(item.isRead || String(item.status).toLowerCase() === 'read'),
+        })
+      }
     })
 
     // 1. Site Supervisor Expense Claims
@@ -105,8 +137,13 @@ export default function ManagerNotificationsHub({
       (e) => e.status === 'pending_manager_review' || !e.status
     )
     pendingClaims.forEach((claim) => {
+      const claimId = claim.id || claim.entryId
+      if (claimId && existingRefIds.has(String(claimId))) return
+      const alertId = `claim_${claimId}`
+      if (seenAlertIds.has(alertId)) return
+      seenAlertIds.add(alertId)
       list.push({
-        id: `claim_${claim.id || claim.entryId}`,
+        id: alertId,
         type: 'APPROVAL',
         category: 'Site Expense Claim',
         title: `Expense Claim: ₹${(claim.totalAmount || 0).toLocaleString('en-IN')}`,
@@ -119,16 +156,21 @@ export default function ManagerNotificationsHub({
       })
     })
 
-    // 2. Material Requisitions
+    // 2. Material Requests
     const pendingMaterials = (dashboardData.pendingMaterialRequests || []).filter(
       (m) => m.status === 'pending_manager_review' || !m.status
     )
     pendingMaterials.forEach((mat) => {
+      const matId = mat.id || mat.requestId
+      if (matId && existingRefIds.has(String(matId))) return
+      const alertId = `mat_${matId}`
+      if (seenAlertIds.has(alertId)) return
+      seenAlertIds.add(alertId)
       list.push({
-        id: `mat_${mat.id || mat.requestId}`,
+        id: alertId,
         type: 'APPROVAL',
         category: 'Material Request',
-        title: `Requisition: ${mat.requestedQty || mat.quantity || 1} ${mat.unit || 'Units'} of ${mat.materialName}`,
+        title: `Request: ${mat.requestedQty || mat.quantity || 1} ${mat.unit || 'Units'} of ${mat.materialName}`,
         message: `${mat.siteName || 'Site'} • Urgency: ${mat.urgency || 'Normal'}`,
         timestamp: mat.createdAt?.seconds ? mat.createdAt.seconds * 1000 : Date.now(),
         targetTab: 'approvals',
@@ -143,10 +185,15 @@ export default function ManagerNotificationsHub({
       (t) => t.status === 'pending_manager_review' || !t.status
     )
     pendingTools.forEach((tool) => {
+      const toolId = tool.id || tool.requestId
+      if (toolId && existingRefIds.has(String(toolId))) return
+      const alertId = `tool_${toolId}`
+      if (seenAlertIds.has(alertId)) return
+      seenAlertIds.add(alertId)
       list.push({
-        id: `tool_${tool.id || tool.requestId}`,
+        id: alertId,
         type: 'APPROVAL',
-        category: 'Equipment Requisition',
+        category: 'Equipment Request',
         title: `Tool Dispatch: ${tool.toolName || 'Machinery'}`,
         message: `Requested for ${tool.siteName || 'Project Site'}`,
         timestamp: tool.createdAt?.seconds ? tool.createdAt.seconds * 1000 : Date.now(),
@@ -207,27 +254,43 @@ export default function ManagerNotificationsHub({
     return !localReadIds.has(alert.id)
   }
 
-  const toggleRead = (alert) => {
-    if (alert.isFirestoreNotification) {
-      markAsRead(alert.id)
-    }
+  const toggleRead = async (alert) => {
+    const docId = alert.firestoreDocId || alert.id
     setLocalReadIds((prev) => {
       const next = new Set(prev)
-      if (next.has(alert.id)) next.delete(alert.id)
-      else next.add(alert.id)
+      next.add(alert.id)
       return next
     })
+
+    if (alert.isFirestoreNotification) {
+      await markAsRead(docId)
+      if (refreshNotifications) {
+        await refreshNotifications()
+      }
+    }
   }
 
-  const handleMarkAllRead = () => {
-    markAllAsRead()
+  const handleMarkAllRead = async () => {
     setLocalReadIds(new Set(alerts.map((a) => a.id)))
+    await markAllAsRead()
+    if (refreshNotifications) {
+      await refreshNotifications()
+    }
     onNotify?.('All notifications marked as read', 'info')
   }
 
-  const handleTakeAction = (alert) => {
-    if (alert.isFirestoreNotification) {
-      markAsRead(alert.id)
+  const handleTakeAction = async (alert) => {
+    const docId = alert.firestoreDocId || alert.id
+    setLocalReadIds((prev) => {
+      const next = new Set(prev)
+      next.add(alert.id)
+      return next
+    })
+    if (alert.isFirestoreNotification && isAlertUnread(alert)) {
+      await markAsRead(docId)
+      if (refreshNotifications) {
+        await refreshNotifications()
+      }
     }
     if (alert.targetTab) {
       onNavigate?.(alert.targetTab)
@@ -258,7 +321,7 @@ export default function ManagerNotificationsHub({
           </div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Notifications</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Live operations alerts, real-time Firestore requisitions, project budget threshold warnings, and supply chain updates.
+            Live operations alerts, real-time Firestore requests, project budget threshold warnings, and supply chain updates.
           </p>
         </div>
 
@@ -348,7 +411,7 @@ export default function ManagerNotificationsHub({
                   <button
                     onClick={() => toggleRead(alert)}
                     className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
-                    title={isUnread ? 'Mark Read' : 'Mark Unread'}
+                    title={isUnread ? 'Mark as read' : 'Mark as unread'}
                   >
                     <Check className="w-4 h-4" />
                   </button>

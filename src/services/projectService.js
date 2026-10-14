@@ -13,6 +13,7 @@ import {
   subscribeWithFallback,
   deleteStandardDoc,
 } from './firestoreService.js'
+import { SubscriptionLimitService } from './subscriptionLimitService.js'
 
 /**
  * Projects Service - Manages /organisation/{orgId}/projects
@@ -93,6 +94,16 @@ export async function getNextSiteCode(orgId) {
 export async function createProjectAndSiteAtomic(orgId, data, managerActor) {
   if (!orgId) throw new Error('orgId is required')
   if (!data.siteName?.trim()) throw new Error('Site Name is required')
+
+  // Enforce Subscription Plan Limit (Section 5.1 of SUBSCRIPTION_PLAN_LIMITATIONS.txt)
+  const validation = await SubscriptionLimitService.canCreateSite({ orgId })
+  if (!validation.isAllowed) {
+    const error = new Error(validation.message)
+    error.code = validation.reason
+    error.upgradePlan = validation.upgradePlan
+    error.limits = validation.limits
+    throw error
+  }
 
   const cleanSiteName = data.siteName.trim().replace(/\s+/g, '')
   const siteCode = await getNextSiteCode(orgId)
@@ -216,24 +227,41 @@ export async function createProjectAndSiteAtomic(orgId, data, managerActor) {
 
   // 3. Supervisor Mapping Document in /organisation/{orgId}/siteSupervisorMap/{mapDocId}
   if (data.supervisorId && data.supervisorName) {
-    const cleanLoc = (data.location || data.siteLocation || 'Site').trim().replace(/\s+/g, '')
-    const mapDocId = `${siteCode}_${cleanLoc}_${data.supervisorId}`
+    const cleanSup = data.supervisorName.trim().replace(/\s+/g, '')
+    const mapDocId = `${siteDocId}_${cleanSup}`
     const mapRef = doc(db, 'organisation', orgId, 'siteSupervisorMap', mapDocId)
+    const startDateStr = data.plannedStartDate || data.startDate || ''
+    const endDateStr = data.plannedEndDate || data.targetEndDate || ''
+    const joinedDateStr = data.joinedDate || ''
+    const mgrName = managerActor?.name || data.managerName || 'Operations Manager'
+    const mgrId = managerActor?.id || ''
+
     batch.set(mapRef, {
+      FullName: data.supervisorName.trim(),
+      'Joined On': data.joinedOn || '',
+      'Supervisor ID': data.supervisorId,
+      SupervisorId: data.supervisorId,
+      assignedByManager: mgrName,
+      endDate: endDateStr,
+      joinedDate: joinedDateStr,
+      location: (data.location || data.siteLocation || '').trim(),
+      manager: mgrName,
+      managerId: mgrId,
+      managerName: mgrName,
+      project: (data.projectName || data.siteName).trim(),
+      projectName: (data.projectName || data.siteName).trim(),
+      projectStage: data.projectStage || data.startingStage || 'Planning',
       site: siteDocId,
+      siteComments: data.siteComments || data.supervisorComments || '',
+      siteDocId: siteDocId,
       siteId: siteCode,
       siteName: data.siteName.trim(),
-      projectName: (data.projectName || data.siteName).trim(),
-      supervisor: data.supervisorName,
+      stage: data.projectStage || data.startingStage || 'Planning',
+      startDate: startDateStr,
+      supervisor: data.supervisorName.trim(),
       supervisorId: data.supervisorId,
-      'Supervisor ID': data.supervisorId,
-      location: (data.location || data.siteLocation || '').trim(),
-      projectStage: data.projectStage || data.startingStage || 'Planning',
-      siteComments: data.siteComments || data.supervisorComments || '',
-      joinedOn: data.joinedDate || new Date().toISOString().split('T')[0],
-      startDate: plannedStart,
-      endDate: plannedEnd,
-      createdAt: serverTimestamp(),
+      supervisorName: data.supervisorName.trim(),
+      updatedAt: serverTimestamp(),
     })
   }
 

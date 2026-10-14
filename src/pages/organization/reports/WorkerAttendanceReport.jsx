@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { fetchWorkersAttendanceReport } from '../../../services/attendanceService.js'
 import { money } from '../../../services/reportService.js'
 import { exportToCSV, printReport } from '../../../services/exportService.js'
+import { getNormalizedSiteOptions } from '../../../utils/siteUtils.js'
 
 export default function WorkerAttendanceReport({
   orgId,
@@ -9,6 +10,7 @@ export default function WorkerAttendanceReport({
   initialMonth = new Date().toISOString().slice(0, 7),
   initialSiteId = 'all',
 }) {
+  const normalizedSites = useMemo(() => getNormalizedSiteOptions(sites), [sites])
   const [selectedMonth, setSelectedMonth] = useState(initialMonth)
   const [selectedSiteId, setSelectedSiteId] = useState(initialSiteId)
   const [searchQuery, setSearchQuery] = useState('')
@@ -201,9 +203,9 @@ export default function WorkerAttendanceReport({
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all cursor-pointer"
             >
               <option value="all">All Portfolio Sites</option>
-              {sites.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.siteName || s.projectName || s.name || s.id}
+              {normalizedSites.map((s, idx) => (
+                <option key={`att-site-${s.id || s.siteId || idx}-${idx}`} value={s.id || s.siteId}>
+                  {s.label || s.siteName || s.projectName || s.name || s.id}
                 </option>
               ))}
             </select>

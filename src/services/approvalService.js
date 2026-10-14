@@ -44,13 +44,9 @@ function createAuditEntry(step, action, actorRole, actorName, actorId, remarks =
 }
 
 async function dualUpdateDoc(orgId, collectionName, docId, updates) {
+  if (!orgId || !docId) throw new Error('orgId and docId are required')
   const tenantRef = doc(db, 'organisation', orgId, collectionName, docId)
-  const rootRef = doc(db, collectionName, docId)
-
-  await Promise.allSettled([
-    updateDoc(tenantRef, updates),
-    updateDoc(rootRef, updates).catch(() => {}),
-  ])
+  await updateDoc(tenantRef, updates)
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -139,12 +135,7 @@ export async function createSitePaymentRequisition(orgId, requestData, actor) {
   }
 
   const tenantRef = doc(db, 'organisation', orgId, 'siteSupervisorEntries', entryId)
-  const rootRef = doc(db, 'siteSupervisorEntries', entryId)
-
-  await Promise.allSettled([
-    setDoc(tenantRef, payload, { merge: true }),
-    setDoc(rootRef, payload, { merge: true }),
-  ])
+  await setDoc(tenantRef, payload, { merge: true })
 
   // Dispatch real-time notification
   try {
@@ -380,7 +371,7 @@ export async function createMaterialRequisition(orgId, requestData, actor) {
 
   const auditEntry = createAuditEntry(
     '1. Supervisor Submission',
-    'Material Requisition Submitted',
+    'Material Request Submitted',
     actorRole,
     actorName,
     actorId,
@@ -432,12 +423,7 @@ export async function createMaterialRequisition(orgId, requestData, actor) {
   }
 
   const tenantRef = doc(db, 'organisation', orgId, 'siteMaterialsRequest', requestId)
-  const rootRef = doc(db, 'siteMaterialsRequest', requestId)
-
-  await Promise.allSettled([
-    setDoc(tenantRef, payload, { merge: true }),
-    setDoc(rootRef, payload, { merge: true }),
-  ])
+  await setDoc(tenantRef, payload, { merge: true })
 
   // Dispatch real-time notification
   try {
@@ -508,8 +494,8 @@ export async function managerReviewMaterialOrder(orgId, requestId, isApproved, a
     if (isApproved) {
       await notifyOrganisation({
         orgId,
-        title: '📦 Material Requisition Verified',
-        message: `Material Requisition #${requestId} (${currentData.materialName || 'Material'}) verified by ${actorName}. Awaiting HQ authorization.`,
+        title: '📦 Material Request Verified',
+        message: `Material Request #${requestId} (${currentData.materialName || 'Material'}) verified by ${actorName}. Awaiting HQ authorization.`,
         type: NotificationType.MATERIAL_REQUISITION,
         requestId,
         siteId: currentData.siteId,
@@ -521,8 +507,8 @@ export async function managerReviewMaterialOrder(orgId, requestId, isApproved, a
     } else {
       await notifySupervisor({
         orgId,
-        title: '❌ Material Requisition Declined',
-        message: `Requisition #${requestId} for ${currentData.materialName || 'Material'} was declined by ${actorName}. Reason: ${vendorNotes || 'No reason specified'}`,
+        title: '❌ Material Request Declined',
+        message: `Request #${requestId} for ${currentData.materialName || 'Material'} was declined by ${actorName}. Reason: ${vendorNotes || 'No reason specified'}`,
         type: NotificationType.MATERIAL_REQUISITION,
         requestId,
         siteId: currentData.siteId,
@@ -581,7 +567,7 @@ export async function managerClearMaterialOrder(orgId, requestId, gatePassNo = '
     await notifySupervisor({
       orgId,
       title: '🚚 Materials Dispatched to Site',
-      message: `Materials for Requisition #${requestId} (${currentData.materialName || 'Material'}) dispatched from Central Yard. Gate Pass: ${finalGatePass}.`,
+      message: `Materials for Request #${requestId} (${currentData.materialName || 'Material'}) dispatched from Central Yard. Gate Pass: ${finalGatePass}.`,
       type: NotificationType.MATERIAL_REQUISITION,
       requestId,
       siteId: currentData.siteId,
@@ -636,7 +622,7 @@ export async function confirmMaterialReceipt(orgId, requestId, receiptNotes = ''
     await notifyManagerAndOrganisation({
       orgId,
       title: '📦 Delivery Confirmed at Site',
-      message: `Requisition #${requestId} (${currentData.materialName}) marked as physically received at ${currentData.siteName || 'site'} by ${actorName}.`,
+      message: `Request #${requestId} (${currentData.materialName}) marked as physically received at ${currentData.siteName || 'site'} by ${actorName}.`,
       type: NotificationType.MATERIAL_REQUISITION,
       requestId,
       siteId: currentData.siteId,
@@ -681,7 +667,7 @@ export async function createToolRequisition(orgId, requestData, actor) {
 
   const auditEntry = createAuditEntry(
     '1. Supervisor Submission',
-    'Equipment Requisition Submitted',
+    'Equipment Request Submitted',
     actorRole,
     actorName,
     actorId,
@@ -728,18 +714,13 @@ export async function createToolRequisition(orgId, requestData, actor) {
   }
 
   const tenantRef = doc(db, 'organisation', orgId, 'siteToolsRequest', requestId)
-  const rootRef = doc(db, 'siteToolsRequest', requestId)
-
-  await Promise.allSettled([
-    setDoc(tenantRef, payload, { merge: true }),
-    setDoc(rootRef, payload, { merge: true }),
-  ])
+  await setDoc(tenantRef, payload, { merge: true })
 
   // Dispatch real-time notification
   try {
     await notifyManagerAndOrganisation({
       orgId,
-      title: '⚙️ New Tool Requisition Submitted',
+      title: '⚙️ New Tool Request Submitted',
       message: `${actorName} requested ${requestData.toolName} for ${requestData.siteName || 'site'}.`,
       type: NotificationType.TOOLS_REQUISITION,
       requestId,
@@ -805,7 +786,7 @@ export async function managerApproveToolRequest(orgId, requestId, isApproved = t
       await notifyOrganisation({
         orgId,
         title: '⚙️ Equipment Request Verified',
-        message: `Equipment Requisition #${requestId} (${currentData.toolName}) verified with Yard Tag ${assignedAssetSerial || 'Allocated'}. Awaiting HQ authorization.`,
+        message: `Equipment Request #${requestId} (${currentData.toolName}) verified with Yard Tag ${assignedAssetSerial || 'Allocated'}. Awaiting HQ authorization.`,
         type: NotificationType.TOOLS_REQUISITION,
         requestId,
         siteId: currentData.siteId,
@@ -817,8 +798,8 @@ export async function managerApproveToolRequest(orgId, requestId, isApproved = t
     } else {
       await notifySupervisor({
         orgId,
-        title: '❌ Equipment Requisition Declined',
-        message: `Tool Requisition #${requestId} for ${currentData.toolName} was declined by ${actorName}.`,
+        title: '❌ Equipment Request Declined',
+        message: `Tool Request #${requestId} for ${currentData.toolName} was declined by ${actorName}.`,
         type: NotificationType.TOOLS_REQUISITION,
         requestId,
         siteId: currentData.siteId,
@@ -1056,10 +1037,11 @@ export async function executeOrganizationApproval(orgId, collectionName, docId, 
     remarks || 'Authorized by Organization HQ.'
   )
 
+  const isPettyCash = collectionName === 'pettyCashRequests'
   const updates = {
-    status: 'pending_manager_clearance',
-    approvalStatus: 'pending_manager_clearance',
-    statusDisplay: 'Pending Manager Clearance',
+    status: isPettyCash ? 'AWAITING_DISBURSEMENT' : 'pending_manager_clearance',
+    approvalStatus: isPettyCash ? 'approved' : 'pending_manager_clearance',
+    statusDisplay: isPettyCash ? 'Approved - Awaiting Disbursement' : 'Pending Manager Clearance',
     currentStep: 3,
     orgApproved: true,
     orgApprovedBy: actorName,
@@ -1074,20 +1056,22 @@ export async function executeOrganizationApproval(orgId, collectionName, docId, 
   // Write In-App Notification (Dual-Collection Persistence Engine - Section 4.1 & 4.2)
   try {
     const notificationPayload = {
-      title: '✅ Requisition Authorized by HQ',
-      body: `HQ (${actorName}) authorized Requisition #${docId}. Manager clearance required to release to site.`,
-      targetRole: 'manager_and_organisation',
-      targetRoles: ['manager', 'organisation'],
+      title: isPettyCash ? '✅ Petty Cash Request Authorized by HQ' : '✅ Request Authorized by HQ',
+      body: isPettyCash
+        ? `HQ (${actorName}) authorized Petty Cash Request #${docId}. Manager disbursement required.`
+        : `HQ (${actorName}) authorized Request #${docId}. Manager clearance required to release to site.`,
+      targetRole: isPettyCash ? 'manager' : 'manager_and_organisation',
+      targetRoles: isPettyCash ? ['manager'] : ['manager', 'organisation'],
       requestType: collectionName,
       requestId: docId,
       docId: docId,
       siteId: currentData.siteId || currentData.siteid || '',
       siteName: currentData.siteName || currentData.sitename || '',
-      status: 'pending_manager_clearance',
+      status: isPettyCash ? 'AWAITING_DISBURSEMENT' : 'pending_manager_clearance',
       senderRole: 'organisation',
       senderName: actorName,
       senderId: actorId,
-      actionRoute: '/manager/approvals',
+      actionRoute: isPettyCash ? '/manager/petty-cash' : '/manager/approvals',
     }
     await _writeRecord(orgId, notificationPayload)
   } catch (err) {
@@ -1118,9 +1102,10 @@ export async function executeOrganizationRejection(orgId, collectionName, docId,
     rejectionReason || 'Declined by Organization HQ.'
   )
 
+  const isPettyCash = collectionName === 'pettyCashRequests'
   const updates = {
-    status: 'rejected_by_org',
-    approvalStatus: 'rejected_by_org',
+    status: isPettyCash ? 'REJECTED_BY_ORGANIZATION' : 'rejected_by_org',
+    approvalStatus: isPettyCash ? 'rejected_by_org' : 'rejected_by_org',
     statusDisplay: 'Rejected by Organization',
     currentStep: -1,
     orgApproved: false,
@@ -1136,20 +1121,22 @@ export async function executeOrganizationRejection(orgId, collectionName, docId,
   // Write In-App Notification (Dual-Collection Persistence Engine - Section 4.1 & 4.2)
   try {
     const notificationPayload = {
-      title: '❌ Requisition Declined by HQ',
-      body: `Requisition #${docId} was declined by HQ (${actorName}). Reason: ${rejectionReason || 'No reason specified'}`,
-      targetRole: 'manager_and_organisation',
-      targetRoles: ['manager', 'organisation'],
+      title: isPettyCash ? '❌ Petty Cash Request Declined by HQ' : '❌ Request Declined by HQ',
+      body: isPettyCash
+        ? `Petty Cash Request #${docId} was declined by HQ (${actorName}). Reason: ${rejectionReason || 'No reason specified'}`
+        : `Request #${docId} was declined by HQ (${actorName}). Reason: ${rejectionReason || 'No reason specified'}`,
+      targetRole: isPettyCash ? 'manager' : 'manager_and_organisation',
+      targetRoles: isPettyCash ? ['manager'] : ['manager', 'organisation'],
       requestType: collectionName,
       requestId: docId,
       docId: docId,
       siteId: currentData.siteId || currentData.siteid || '',
       siteName: currentData.siteName || currentData.sitename || '',
-      status: 'rejected_by_org',
+      status: isPettyCash ? 'REJECTED_BY_ORGANIZATION' : 'rejected_by_org',
       senderRole: 'organisation',
       senderName: actorName,
       senderId: actorId,
-      actionRoute: '/manager/approvals',
+      actionRoute: isPettyCash ? '/manager/petty-cash' : '/manager/approvals',
     }
     await _writeRecord(orgId, notificationPayload)
   } catch (err) {

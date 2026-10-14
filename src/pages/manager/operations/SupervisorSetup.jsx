@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import {
   UserCheck,
   UserPlus,
@@ -26,7 +26,11 @@ import {
   toggleSupervisorStatus,
   checkSupervisorUniqueness,
   getNextSupervisorId,
+  warmupUsernameCache,
+  isUsernameCachedAsTaken,
 } from '../../../services/supervisorService.js'
+import { SubscriptionLimitService } from '../../../services/subscriptionLimitService.js'
+import SubscriptionLimitModal from '../../../components/common/SubscriptionLimitModal.jsx'
 
 export default function SupervisorSetup({ orgId, sites = [], currentUser, onNotify }) {
   const [activeTab, setActiveTab] = useState('directory') // 'directory' | 'create'
@@ -34,6 +38,11 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
   const [loading, setLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('ALL') // 'ALL' | 'ACTIVE' | 'INACTIVE'
+
+  // Subscription plan limit states
+  const [planLimits, setPlanLimits] = useState(null)
+  const [limitModalOpen, setLimitModalOpen] = useState(false)
+  const [limitModalData, setLimitModalData] = useState(null)
 
   // Sequential Next Supervisor ID State (SUP001, SUP002, etc.)
   const [nextSupervisorId, setNextSupervisorId] = useState('SUP001')
@@ -53,6 +62,12 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
   // Uniqueness validation errors
   const [uniquenessError, setUniquenessError] = useState(null)
   const [validatingField, setValidatingField] = useState(false)
+
+  // Supervisor Username Real-Time Validation State
+  const [isCheckingUsername, setIsCheckingUsername] = useState(false)
+  const [usernameStatusText, setUsernameStatusText] = useState(null)
+  const [isUsernameValid, setIsUsernameValid] = useState(null)
+  const usernameSeq = useRef(0)
 
   // Edit / Password Reset Modal
   const [editingSupervisor, setEditingSupervisor] = useState(null)
@@ -89,9 +104,35 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
   }
 
   useEffect(() => {
+    warmupUsernameCache()
     loadData()
     refreshNextSupervisorId()
+    if (orgId) {
+      SubscriptionLimitService.getActivePlanLimits(orgId)
+        .then(setPlanLimits)
+        .catch(console.error)
+    }
   }, [orgId])
+
+  const handleSwitchToCreate = async () => {
+    if (orgId) {
+      try {
+        const check = await SubscriptionLimitService.canCreateSupervisor({
+          orgId,
+          currentPlanName: planLimits?.planName,
+          currentSupervisorsCount: supervisors.length,
+        })
+        if (!check.allowed) {
+          setLimitModalData(check)
+          setLimitModalOpen(true)
+          return
+        }
+      } catch (err) {
+        console.warn('Quota check error:', err)
+      }
+    }
+    setActiveTab('create')
+  }
 
   useEffect(() => {
     if (activeTab === 'create') {
@@ -99,9 +140,61 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
     }
   }, [activeTab, orgId])
 
-  // Debounced check for uniqueness
+  // Debounced real-time case-insensitive username validation
   useEffect(() => {
-    if (!formUsername && !formPhone && !formEmail) {
+    const clean = formUsername.trim()
+    const cleanLower = clean.toLowerCase()
+    const seq = ++usernameSeq.current
+
+    if (!clean) {
+      setIsCheckingUsername(false)
+      setUsernameStatusText(null)
+      setIsUsernameValid(null)
+      return
+    }
+
+    if (clean.length < 3) {
+      setIsCheckingUsername(false)
+      setUsernameStatusText('Username must be at least 3 characters')
+      setIsUsernameValid(false)
+      return
+    }
+
+    // Instant 0ms synchronous cache check
+    if (isUsernameCachedAsTaken(cleanLower)) {
+      setIsCheckingUsername(false)
+      setUsernameStatusText('Username already exists')
+      setIsUsernameValid(false)
+      return
+    }
+
+    setIsCheckingUsername(true)
+    setUsernameStatusText('Checking username...')
+    setIsUsernameValid(null)
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await checkSupervisorUniqueness(orgId, { username: clean })
+        if (seq === usernameSeq.current && formUsername.trim().toLowerCase() === cleanLower) {
+          setIsCheckingUsername(false)
+          setIsUsernameValid(res.isUnique)
+          setUsernameStatusText(res.isUnique ? 'Username is available ✓' : 'Username already exists')
+        }
+      } catch (_err) {
+        if (seq === usernameSeq.current) {
+          setIsCheckingUsername(false)
+          setIsUsernameValid(false)
+          setUsernameStatusText('Error checking username')
+        }
+      }
+    }, 250)
+
+    return () => clearTimeout(timer)
+  }, [formUsername, orgId])
+
+  // Debounced check for phone and email uniqueness
+  useEffect(() => {
+    if (!formPhone && !formEmail) {
       setUniquenessError(null)
       return
     }
@@ -110,7 +203,6 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
       setValidatingField(true)
       try {
         const res = await checkSupervisorUniqueness(orgId, {
-          username: formUsername,
           phone: formPhone,
           email: formEmail,
         })
@@ -127,11 +219,17 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
     }, 450)
 
     return () => clearTimeout(timer)
-  }, [formUsername, formPhone, formEmail, orgId])
+  }, [formPhone, formEmail, orgId])
 
   const handleCreateSubmit = async (e) => {
     e.preventDefault()
     if (!orgId) return
+
+    if (isUsernameValid === false) {
+      onNotify?.(usernameStatusText || 'Username already exists', 'error')
+      return
+    }
+
     if (uniquenessError) {
       onNotify?.(uniquenessError, 'error')
       return
@@ -139,6 +237,18 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
 
     setSubmitting(true)
     try {
+      const limitCheck = await SubscriptionLimitService.canCreateSupervisor({
+        orgId,
+        currentPlanName: planLimits?.planName,
+        currentSupervisorsCount: supervisors.length,
+      })
+      if (!limitCheck.allowed) {
+        setLimitModalData(limitCheck)
+        setLimitModalOpen(true)
+        setSubmitting(false)
+        return
+      }
+
       const created = await createSupervisor(
         orgId,
         {
@@ -165,12 +275,30 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
       setFormEmail('')
       setFormPassword('')
       setFormAssignedSites([])
+      setIsCheckingUsername(false)
+      setUsernameStatusText(null)
+      setIsUsernameValid(null)
       setActiveTab('directory')
       await loadData()
       refreshNextSupervisorId()
+      // Refresh limits
+      if (orgId) {
+        SubscriptionLimitService.getActivePlanLimits(orgId).then(setPlanLimits).catch(console.error)
+      }
     } catch (err) {
       console.error(err)
-      onNotify?.(err.message || 'Failed to create supervisor', 'error')
+      if (err.code === 'SUBSCRIPTION_LIMIT_REACHED' || err.code === 'SUBSCRIPTION_EXPIRED' || err.details) {
+        setLimitModalData(err.details || {
+          reason: err.code === 'SUBSCRIPTION_EXPIRED' ? 'SUBSCRIPTION_EXPIRED' : 'SUPERVISOR_LIMIT_REACHED',
+          planName: planLimits?.planName || 'Current Plan',
+          currentCount: supervisors.length,
+          maxLimit: planLimits?.quotas?.maxSupervisors,
+          message: err.message,
+        })
+        setLimitModalOpen(true)
+      } else {
+        onNotify?.(err.message || 'Failed to create supervisor', 'error')
+      }
     } finally {
       setSubmitting(false)
     }
@@ -268,26 +396,39 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
           </p>
         </div>
 
-        {/* Action Toggle */}
-        <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl">
-          <button
-            onClick={() => setActiveTab('directory')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-              activeTab === 'directory' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Users className={`w-4 h-4 ${activeTab === 'directory' ? 'text-white' : 'text-slate-500'}`} />
-            <span>Staff Directory ({supervisors.length})</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('create')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-              activeTab === 'create' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <UserPlus className={`w-4 h-4 ${activeTab === 'create' ? 'text-white' : 'text-slate-500'}`} />
-            <span>Create Supervisor</span>
-          </button>
+        {/* Action Toggle & Quota */}
+        <div className="flex flex-wrap items-center gap-3">
+          {planLimits?.quotas && (
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+              <span className="text-slate-500 font-medium">Supervisor Quota:</span>
+              <span className="font-bold text-slate-800">
+                {supervisors.length} / {planLimits.quotas.maxSupervisors >= 999999 ? '∞' : planLimits.quotas.maxSupervisors}
+              </span>
+              <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                {planLimits.planName}
+              </span>
+            </div>
+          )}
+          <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl">
+            <button
+              onClick={() => setActiveTab('directory')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'directory' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Users className={`w-4 h-4 ${activeTab === 'directory' ? 'text-white' : 'text-slate-500'}`} />
+              <span>Staff Directory ({supervisors.length})</span>
+            </button>
+            <button
+              onClick={handleSwitchToCreate}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'create' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <UserPlus className={`w-4 h-4 ${activeTab === 'create' ? 'text-white' : 'text-slate-500'}`} />
+              <span>Create Supervisor</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -387,14 +528,36 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
                     type="text"
                     required
                     value={formUsername}
-                    onChange={(e) => setFormUsername(e.target.value.toLowerCase().replace(/\s+/g, ''))}
-                    placeholder="e.g. ramesh_cst"
-                    className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 lowercase"
+                    onChange={(e) => setFormUsername(e.target.value.replace(/\s+/g, ''))}
+                    placeholder="e.g. Ramesh123"
+                    className={`w-full px-3.5 py-2.5 text-sm bg-slate-50 border rounded-xl outline-none transition-colors ${
+                      isUsernameValid === false
+                        ? 'border-rose-400 focus:bg-white focus:ring-2 focus:ring-rose-500/20'
+                        : isUsernameValid === true
+                        ? 'border-emerald-400 focus:bg-white focus:ring-2 focus:ring-emerald-500/20'
+                        : 'border-slate-200 focus:bg-white focus:ring-2 focus:ring-blue-500/20'
+                    }`}
                   />
-                  {validatingField && (
+                  {isCheckingUsername && (
                     <RefreshCw className="w-3.5 h-3.5 text-slate-400 animate-spin absolute right-3 top-1/2 -translate-y-1/2" />
                   )}
                 </div>
+                {isCheckingUsername ? (
+                  <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1.5 mt-1.5">
+                    Checking username...
+                  </span>
+                ) : isUsernameValid === false && usernameStatusText ? (
+                  <span className="text-[11px] text-rose-600 font-semibold flex items-center gap-1 mt-1.5">
+                    <span className="text-xs">⚠️</span>
+                    {usernameStatusText}
+                  </span>
+                ) : isUsernameValid === true ? (
+                  <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1 mt-1.5">
+                    Username is available ✓
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-slate-400 block mt-1">Global case-insensitive unique login ID</span>
+                )}
               </div>
 
               <div>
@@ -523,7 +686,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
               </button>
               <button
                 type="submit"
-                disabled={submitting || Boolean(uniquenessError)}
+                disabled={submitting || isCheckingUsername || isUsernameValid === false || Boolean(uniquenessError)}
                 className="px-6 py-2.5 bg-[#0B3470] hover:bg-[#082855] text-white text-sm font-semibold rounded-xl transition-all shadow-xs disabled:opacity-50 cursor-pointer"
               >
                 {submitting ? 'Creating Profile...' : `Save & Issue Account (${nextSupervisorId})`}
@@ -787,6 +950,13 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
           </div>
         </div>
       )}
+
+      {/* Subscription Limit Modal */}
+      <SubscriptionLimitModal
+        isOpen={limitModalOpen}
+        onClose={() => setLimitModalOpen(false)}
+        limitData={limitModalData}
+      />
     </div>
   )
 }

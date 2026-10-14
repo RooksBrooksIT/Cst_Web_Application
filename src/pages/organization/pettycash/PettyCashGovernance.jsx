@@ -11,10 +11,14 @@ import {
   PETTY_CASH_RECONCILIATION_STATUS,
   PETTY_CASH_RETURN_STATUS,
   orgAuthorizeRequest,
+  orgDisburseFunds,
+  createImprestReplenishmentRequest,
+  settlePettyCashReconciliation,
   confirmCashReturn,
   approveReconciliation,
   submitPettyCashRequest,
 } from '../../../services/pettyCashService'
+import { getNormalizedSiteOptions } from '../../../utils/siteUtils.js'
 
 function money(amount) {
   return new Intl.NumberFormat('en-IN', {
@@ -49,17 +53,38 @@ export default function PettyCashGovernance({
     role: 'Organization',
   }
 
+  const normalizedSites = useMemo(() => getNormalizedSiteOptions(sites), [sites])
   const [activeTab, setActiveTab] = useState('accounts') // accounts, approvals, expenses, ledger, reconciliations, audit
+  const [authQueueSubTab, setAuthQueueSubTab] = useState('clearance') // 'clearance' | 'disbursal'
   const [search, setSearch] = useState('')
   const [siteFilter, setSiteFilter] = useState('all')
   const [viewMode, setViewMode] = useState('cards') // 'cards' | 'table'
 
-  // Modals state
+  // Modals state: Authorization (Stage 3B)
   const [selectedRequest, setSelectedRequest] = useState(null)
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
   const [approvedAmount, setApprovedAmount] = useState('')
   const [authRemarks, setAuthRemarks] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
+
+  // Modals state: Direct HQ Disbursal (Stage 4)
+  const [isDisburseModalOpen, setIsDisburseModalOpen] = useState(false)
+  const [disburseRequest, setDisburseRequest] = useState(null)
+  const [disburseAmount, setDisburseAmount] = useState('')
+  const [disburseMethod, setDisburseMethod] = useState('Bank Transfer')
+  const [disburseRefId, setDisburseRefId] = useState('')
+  const [disburseRemarks, setDisburseRemarks] = useState('')
+
+  // Modals state: 1-Click Imprest Replenishment (Stage 8)
+  const [isReplenishModalOpen, setIsReplenishModalOpen] = useState(false)
+  const [selectedReplenishSite, setSelectedReplenishSite] = useState(null)
+  const [replenishAmount, setReplenishAmount] = useState('')
+
+  // Modals state: Final Settlement & GL Closure (Stage 7)
+  const [isSettleModalOpen, setIsSettleModalOpen] = useState(false)
+  const [selectedReconToSettle, setSelectedReconToSettle] = useState(null)
+  const [settlementOption, setSettlementOption] = useState('CARRY_FORWARD')
+  const [settlementRemarks, setSettlementRemarks] = useState('')
 
   // Receipt Lightbox
   const [previewReceiptUrl, setPreviewReceiptUrl] = useState(null)
@@ -108,8 +133,23 @@ export default function PettyCashGovernance({
     return pettyCashRequests.filter(
       (r) =>
         r.status === PETTY_CASH_REQUEST_STATUS.PENDING_ORGANIZATION_APPROVAL ||
+        r.status === 'PENDING_ORGANIZATION_APPROVAL' ||
+        r.status === 'PENDING_ORG_APPROVAL' ||
         r.status === 'pending_org_approval' ||
+        r.status === 'pending_organization_approval' ||
         r.currentStep === 2
+    )
+  }, [pettyCashRequests])
+
+  const awaitingOrgDisbursals = useMemo(() => {
+    return pettyCashRequests.filter(
+      (r) =>
+        r.status === PETTY_CASH_REQUEST_STATUS.AWAITING_DISBURSEMENT ||
+        r.status === 'AWAITING_DISBURSEMENT' ||
+        r.status === 'APPROVED' ||
+        r.status === 'PENDING_ORG_DISBURSAL' ||
+        r.status === 'PENDING_DISBURSAL' ||
+        r.currentStep === 3
     )
   }, [pettyCashRequests])
 
@@ -158,7 +198,7 @@ export default function PettyCashGovernance({
       })
   }, [pettyCashTransactions, siteFilter, search])
 
-  // Handler: Authorize Request
+  // Handler: Authorize Request (Stage 3B)
   async function handleAuthorize(decision) {
     if (!orgId || !selectedRequest) return
     setActionLoading(true)
@@ -173,9 +213,94 @@ export default function PettyCashGovernance({
       )
       setIsAuthModalOpen(false)
       setSelectedRequest(null)
-      alert(decision === 'authorize' ? 'Request authorized successfully! Forwarded to manager for disbursement.' : 'Request rejected.')
+      alert(decision === 'authorize' ? 'Request authorized by HQ! Ready for fund disbursement.' : 'Request rejected.')
     } catch (err) {
       alert('Error updating authorization: ' + err.message)
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  // Handler: HQ Disburse Funds (Stage 4)
+  async function handleDisburseFunds(e) {
+    e.preventDefault()
+    if (!orgId || !disburseRequest) return
+    const amt = Number(disburseAmount)
+    if (!amt || amt <= 0) {
+      alert('Please enter a valid disbursement amount')
+      return
+    }
+    setActionLoading(true)
+    try {
+      await orgDisburseFunds(
+        orgId,
+        disburseRequest.id || disburseRequest.requestId,
+        amt,
+        disburseMethod,
+        disburseRefId,
+        disburseRemarks,
+        orgActor
+      )
+      setIsDisburseModalOpen(false)
+      setDisburseRequest(null)
+      setDisburseAmount('')
+      setDisburseRefId('')
+      setDisburseRemarks('')
+      alert(`Funds of ₹${amt.toLocaleString('en-IN')} disbursed via ${disburseMethod}! Supervisor notified for physical receipt confirmation.`)
+    } catch (err) {
+      alert('Error releasing funds: ' + err.message)
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  // Handler: 1-Click Imprest Replenishment (Stage 8)
+  async function handleReplenishFloat(e) {
+    e.preventDefault()
+    if (!orgId || !selectedReplenishSite) return
+    const amt = Number(replenishAmount)
+    if (!amt || amt <= 0) {
+      alert('Please enter a valid replenishment amount')
+      return
+    }
+    setActionLoading(true)
+    try {
+      await createImprestReplenishmentRequest(
+        orgId,
+        selectedReplenishSite.siteId,
+        amt,
+        orgActor
+      )
+      setIsReplenishModalOpen(false)
+      setSelectedReplenishSite(null)
+      setReplenishAmount('')
+      alert(`Imprest replenishment order for ₹${amt.toLocaleString('en-IN')} created! Awaiting HQ authorization.`)
+    } catch (err) {
+      alert('Error creating replenishment: ' + err.message)
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  // Handler: Final Settle & Close Reconciliation (Stage 7)
+  async function handleSettleReconciliation(e) {
+    e.preventDefault()
+    if (!orgId || !selectedReconToSettle) return
+    setActionLoading(true)
+    try {
+      await settlePettyCashReconciliation(
+        orgId,
+        selectedReconToSettle.id || selectedReconToSettle.reconciliationId,
+        settlementOption,
+        settlementRemarks,
+        orgActor
+      )
+      setIsSettleModalOpen(false)
+      setSelectedReconToSettle(null)
+      setSettlementRemarks('')
+      alert('Reconciliation formally audited, settled, and closed in General Ledger!')
+    } catch (err) {
+      alert('Error settling reconciliation: ' + err.message)
     } finally {
       setActionLoading(false)
     }
@@ -382,9 +507,9 @@ export default function PettyCashGovernance({
               className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs cursor-pointer"
             >
               <option value="all">All Sites</option>
-              {sites.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.projectName || s.siteName || s.name || s.id}
+              {normalizedSites.map((s, idx) => (
+                <option key={`pc-site-${s.id || s.siteId || idx}-${idx}`} value={s.id || s.siteId}>
+                  {s.label || s.projectName || s.siteName || s.name || s.id}
                 </option>
               ))}
             </select>
@@ -507,16 +632,32 @@ export default function PettyCashGovernance({
 
                     <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
                       <StatusBadge status={a.status || 'ACTIVE'} />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSiteFilter(a.siteId)
-                          setActiveTab('ledger')
-                        }}
-                        className="text-blue-700 hover:text-blue-900 font-bold cursor-pointer"
-                      >
-                        View Ledger →
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedReplenishSite(a)
+                            const base = Number(a.fundLimit) || 50000
+                            const avail = Number(a.availableBalance) || 0
+                            setReplenishAmount(String(Math.max(0, base - avail) || 5000))
+                            setIsReplenishModalOpen(true)
+                          }}
+                          className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 cursor-pointer shadow-2xs transition-colors"
+                          title="Generate Stage 8 Imprest replenishment order"
+                        >
+                          🔄 Replenish Float
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSiteFilter(a.siteId)
+                            setActiveTab('ledger')
+                          }}
+                          className="text-blue-700 hover:text-blue-900 font-bold cursor-pointer"
+                        >
+                          Ledger →
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )
@@ -535,6 +676,7 @@ export default function PettyCashGovernance({
                       <th className="p-3.5 text-right">Available Float</th>
                       <th className="p-3.5 text-right">Reserved Float</th>
                       <th className="p-3.5 text-center">Status</th>
+                      <th className="p-3.5 text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -549,6 +691,21 @@ export default function PettyCashGovernance({
                         <td className="p-3.5 text-center whitespace-nowrap">
                           <StatusBadge status={a.status || 'ACTIVE'} />
                         </td>
+                        <td className="p-3.5 text-right whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedReplenishSite(a)
+                              const base = Number(a.fundLimit) || 50000
+                              const avail = Number(a.availableBalance) || 0
+                              setReplenishAmount(String(Math.max(0, base - avail) || 5000))
+                              setIsReplenishModalOpen(true)
+                            }}
+                            className="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 cursor-pointer shadow-2xs"
+                          >
+                            🔄 Replenish
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -559,85 +716,174 @@ export default function PettyCashGovernance({
         </section>
       )}
 
-      {/* 5. Tab 2: HQ Authorization Queue */}
+      {/* 5. Tab 2: HQ Authorization & Disbursal Queue */}
       {activeTab === 'approvals' && (
         <section className="space-y-4">
           <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
               <div>
                 <h3 className="text-base font-extrabold text-slate-900">
-                  HQ Petty Cash Authorization Queue
+                  HQ Petty Cash Command: Authorizations & Disbursals
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Verify supervisor requests forwarded by operations managers and authorize float disbursals.
+                  Dual-tier clearance: Authorize supervisor requests, and directly disburse approved operational funds to field wallets.
                 </p>
               </div>
-              <span className="px-3 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                {pendingOrgApprovals.length} Pending Clearances
-              </span>
-            </div>
 
-            <div className="border border-slate-200 rounded-xl overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs text-slate-700">
-                  <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
-                    <tr>
-                      <th className="p-3.5">Request ID</th>
-                      <th className="p-3.5">Site / Supervisor</th>
-                      <th className="p-3.5">Manager Notes</th>
-                      <th className="p-3.5 text-right">Requested</th>
-                      <th className="p-3.5 text-center">Current Status</th>
-                      <th className="p-3.5 text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {pendingOrgApprovals.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="p-12 text-center text-slate-400 text-xs">
-                          No pending petty cash requests awaiting HQ authorization.
-                        </td>
-                      </tr>
-                    ) : (
-                      pendingOrgApprovals.map((req) => (
-                        <tr key={req.id || req.requestId} className="hover:bg-slate-50/80 transition-colors">
-                          <td className="p-3.5 font-mono font-bold text-slate-900">{req.requestId || req.id}</td>
-                          <td className="p-3.5">
-                            <strong className="block text-slate-900">{req.siteName || req.projectName || 'Site'}</strong>
-                            <span className="text-[11px] text-slate-400">By {req.supervisorName || 'Supervisor'}</span>
-                          </td>
-                          <td className="p-3.5 text-slate-600 max-w-xs">
-                            <div className="truncate">{req.managerReviewRemarks || req.reason || 'Verified.'}</div>
-                            <small className="text-[10px] text-slate-400">Mgr: {req.managerReviewedBy || req.managerName || 'Manager'}</small>
-                          </td>
-                          <td className="p-3.5 text-right font-mono font-bold text-blue-700 text-sm">
-                            {money(req.requestedAmount)}
-                          </td>
-                          <td className="p-3.5 text-center whitespace-nowrap">
-                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                              HQ Clearance Pending
-                            </span>
-                          </td>
-                          <td className="p-3.5 text-right whitespace-nowrap">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedRequest(req)
-                                setApprovedAmount(req.requestedAmount)
-                                setAuthRemarks(req.managerReviewRemarks || '')
-                                setIsAuthModalOpen(true)
-                              }}
-                              className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors cursor-pointer shadow-2xs"
-                            >
-                              Review & Authorize
-                            </button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+              {/* Sub-Queue Segmented Control */}
+              <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setAuthQueueSubTab('clearance')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    authQueueSubTab === 'clearance'
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  ⚡ Clearance Queue ({pendingOrgApprovals.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAuthQueueSubTab('disbursal')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    authQueueSubTab === 'disbursal'
+                      ? 'bg-white text-blue-700 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  💵 Disbursal Queue ({awaitingOrgDisbursals.length})
+                </button>
               </div>
             </div>
+
+            {authQueueSubTab === 'clearance' ? (
+              <div className="border border-slate-200 rounded-xl overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-700">
+                    <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
+                      <tr>
+                        <th className="p-3.5">Request ID</th>
+                        <th className="p-3.5">Site / Supervisor</th>
+                        <th className="p-3.5">Manager Notes</th>
+                        <th className="p-3.5 text-right">Requested</th>
+                        <th className="p-3.5 text-center">Current Status</th>
+                        <th className="p-3.5 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {pendingOrgApprovals.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="p-12 text-center text-slate-400 text-xs">
+                            No pending petty cash requests awaiting HQ authorization.
+                          </td>
+                        </tr>
+                      ) : (
+                        pendingOrgApprovals.map((req) => (
+                          <tr key={req.id || req.requestId} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="p-3.5 font-mono font-bold text-slate-900">{req.requestId || req.id}</td>
+                            <td className="p-3.5">
+                              <strong className="block text-slate-900">{req.siteName || req.projectName || 'Site'}</strong>
+                              <span className="text-[11px] text-slate-400">By {req.supervisorName || 'Supervisor'}</span>
+                            </td>
+                            <td className="p-3.5 text-slate-600 max-w-xs">
+                              <div className="truncate">{req.managerReviewRemarks || req.reason || 'Verified.'}</div>
+                              <small className="text-[10px] text-slate-400">Mgr: {req.managerReviewedBy || req.managerName || 'Manager'}</small>
+                            </td>
+                            <td className="p-3.5 text-right font-mono font-bold text-blue-700 text-sm">
+                              {money(req.requestedAmount)}
+                            </td>
+                            <td className="p-3.5 text-center whitespace-nowrap">
+                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                HQ Clearance Pending
+                              </span>
+                            </td>
+                            <td className="p-3.5 text-right whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedRequest(req)
+                                  setApprovedAmount(req.requestedAmount)
+                                  setAuthRemarks(req.managerReviewRemarks || '')
+                                  setIsAuthModalOpen(true)
+                                }}
+                                className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors cursor-pointer shadow-2xs"
+                              >
+                                Review & Authorize
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <div className="border border-slate-200 rounded-xl overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-700">
+                    <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
+                      <tr>
+                        <th className="p-3.5">Request ID</th>
+                        <th className="p-3.5">Site / Requester</th>
+                        <th className="p-3.5 text-right">Authorized Amount</th>
+                        <th className="p-3.5">Authorized By / Remarks</th>
+                        <th className="p-3.5 text-center">Status</th>
+                        <th className="p-3.5 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {awaitingOrgDisbursals.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="p-12 text-center text-slate-400 text-xs">
+                            No approved requests currently awaiting fund disbursement.
+                          </td>
+                        </tr>
+                      ) : (
+                        awaitingOrgDisbursals.map((req) => (
+                          <tr key={req.id || req.requestId} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="p-3.5 font-mono font-bold text-slate-900">{req.requestId || req.id}</td>
+                            <td className="p-3.5">
+                              <strong className="block text-slate-900">{req.siteName || req.projectName || 'Site'}</strong>
+                              <span className="text-[11px] text-slate-400">By {req.supervisorName || 'Supervisor'}</span>
+                            </td>
+                            <td className="p-3.5 text-right font-mono font-bold text-emerald-700 text-sm">
+                              {money(req.approvedAmount || req.requestedAmount)}
+                            </td>
+                            <td className="p-3.5 text-slate-600 max-w-xs">
+                              <div className="font-semibold text-slate-900">{req.orgApprovedBy || 'HQ Finance'}</div>
+                              <small className="text-[10px] text-slate-400">{req.orgApprovalRemarks || 'Approved for disbursement'}</small>
+                            </td>
+                            <td className="p-3.5 text-center whitespace-nowrap">
+                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                Awaiting Disbursal
+                              </span>
+                            </td>
+                            <td className="p-3.5 text-right whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDisburseRequest(req)
+                                  setDisburseAmount(String(req.approvedAmount || req.requestedAmount))
+                                  setDisburseMethod('Bank Transfer')
+                                  setDisburseRefId('')
+                                  setDisburseRemarks('')
+                                  setIsDisburseModalOpen(true)
+                                }}
+                                className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-700 hover:bg-emerald-800 text-white transition-colors cursor-pointer shadow-2xs"
+                              >
+                                💵 Release Funds
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -824,15 +1070,33 @@ export default function PettyCashGovernance({
                           </td>
                           <td className="p-3 text-slate-600">{rec.differenceReason || 'Exact match'}</td>
                           <td className="p-3 text-center"><StatusBadge status={rec.status} /></td>
-                          <td className="p-3 text-right">
-                            {rec.status !== PETTY_CASH_RECONCILIATION_STATUS.RECONCILIATION_APPROVED && (
+                          <td className="p-3 text-right whitespace-nowrap">
+                            {rec.status !== PETTY_CASH_RECONCILIATION_STATUS.RECONCILIATION_APPROVED && rec.status !== 'SETTLED_AND_CLOSED' && (
                               <button
                                 type="button"
                                 onClick={() => handleApproveRecon(rec)}
-                                className="px-2.5 py-1 bg-[#0B3470] text-white font-bold rounded-lg text-xs cursor-pointer"
+                                className="px-2.5 py-1 bg-[#0B3470] text-white font-bold rounded-lg text-xs cursor-pointer shadow-2xs"
                               >
                                 Approve
                               </button>
+                            )}
+                            {rec.status === PETTY_CASH_RECONCILIATION_STATUS.RECONCILIATION_APPROVED && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedReconToSettle(rec)
+                                  setSettlementOption('CARRY_FORWARD')
+                                  setSettlementRemarks('')
+                                  setIsSettleModalOpen(true)
+                                }}
+                                className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg text-xs cursor-pointer shadow-2xs"
+                                title="Execute Stage 7 final settlement and General Ledger closure"
+                              >
+                                ⚖️ Settle & Close
+                              </button>
+                            )}
+                            {rec.status === 'SETTLED_AND_CLOSED' && (
+                              <span className="text-[10px] font-bold text-emerald-700">✓ Settled & Closed</span>
                             )}
                           </td>
                         </tr>
@@ -1033,9 +1297,9 @@ export default function PettyCashGovernance({
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600"
               >
                 <option value="">Choose Site...</option>
-                {sites.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.projectName || s.siteName || s.name}
+                {normalizedSites.map((s, idx) => (
+                  <option key={`pc-req-site-${s.id || s.siteId || idx}-${idx}`} value={s.id || s.siteId}>
+                    {s.label || s.projectName || s.siteName || s.name}
                   </option>
                 ))}
               </select>
@@ -1080,6 +1344,241 @@ export default function PettyCashGovernance({
                 className="px-5 py-2 rounded-xl font-bold bg-[#0B3470] hover:bg-[#082654] text-white disabled:opacity-50 cursor-pointer"
               >
                 Submit Float Request
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Modal: Stage 4 Direct HQ Disbursement */}
+      {isDisburseModalOpen && disburseRequest && (
+        <Modal
+          isOpen={isDisburseModalOpen}
+          onClose={() => {
+            setIsDisburseModalOpen(false)
+            setDisburseRequest(null)
+          }}
+          title="Stage 4: Organization Fund Disbursement"
+        >
+          <form onSubmit={handleDisburseFunds} className="space-y-4 text-xs">
+            <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs flex justify-between items-center">
+              <div>
+                <span className="text-emerald-800 font-bold block">Authorized Payout Amount</span>
+                <span className="text-emerald-600 text-[11px]">
+                  Site: {disburseRequest.siteName} • Custodian: {disburseRequest.supervisorName}
+                </span>
+              </div>
+              <strong className="text-lg font-black text-emerald-700 font-mono">
+                {money(disburseRequest.approvedAmount || disburseRequest.requestedAmount)}
+              </strong>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-slate-700 font-semibold block">Payout Channel / Mode *</label>
+                <select
+                  value={disburseMethod}
+                  onChange={(e) => setDisburseMethod(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600"
+                >
+                  <option value="Bank Transfer">Bank Transfer (NEFT / RTGS / IMPS)</option>
+                  <option value="UPI">UPI / Digital Wallet</option>
+                  <option value="Corporate Card">Corporate Card Balance Load</option>
+                  <option value="Cash Handover">Cash Handover via Cashier</option>
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-slate-700 font-semibold block">Disburse Amount (₹) *</label>
+                <input
+                  type="number"
+                  required
+                  min="1"
+                  value={disburseAmount}
+                  onChange={(e) => setDisburseAmount(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-900 outline-none focus:border-blue-600"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-slate-700 font-semibold block">
+                Transaction Reference ID (UTR / Receipt No / Cheque #):
+              </label>
+              <input
+                type="text"
+                value={disburseRefId}
+                onChange={(e) => setDisburseRefId(e.target.value)}
+                placeholder="e.g. UTR-2026-992140 / TXN88192"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono text-slate-900 outline-none focus:border-blue-600"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-slate-700 font-semibold block">Disbursement Remarks / Audit Note:</label>
+              <textarea
+                rows={2}
+                value={disburseRemarks}
+                onChange={(e) => setDisburseRemarks(e.target.value)}
+                placeholder="Enter remittance instructions or banking notes..."
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800 outline-none focus:border-blue-600"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setIsDisburseModalOpen(false)}
+                className="px-4 py-2 rounded-xl font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={actionLoading}
+                className="px-5 py-2 rounded-xl font-bold bg-emerald-700 hover:bg-emerald-800 text-white disabled:opacity-50 cursor-pointer shadow-xs"
+              >
+                {actionLoading ? 'Releasing Funds...' : 'Confirm & Release Funds'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Modal: Stage 8 Imprest Float Replenishment */}
+      {isReplenishModalOpen && selectedReplenishSite && (
+        <Modal
+          isOpen={isReplenishModalOpen}
+          onClose={() => {
+            setIsReplenishModalOpen(false)
+            setSelectedReplenishSite(null)
+          }}
+          title="Stage 8: Imprest Float Replenishment Order"
+        >
+          <form onSubmit={handleReplenishFloat} className="space-y-4 text-xs">
+            <div className="p-3.5 rounded-xl bg-blue-50 border border-blue-200 text-xs space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-blue-900 font-bold">Site: {selectedReplenishSite.siteName}</span>
+                <span className="text-blue-700">👤 {selectedReplenishSite.supervisorName}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 pt-2 border-t border-blue-200/60 font-mono text-[11px]">
+                <div>
+                  <span className="text-slate-500 block text-[10px]">Float Cap</span>
+                  <strong className="text-slate-900">{money(selectedReplenishSite.fundLimit || 50000)}</strong>
+                </div>
+                <div>
+                  <span className="text-slate-500 block text-[10px]">Current Available</span>
+                  <strong className="text-emerald-700">{money(selectedReplenishSite.availableBalance || 0)}</strong>
+                </div>
+                <div className="text-right">
+                  <span className="text-slate-500 block text-[10px]">Restoration Deficit</span>
+                  <strong className="text-rose-600">
+                    {money(Math.max(0, (selectedReplenishSite.fundLimit || 50000) - (selectedReplenishSite.availableBalance || 0)))}
+                  </strong>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-slate-700 font-semibold block">Replenishment Amount (₹ INR) *</label>
+              <input
+                type="number"
+                required
+                min="1"
+                value={replenishAmount}
+                onChange={(e) => setReplenishAmount(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm font-mono font-bold text-slate-900 outline-none focus:border-blue-600"
+              />
+              <span className="text-[10px] text-slate-500 block">
+                Generates a Stage 8 Imprest replenishment order to top up site liquidity back to target benchmark.
+              </span>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setIsReplenishModalOpen(false)}
+                className="px-4 py-2 rounded-xl font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={actionLoading}
+                className="px-5 py-2 rounded-xl font-bold bg-[#0B3470] hover:bg-[#082654] text-white disabled:opacity-50 cursor-pointer shadow-xs"
+              >
+                {actionLoading ? 'Generating Order...' : 'Generate Replenishment Order'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Modal: Stage 7 Final Settlement & GL Closure */}
+      {isSettleModalOpen && selectedReconToSettle && (
+        <Modal
+          isOpen={isSettleModalOpen}
+          onClose={() => {
+            setIsSettleModalOpen(false)
+            setSelectedReconToSettle(null)
+          }}
+          title="Stage 7: Final Settlement & General Ledger Closure"
+        >
+          <form onSubmit={handleSettleReconciliation} className="space-y-4 text-xs">
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Site:</span>
+                <strong className="text-slate-900">{selectedReconToSettle.siteName}</strong>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Physical Cash Count:</span>
+                <strong className="text-slate-900 font-mono">{money(selectedReconToSettle.physicalCash)}</strong>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Variance / Difference:</span>
+                <strong className={`font-mono ${Math.abs(selectedReconToSettle.difference) > 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
+                  {money(selectedReconToSettle.difference)}
+                </strong>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-slate-700 font-semibold block">Remaining Float Treatment *</label>
+              <select
+                value={settlementOption}
+                onChange={(e) => setSettlementOption(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600"
+              >
+                <option value="CARRY_FORWARD">Option A: Carry forward balance into ongoing site float</option>
+                <option value="SURRENDER_TO_BANK">Option B: Surrender / Return balance to Corporate Bank</option>
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-slate-700 font-semibold block">General Ledger & Audit Settlement Notes:</label>
+              <textarea
+                rows={2}
+                value={settlementRemarks}
+                onChange={(e) => setSettlementRemarks(e.target.value)}
+                placeholder="Enter audit signoff notes or journal reference..."
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800 outline-none focus:border-blue-600"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setIsSettleModalOpen(false)}
+                className="px-4 py-2 rounded-xl font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={actionLoading}
+                className="px-5 py-2 rounded-xl font-bold bg-emerald-700 hover:bg-emerald-800 text-white disabled:opacity-50 cursor-pointer shadow-xs"
+              >
+                {actionLoading ? 'Finalizing Settle...' : 'Final Approve & Settle'}
               </button>
             </div>
           </form>

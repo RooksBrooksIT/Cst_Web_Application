@@ -108,7 +108,15 @@ export function useManagerDashboard(orgId, managerUid, assignedSiteIds = []) {
           colRef,
           (snapshot) => {
             if (cancelled) return
-            let items = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))
+            const seenIds = new Set()
+            const uniqueDocs = []
+            for (const d of snapshot.docs) {
+              if (!seenIds.has(d.id)) {
+                seenIds.add(d.id)
+                uniqueDocs.push({ ...d.data(), id: d.id })
+              }
+            }
+            let items = uniqueDocs
 
             // Fallback to legacy if primary is empty
             if (items.length === 0 && legacy) {
@@ -116,7 +124,15 @@ export function useManagerDashboard(orgId, managerUid, assignedSiteIds = []) {
                 collection(db, 'organisation', orgId, legacy),
                 (legacySnap) => {
                   if (cancelled) return
-                  const legacyItems = legacySnap.docs.map((d) => ({ id: d.id, ...d.data() }))
+                  const legacySeen = new Set()
+                  const uniqueLegacyDocs = []
+                  for (const d of legacySnap.docs) {
+                    if (!legacySeen.has(d.id)) {
+                      legacySeen.add(d.id)
+                      uniqueLegacyDocs.push({ ...d.data(), id: d.id })
+                    }
+                  }
+                  const legacyItems = uniqueLegacyDocs
                   if (legacyItems.length > 0) {
                     let filtered = legacyItems
                     if (assignedSiteIds && assignedSiteIds.length > 0 && ['projects', 'siteSupervisorEntries', 'siteMaterialsRequest', 'siteToolsRequest', 'contractorEntries', 'workerAttendance', 'vehicleLogs', 'layoutAndDrawings', 'managerExpenses', 'pettyCashAccounts', 'pettyCashRequests', 'pettyCashExpenses'].includes(key)) {

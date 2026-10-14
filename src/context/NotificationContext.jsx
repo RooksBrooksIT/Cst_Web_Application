@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore'
+import { collection, onSnapshot, query, orderBy, limit, getDocs } from 'firebase/firestore'
 import { db } from '../services/firebase'
 import { useAuth } from '../hooks/useAuth'
 import {
@@ -87,7 +87,16 @@ export function NotificationProvider({ children }) {
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        const rawItems = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))
+        const rawItems = snapshot.docs.map((d) => {
+          const data = d.data()
+          return {
+            ...data,
+            id: d.id, // Guarantee canonical Firestore document ID takes precedence
+            firestoreDocId: d.id,
+            entityId: data.id || data.notificationId || d.id,
+            notificationId: data.notificationId || d.id,
+          }
+        })
 
         const currentUserId = user?.uid
         const currentUserName = (userData?.fullName || user?.displayName || user?.email || '').trim().toLowerCase()
@@ -122,8 +131,15 @@ export function NotificationProvider({ children }) {
         // 3. Process new events for real-time foreground bridge
         snapshot.docChanges().forEach((change) => {
           if (change.type === 'added') {
-            const newItem = { id: change.doc.id, ...change.doc.data() }
-            const notifId = newItem.id || newItem.notificationId
+            const data = change.doc.data()
+            const newItem = {
+              ...data,
+              id: change.doc.id,
+              firestoreDocId: change.doc.id,
+              entityId: data.id || data.notificationId || change.doc.id,
+              notificationId: data.notificationId || change.doc.id,
+            }
+            const notifId = newItem.id
 
             // Pre-seed cache on initial load without firing alert popups (Section 2.3 #2)
             if (isInitialLoadRef.current) {
@@ -195,7 +211,8 @@ export function NotificationProvider({ children }) {
 
         isInitialLoadRef.current = false
         setNotifications(filtered)
-        setUnreadCount(filtered.filter((n) => !n.isRead && n.status !== 'read').length)
+        const unread = filtered.filter((n) => !n.isRead && String(n.status).toLowerCase() !== 'read').length
+        setUnreadCount(unread)
       },
       (err) => {
         console.warn('Real-time notification bridge stream notice:', err)
@@ -213,20 +230,88 @@ export function NotificationProvider({ children }) {
   }, [orgId, role, user?.uid, userData?.fullName, user?.displayName, user?.email])
 
   // --------------------------------------------------------------------------------
+  // MANUAL RE-FETCH & SYNC NOTIFICATIONS ENGINE
+  // --------------------------------------------------------------------------------
+  const refreshNotifications = useCallback(async () => {
+    if (!orgId) return []
+    try {
+      const colRef = collection(db, 'organisation', orgId, 'notifications')
+      const q = query(colRef, orderBy('createdAt', 'desc'), limit(100))
+      const snapshot = await getDocs(q)
+      const rawItems = snapshot.docs.map((d) => {
+        const data = d.data()
+        return {
+          ...data,
+          id: d.id,
+          firestoreDocId: d.id,
+          entityId: data.id || data.notificationId || d.id,
+          notificationId: data.notificationId || d.id,
+        }
+      })
+
+      const currentUserId = user?.uid
+      const currentCanonicalRole = normalizeCanonicalRole(role)
+
+      const filtered = rawItems.filter((item) => {
+        return matchesRole(
+          item.targetRole || item.recipientRole,
+          item.targetRoles,
+          currentCanonicalRole,
+          currentUserId,
+          item.recipientId
+        )
+      })
+
+      filtered.sort((a, b) => {
+        const timeA = a.createdAt?.toMillis
+          ? a.createdAt.toMillis()
+          : a.createdAt?.seconds
+          ? a.createdAt.seconds * 1000
+          : new Date(a.createdAt || 0).getTime()
+        const timeB = b.createdAt?.toMillis
+          ? b.createdAt.toMillis()
+          : b.createdAt?.seconds
+          ? b.createdAt.seconds * 1000
+          : new Date(b.createdAt || 0).getTime()
+        return timeB - timeA
+      })
+
+      setNotifications(filtered)
+      const count = filtered.filter((n) => !n.isRead && String(n.status).toLowerCase() !== 'read').length
+      setUnreadCount(count)
+      return filtered
+    } catch (err) {
+      console.warn('Manual refreshNotifications notice:', err)
+      return []
+    }
+  }, [orgId, role, user?.uid])
+
+  // --------------------------------------------------------------------------------
   // READ ACTIONS (Section 2.2 #5)
   // --------------------------------------------------------------------------------
   const markAsRead = useCallback(
     async (notificationId) => {
       if (!notificationId) return
-      // Optimistic update
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === notificationId ? { ...n, isRead: true, status: 'read' } : n))
-      )
-      setUnreadCount((prev) => Math.max(0, prev - 1))
 
+      // Optimistic state update: immediate UI update and count adjustment
+      setNotifications((prev) => {
+        const next = prev.map((n) =>
+          n.id === notificationId || n.notificationId === notificationId || n.firestoreDocId === notificationId
+            ? { ...n, isRead: true, status: 'read' }
+            : n
+        )
+        const count = next.filter((n) => !n.isRead && String(n.status).toLowerCase() !== 'read').length
+        setUnreadCount(count)
+        return next
+      })
+
+      // Immediately persist update to Firestore backend
       await serviceMarkAsRead(orgId, notificationId)
+
+      // Re-fetch and re-sync authoritative data from Firestore
+      await refreshNotifications()
     },
-    [orgId]
+    [orgId, refreshNotifications]
   )
 
   const markAllAsRead = useCallback(async () => {
@@ -235,8 +320,12 @@ export function NotificationProvider({ children }) {
     setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true, status: 'read' })))
     setUnreadCount(0)
 
+    // Persist to backend
     await markAllReadForRole(orgId, role, user, notifications)
-  }, [orgId, role, user, notifications])
+
+    // Re-fetch and re-sync authoritative data
+    await refreshNotifications()
+  }, [orgId, role, user, notifications, refreshNotifications])
 
   const dismissBanner = useCallback(() => {
     setActiveBanner(null)
@@ -265,6 +354,7 @@ export function NotificationProvider({ children }) {
         dismissBanner,
         markAsRead,
         markAllAsRead,
+        refreshNotifications,
         navigateNotification,
         requestBrowserPermission,
       }}

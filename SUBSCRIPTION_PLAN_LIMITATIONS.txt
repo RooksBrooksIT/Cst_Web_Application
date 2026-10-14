@@ -1,0 +1,315 @@
+================================================================================
+                    CST / EBRICKS SUBSCRIPTION PLAN LIMITATIONS
+                     COMPLETE PLAN-WISE SPECIFICATION & RULES
+================================================================================
+Document Version : 1.0.0
+Application      : Construction Site Tracker (CST) / eBricks White Label
+Platform         : Flutter Mobile & Web Applications
+Last Updated     : October 2026
+
+================================================================================
+1. EXECUTIVE SUMMARY & ARCHITECTURE OVERVIEW
+================================================================================
+The subscription system enforces multi-tiered access control and resource quotas 
+across Organizations, Sites, Managers, Supervisors, and Construction Drawings.
+
+Every organization workspace operates under one of 5 distinct subscription tiers:
+  1. Free Trial  (14-Day evaluation tier)
+  2. Silver      (Starter tier for small contractors)
+  3. Gold        (Standard fixed-quota tier for growing teams)
+  4. Platinum    (Dynamic scale tier with customizable site quotas)
+  5. Enterprise  (Unlimited / Dedicated infrastructure tier)
+
+Quotas are strictly validated in real-time before resource creation via 
+SubscriptionLimitService and Firestore security rules.
+
+--------------------------------------------------------------------------------
+RESOURCE LIMIT DEFINITIONS:
+  - Active Sites / Projects : Total count of non-archived construction sites.
+  - Total Team Users        : Cumulative limit of (Managers + Supervisors + Staff).
+  - Managers                : Dedicated project manager accounts.
+  - Supervisors             : On-site supervisor accounts.
+  - Layout & Drawings       : PDF / image blueprints and technical drawings per site.
+
+
+================================================================================
+2. QUICK COMPARISON MATRIX
+================================================================================
++----------------------+------------+----------+----------+--------------------+-------------+
+| Feature / Quota      | Free Trial | Silver   | Gold     | Platinum (Scale)   | Enterprise  |
++----------------------+------------+----------+----------+--------------------+-------------+
+| Active Sites         | 1          | 5        | 10       | 5 - 50+ (Custom)   | Unlimited   |
+| Max Managers         | 1          | 2        | 5        | round(N / 2) [2-25]| Unlimited   |
+| Max Supervisors      | 1          | 3        | 10       | N (Equal to sites) | Unlimited   |
+| Total Team Users     | 2          | 5        | 15       | round(N * 1.5)     | Unlimited   |
++----------------------+------------+----------+----------+--------------------+-------------+
+| Layout & Drawings:   |            |          |          |                    |             |
+| - Max Active Docs    | 1 doc/site | 1 doc/site| 1 doc/site| 2 docs/site        | 2 docs/site |
+| - Can Delete?        | NO         | NO       | YES (1)  | YES (Unlimited)    | YES (Unlim) |
+| - Can Re-upload?     | NO         | NO       | YES (1)  | YES (Unlimited)    | YES (Unlim) |
+| - Document Mode      | View Only  | View Only| 1 Replace| Multi-version      | Multi-version|
++----------------------+------------+----------+----------+--------------------+-------------+
+| Duration / Billing   | 14 Days    | Mo/6Mo/Yr| Mo/6Mo/Yr| Monthly/6Mo/Yearly | Annual SLA  |
+| Pricing (Monthly)    | FREE (Rs 0)| Rs 99    | Rs 199   | Rs 39.90 / site    | Custom      |
+| Pricing (6 Months)   | N/A        | Rs 594   | Rs 1,194 | Rs 239.40 / site   | Custom      |
+| Pricing (Yearly)     | N/A        | Rs 1,188 | Rs 2,388 | Rs 478.80 / site   | Custom      |
++----------------------+------------+----------+----------+--------------------+-------------+
+
+
+================================================================================
+3. DETAILED PLAN SPECIFICATIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+[PLAN 1] FREE TRIAL
+--------------------------------------------------------------------------------
+Target Audience : New organizations evaluating the platform
+Trial Period    : 14 Days (Zero payment required, automatic activation)
+
+RESOURCE QUOTAS:
+  * Maximum Active Sites / Projects : 1 Site
+  * Maximum Total Team Users        : 2 Users
+  * Maximum Managers                : Up to 1 (capped by total user quota)
+  * Maximum Supervisors             : Up to 1 (capped by total user quota)
+
+LAYOUT & DRAWINGS RESTRICTIONS:
+  * Maximum Active Documents : 1 document per site
+  * Allow Document Deletion  : NO (0 deletes permitted)
+  * Allow Document Re-upload : NO (0 re-uploads permitted)
+  * Behavior                 : Initial document can be uploaded and viewed only.
+                               Attempts to delete or replace prompt an upgrade to Gold or Platinum.
+
+INCLUDED FEATURES:
+  - Basic Project Management & Site Overview
+  - Daily Worker & Attendance Muster (Basic View)
+  - Daily Task Tracking & Progress Updates
+  - Basic Reports & Summary Analytics
+  - Standard Cloud Storage
+
+
+--------------------------------------------------------------------------------
+[PLAN 2] SILVER PLAN
+--------------------------------------------------------------------------------
+Target Audience : Independent builders, small contractors, and solo developers
+Billing Cycles  : Monthly (Rs 99), 6 Months (Rs 594), Yearly (Rs 1,188)
+Effective Rate  : Rs 99/month on annual billing (Save 33%)
+
+RESOURCE QUOTAS:
+  * Maximum Active Sites / Projects : 5 Sites
+  * Maximum Total Team Users        : 5 Users
+  * Maximum Managers                : Up to 2 Managers
+  * Maximum Supervisors             : Up to 3 Supervisors
+
+LAYOUT & DRAWINGS RESTRICTIONS:
+  * Maximum Active Documents : 1 document per site
+  * Allow Document Deletion  : NO (0 deletes permitted)
+  * Allow Document Re-upload : NO (0 re-uploads permitted)
+  * Behavior                 : 1 blueprint or layout plan can be uploaded per site.
+                               The uploaded document is permanent for that site under Silver.
+                               Deletion and re-upload are locked to preserve audit history.
+
+INCLUDED FEATURES:
+  - Multi-site management for up to 5 projects
+  - Material indent, purchase, and vendor tracking
+  - Worker daily attendance muster & wage logs
+  - Expense tracking & daily entry submissions
+  - Standard Cloud Backup & Sync
+  - Basic PDF / Excel export reports
+
+
+--------------------------------------------------------------------------------
+[PLAN 3] GOLD PLAN (EXPERT CHOICE)
+--------------------------------------------------------------------------------
+Target Audience : Mid-sized construction firms and established contractors
+Billing Cycles  : Monthly (Rs 199), 6 Months (Rs 1,194), Yearly (Rs 2,388)
+Effective Rate  : Rs 199/month on annual billing (Save 33%)
+
+RESOURCE QUOTAS:
+  * Maximum Active Sites / Projects : 10 Sites
+  * Maximum Total Team Users        : 15 Users
+  * Maximum Managers                : Up to 5 Managers
+  * Maximum Supervisors             : Up to 10 Supervisors
+
+LAYOUT & DRAWINGS RESTRICTIONS:
+  * Maximum Active Documents : 1 active document per site
+  * Allow Document Deletion  : YES (Strict limit of 1 deletion per site)
+  * Allow Document Re-upload : YES (Strict limit of 1 re-upload per site)
+  * Behavior                 : Allows 1 blueprint revision/replacement per site.
+                               Once the deletion and re-upload quota is consumed,
+                               further replacements require upgrading to Platinum.
+
+INCLUDED FEATURES:
+  - Up to 10 Active Construction Sites
+  - Team management for up to 5 Managers & 10 Supervisors (15 total)
+  - Advanced site collaboration & real-time monitoring
+  - Live timeline tracking & milestones
+  - Material movement & dispatch logs with approval flows
+  - Comprehensive contractor billing & labour muster reconciliation
+  - Monthly financial expense analytics & audit views
+  - Role-based permissions across Org, Manager, and Supervisor levels
+
+
+--------------------------------------------------------------------------------
+[PLAN 4] PLATINUM PLAN (CUSTOM SCALE)
+--------------------------------------------------------------------------------
+Target Audience : Rapidly growing construction enterprises and multi-site builders
+Billing Cycles  : Monthly (Rs 39.90 / site), 6 Months (Rs 239.40 / site), Yearly (Rs 478.80 / site)
+Base Allocation : Configurable from 5 Sites to 50+ Sites (Default preset: 10 sites)
+Available Presets: 5, 10, 15, 20, 25, 30, 40, 50 Active Sites
+
+DYNAMIC RESOURCE CALCULATION FORMULAS:
+  Let 'N' = Selected Platinum Active Sites count (Minimum: 5):
+  
+  * Maximum Active Sites / Projects : N Sites
+  * Maximum Supervisors             : N Supervisors (1 supervisor per site quota)
+  * Maximum Managers                : clamp(round(N / 2), 2, 25) Managers
+  * Maximum Total Team Users        : round(N * 1.5) Total Users
+
+EXAMPLE PRESET TIERS:
+  -----------------------------------------------------------------------------
+  Sites (N) | Managers | Supervisors | Total Users | Monthly Fee | Annual Fee
+  -----------------------------------------------------------------------------
+     5 Sites|  3 Mgrs  |   5 Sups    |   8 Users   | Rs 199.50   | Rs 2,394.00
+    10 Sites|  5 Mgrs  |  10 Sups    |  15 Users   | Rs 399.00   | Rs 4,788.00
+    15 Sites|  8 Mgrs  |  15 Sups    |  23 Users   | Rs 598.50   | Rs 7,182.00
+    20 Sites| 10 Mgrs  |  20 Sups    |  30 Users   | Rs 798.00   | Rs 9,576.00
+    25 Sites| 13 Mgrs  |  25 Sups    |  38 Users   | Rs 997.50   | Rs 11,970.00
+    30 Sites| 15 Mgrs  |  30 Sups    |  45 Users   | Rs 1,197.00 | Rs 14,364.00
+    40 Sites| 20 Mgrs  |  40 Sups    |  60 Users   | Rs 1,596.00 | Rs 19,152.00
+    50 Sites| 25 Mgrs  |  50 Sups    |  75 Users   | Rs 1,995.00 | Rs 23,940.00
+  -----------------------------------------------------------------------------
+
+LAYOUT & DRAWINGS RESTRICTIONS:
+  * Maximum Active Documents : 2 active documents per site (e.g. Architectural + Structural)
+  * Allow Document Deletion  : YES (Unlimited deletions)
+  * Allow Document Re-upload : YES (Unlimited re-uploads)
+  * Behavior                 : Full document lifecycle management. Users can maintain
+                               multiple revisions, replace outdated drawings, and manage
+                               both layout plans and structural drawings simultaneously.
+
+INCLUDED FEATURES:
+  - Dynamic, pay-as-you-grow site quota
+  - Multi-tier team scaling (Managers & Supervisors scale with sites)
+  - Real-time live logs & field inspection updates
+  - Advanced contractor muster, overtime, & piece-rate wage calculation
+  - Multi-level expense approval workflows & audit logging
+  - Priority cloud synchronization & dedicated background processing
+  - Priority email and chat support
+
+
+--------------------------------------------------------------------------------
+[PLAN 5] ENTERPRISE PLAN (TEAM / DEDICATED)
+--------------------------------------------------------------------------------
+Target Audience : Large infrastructure developers, real estate conglomerates, corporations
+Pricing Model   : Custom Annual Contract (via Sales Inquiry / Custom SLA)
+
+RESOURCE QUOTAS:
+  * Maximum Active Sites / Projects : UNLIMITED (999,999)
+  * Maximum Total Team Users        : UNLIMITED (999,999)
+  * Maximum Managers                : UNLIMITED (999,999)
+  * Maximum Supervisors             : UNLIMITED (999,999)
+
+LAYOUT & DRAWINGS RESTRICTIONS:
+  * Maximum Active Documents : Up to 2 active documents concurrently per site
+  * Allow Document Deletion  : YES (Unlimited deletions)
+  * Allow Document Re-upload : YES (Unlimited re-uploads)
+
+INCLUDED FEATURES:
+  - Unlimited Sites, Managers, Supervisors, and Workers
+  - Dedicated Cloud Infrastructure & Isolated Database Instance
+  - Custom API Integrations, Webhooks, & ERP Connectors (SAP, Tally, etc.)
+  - Enterprise Security, Role Granularity & Data Residency Compliance
+  - 24/7 Priority SLA with Dedicated Technical Account Manager
+  - Custom branded reports, invoices, and workflows
+
+
+================================================================================
+4. LAYOUT & DRAWINGS MODULE: RULES & WORKFLOW MATRIX
+================================================================================
+The Layout & Drawings module tracks blueprints, site maps, and architectural layouts 
+per construction site. Usage is tracked in Firestore under 'siteDrawingsUsage/{siteId}'.
+
+Rule Details by Plan:
+--------------------------------------------------------------------------------
+1. Free Trial:
+   - Cap: 1 document per site.
+   - Action: Upload allowed once. Viewing allowed.
+   - Deletion: Blocked. User is prompted to upgrade.
+   - Re-upload: Blocked. User is prompted to upgrade.
+
+2. Silver Plan:
+   - Cap: 1 document per site.
+   - Action: Upload allowed once. Viewing allowed.
+   - Deletion: Blocked.
+   - Re-upload: Blocked.
+
+3. Gold Plan:
+   - Cap: 1 active document per site.
+   - Action: Upload, view, 1 deletion, 1 re-upload.
+   - Rule: If a user deletes the active document, usage counter records 1 delete.
+     User may then re-upload 1 replacement document. Further deletes are locked.
+
+4. Platinum Plan:
+   - Cap: 2 active documents per site (e.g. 1 architectural + 1 structural).
+   - Action: Upload up to 2 active documents simultaneously.
+   - Deletion: Unlimited.
+   - Re-upload: Unlimited.
+
+5. Enterprise Plan:
+   - Cap: 2 active documents per site.
+   - Action: Upload up to 2 active documents simultaneously.
+   - Deletion: Unlimited.
+   - Re-upload: Unlimited.
+
+
+================================================================================
+5. RESOURCE ENFORCEMENT & VALIDATION METHODS
+================================================================================
+The application enforces these rules through SubscriptionLimitService:
+
+1. canCreateSite():
+   - Compares active site count in Firestore against limits.maxProjects.
+   - Blocks addition when limit reached, displaying modal with plan name and upgrade link.
+
+2. canCreateManager():
+   - Step 1: Checks total user count against limits.maxTotalUsers.
+   - Step 2: If plan defines maxManagers (e.g. Gold: 5), checks manager count against limits.maxManagers.
+   - Blocks addition and prompts upgrade if either condition fails.
+
+3. canCreateSupervisor():
+   - Step 1: Checks total user count against limits.maxTotalUsers.
+   - Step 2: If plan defines maxSupervisors (e.g. Gold: 10), checks supervisor count against limits.maxSupervisors.
+   - Blocks addition and prompts upgrade if either condition fails.
+
+4. canUploadDrawing(siteId, newDocsCount):
+   - Validates (activeDocsCount + newDocsCount) <= drawingLimits.maxActiveDocsPerSite.
+   - Validates re-upload quotas if totalUploadCount > 0.
+
+5. canDeleteDrawing(siteId):
+   - Validates drawingLimits.allowDelete == true.
+   - Validates deleteCount < maxDeletesPerSite (for Gold).
+
+
+================================================================================
+6. UPGRADE & DOWNGRADE LIFECYCLE MANAGEMENT
+================================================================================
+1. Immediate Upgrades:
+   - When moving to a higher tier immediately, payment is processed via PayU gateway.
+   - On successful payment verification, the active plan document is immediately updated
+     and new quotas take effect in real time.
+
+2. Queued Upgrades:
+   - If an organization renews or pre-books an upgrade before the current plan expires,
+     the new plan is stored as 'queuedPlan' with 'queuedStartDate'.
+   - When the current plan end date passes, the background service / login flow 
+     automatically promotes the queued plan to active.
+
+3. Plan Expiration:
+   - If a subscription reaches its expiry date without renewal, the organization 
+     reverts to inactive status.
+   - The user is redirected to the Subscription / Pricing page to renew.
+   - Data is preserved safely and access is restored immediately upon renewal.
+
+================================================================================
+                            END OF SPECIFICATION FILE
+================================================================================

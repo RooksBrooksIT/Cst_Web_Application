@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { onAuthStateChanged, signOut } from 'firebase/auth'
 import { auth } from '../services/firebase'
 import { clearStoredSession, fetchCurrentUserProfile, loginUser, normalizeRole, readStoredSession } from '../services/authService'
+import { ensureStorageAuthenticated } from '../services/appStorageService'
 import { deleteFcmToken } from '../services/notificationService'
 import { AuthContext } from './auth-context'
 
@@ -12,6 +13,9 @@ export function AuthProvider({ children }) {
     if (!user) {
       const stored = readStoredSession()
       if (stored && stored.isLoggedIn) {
+        if (stored.orgId) {
+          ensureStorageAuthenticated(stored.orgId).catch(() => {})
+        }
         setSession({ user: { uid: stored.uid, email: stored.email, displayName: stored.userData?.fullName }, role: stored.role, orgId: stored.orgId, userData: stored.userData, loading: false })
         return
       }

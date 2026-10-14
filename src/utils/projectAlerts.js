@@ -30,8 +30,24 @@ export function evaluateProjectAlerts(project) {
   const alerts = []
   const siteName = project.siteName || project.name || project.projectName || 'Project Site'
   const siteCode = project.siteCode || project.code || 'SITE'
-  const status = String(project.projectStatus || project.status || project.currentStatus || 'In Progress').trim()
-  const isCompleted = ['completed', 'cancelled', 'on hold'].includes(status.toLowerCase())
+  const statusCandidates = [
+    project.currentStatus,
+    project.status,
+    project.projectStatus,
+    project.siteStatus,
+    project.projectState,
+    project.projectStage,
+    project.stage,
+  ].filter(Boolean).map((s) => String(s).trim().toLowerCase())
+
+  const isCompleted =
+    project.isCompleted === true ||
+    project.completed === true ||
+    statusCandidates.some((s) =>
+      ['completed', 'complete', 'closed', 'finished', 'done', 'archived', 'cancelled', 'on hold'].includes(s) ||
+      s.includes('complete') ||
+      s.includes('closed')
+    )
 
   // Financial Values
   const budget = Number(project.projectBudget ?? project.budget ?? project.totalBudget ?? project.estimatedBudget ?? 0)

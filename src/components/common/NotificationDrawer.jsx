@@ -54,6 +54,7 @@ export default function NotificationDrawer({ isOpen, onClose, role = 'User' }) {
       if (activeTab === 'APPROVALS') {
         return (
           t.includes('requisition') ||
+          t.includes('request') ||
           t.includes('approval') ||
           t.includes('claim') ||
           t.includes('expense')
@@ -166,7 +167,7 @@ export default function NotificationDrawer({ isOpen, onClose, role = 'User' }) {
                 <CheckCircle2 className="w-10 h-10 text-slate-300 mx-auto mb-2" />
                 <p className="font-semibold text-slate-600">No notifications in this view.</p>
                 <span className="text-xs text-slate-400 mt-1 block">
-                  New system updates and requisitions will appear here in real time.
+                  New system updates and requests will appear here in real time.
                 </span>
               </div>
             ) : (

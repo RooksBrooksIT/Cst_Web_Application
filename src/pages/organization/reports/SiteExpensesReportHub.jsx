@@ -7,9 +7,11 @@ import {
   calculateDailySiteExpenses,
   calculateDateRangeExpenses,
   calculateSiteLifetimeSummary,
-  PROJECT_STAGES,
 } from '../../../services/reportService'
 import { exportToCSV, printReport } from '../../../services/exportService'
+import { useAuth } from '../../../hooks/useAuth'
+import { CONFIG_SECTIONS, subscribeConfigItems } from '../../../services/projectConfigService'
+import { getNormalizedSiteOptions } from '../../../utils/siteUtils.js'
 
 export default function SiteExpensesReportHub({
   sites = [],
@@ -27,9 +29,36 @@ export default function SiteExpensesReportHub({
   initialFromDate = null,
   initialToDate = null,
   initialStage = null,
+  projectStages = null,
+  orgId = null,
 }) {
+  const { orgId: authOrgId } = useAuth()
+  const activeOrgId = orgId || authOrgId
+  const [stagesFromConfig, setStagesFromConfig] = useState([])
+
+  React.useEffect(() => {
+    if (projectStages && projectStages.length > 0) return
+    if (!activeOrgId) return
+    const unsub = subscribeConfigItems(
+      activeOrgId,
+      CONFIG_SECTIONS.stage,
+      (list) => setStagesFromConfig(list || []),
+      (err) => console.error('Error subscribing to project stages:', err)
+    )
+    return () => unsub()
+  }, [activeOrgId, projectStages])
+
+  const availableStages = useMemo(() => {
+    const sourceList = (projectStages && projectStages.length > 0) ? projectStages : stagesFromConfig
+    const names = (sourceList || [])
+      .map((st) => (typeof st === 'string' ? st : st.projectStage || st.name || '').trim())
+      .filter(Boolean)
+    return [...new Set(names)]
+  }, [projectStages, stagesFromConfig])
+
+  const normalizedSites = useMemo(() => getNormalizedSiteOptions(sites), [sites])
   const [activeSubTab, setActiveSubTab] = useState(subReport || 'daily') // 'daily', 'range', 'summary'
-  const [selectedSiteId, setSelectedSiteId] = useState(initialSiteId || sites[0]?.id || '')
+  const [selectedSiteId, setSelectedSiteId] = useState(initialSiteId || normalizedSites[0]?.id || sites[0]?.id || '')
   const [selectedDate, setSelectedDate] = useState(initialDate || new Date().toISOString().slice(0, 10))
   const [selectedStage, setSelectedStage] = useState(initialStage || 'all')
 
@@ -356,9 +385,9 @@ export default function SiteExpensesReportHub({
               onChange={(e) => setSelectedSiteId(e.target.value)}
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600 focus:bg-white transition-all cursor-pointer shadow-2xs"
             >
-              {sites.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.projectName || s.siteName || s.name || s.id}
+              {normalizedSites.map((s, idx) => (
+                <option key={`exp-site-${s.id || s.siteId || idx}-${idx}`} value={s.id || s.siteId}>
+                  {s.label || s.projectName || s.siteName || s.name || s.id}
                 </option>
               ))}
             </select>
@@ -408,7 +437,7 @@ export default function SiteExpensesReportHub({
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600 focus:bg-white transition-all cursor-pointer shadow-2xs"
               >
                 <option value="all">All Stages</option>
-                {PROJECT_STAGES.map((stg) => (
+                {availableStages.map((stg) => (
                   <option key={stg} value={stg}>
                     {stg}
                   </option>

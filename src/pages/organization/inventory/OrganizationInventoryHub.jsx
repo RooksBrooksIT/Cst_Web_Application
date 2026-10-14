@@ -40,6 +40,13 @@ import { subscribeWithFallback } from '../../../services/firestoreService'
 import Modal from '../../../components/common/Modal'
 import ExportButton from '../../../components/common/ExportButton'
 import StatusBadge from '../../../components/common/StatusBadge'
+import {
+  resolveToolLocationDetails,
+  formatSiteLocationDisplay,
+  COMPANY_HQ_WAREHOUSE_LABEL,
+  COMPANY_HQ_TAG,
+  isHqIdentifier,
+} from '../../../utils/toolLocationUtils'
 
 function money(amount) {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount || 0)
@@ -114,92 +121,21 @@ export default function OrganizationInventoryHub({ sites = [], projects = [] }) 
 
   // Resolve actual Project / Site Name from siteId or doc metadata across all collections
   const resolveSiteName = useMemo(() => {
-    return (siteId, siteNameFromDoc = '') => {
-      const cleanDocName = (siteNameFromDoc || '').trim()
-      const isGeneric = (str) => {
-        if (!str) return true
-        const s = str.toLowerCase()
-        return s === 'project site' || s === 'site' || s === 'unknown' || s.startsWith('site_')
-      }
-
-      // 1. Direct doc site name check if valid and non-generic
-      if (cleanDocName && !isGeneric(cleanDocName) && cleanDocName !== siteId) {
-        return cleanDocName
-      }
-
-      if (!siteId) return cleanDocName || 'Central Yard (HQ)'
-
-      const cleanTargetId = String(siteId).trim().toLowerCase()
-      if (cleanTargetId === 'hq' || cleanTargetId === 'company_hq') return 'Company HQ Central Yard'
-
-      // 2. Search in allSiteRecords (sites, projects, fetchedSites, fetchedProjects)
-      const match = allSiteRecords.find((s) => {
-        const sId = String(s.id || s.siteId || s.projectId || '').trim().toLowerCase()
-        return sId === cleanTargetId
-      })
-      if (match) {
-        const name = match.projectName || match.siteName || match.name || match.projectTitle || match.title
-        if (name && name.trim() && !isGeneric(name.trim())) return name.trim()
-      }
-
-      // 3. Search in toolsAtSite
-      const toolSiteMatch = toolsAtSite.find((ts) => {
-        const tsId = String(ts.siteId || '').trim().toLowerCase()
-        return tsId === cleanTargetId && ts.siteName && !isGeneric(ts.siteName.trim())
-      })
-      if (toolSiteMatch) {
-        return toolSiteMatch.siteName.trim()
-      }
-
-      // 4. Search in toolMovements
-      const movMatch = toolMovements.find((tm) => {
-        const toId = String(tm.toSiteId || tm.toSite || tm.siteId || '').trim().toLowerCase()
-        const fromId = String(tm.fromSiteId || tm.fromSite || '').trim().toLowerCase()
-        if (toId === cleanTargetId && tm.toSiteName && !isGeneric(tm.toSiteName.trim())) return true
-        if (fromId === cleanTargetId && tm.fromSiteName && !isGeneric(tm.fromSiteName.trim())) return true
-        return false
-      })
-      if (movMatch) {
-        const toId = String(movMatch.toSiteId || movMatch.toSite || movMatch.siteId || '').trim().toLowerCase()
-        const name = toId === cleanTargetId ? movMatch.toSiteName || movMatch.toSite : movMatch.fromSiteName || movMatch.fromSite
-        if (name && name.trim() && !isGeneric(name.trim())) return name.trim()
-      }
-
-      // 5. Search in materialTransactions
-      const txnMatch = materialTransactions.find((t) => {
-        const toId = String(t.toSiteId || t.siteId || '').trim().toLowerCase()
-        const fromId = String(t.fromSiteId || '').trim().toLowerCase()
-        return (toId === cleanTargetId || fromId === cleanTargetId) && (t.toSiteName || t.projectName || t.fromSiteName)
-      })
-      if (txnMatch) {
-        const name = txnMatch.toSiteName || txnMatch.projectName || txnMatch.fromSiteName
-        if (name && name.trim() && !isGeneric(name.trim())) return name.trim()
-      }
-
-      // 6. Search in siteMaterialPool
-      const poolMatch = siteMaterialPool.find((p) => {
-        const pId = String(p.siteId || '').trim().toLowerCase()
-        return pId === cleanTargetId && (p.siteName || p.projectName)
-      })
-      if (poolMatch) {
-        const name = poolMatch.siteName || poolMatch.projectName
-        if (name && name.trim() && !isGeneric(name.trim())) return name.trim()
-      }
-
-      // 7. Fallback: doc provided name if non-generic
-      if (cleanDocName && cleanDocName.toLowerCase() !== 'project site') {
-        return cleanDocName
-      }
-
-      // 8. Human-friendly formatting for raw site IDs (e.g. "site_green_valley" -> "Green Valley Project")
-      if (siteId && typeof siteId === 'string') {
-        const formatted = siteId.replace(/^(site_|project_|prj_)/i, '').replace(/_/g, ' ')
-        if (formatted.trim()) {
-          return `${formatted.replace(/\b\w/g, (l) => l.toUpperCase()).trim()} Project`
+    return (siteId, siteNameFromDoc = '', projectNameFromDoc = '', siteCodeFromDoc = '') => {
+      const details = resolveToolLocationDetails(
+        siteId,
+        siteNameFromDoc,
+        projectNameFromDoc,
+        siteCodeFromDoc,
+        {
+          allSiteRecords,
+          toolsAtSite,
+          toolMovements,
+          materialTransactions,
+          siteMaterialPool,
         }
-      }
-
-      return String(siteId)
+      )
+      return details.displayLocation
     }
   }, [allSiteRecords, toolsAtSite, toolMovements, materialTransactions, siteMaterialPool])
 
@@ -364,23 +300,40 @@ export default function OrganizationInventoryHub({ sites = [], projects = [] }) 
 
   const siteToolsBreakdown = useMemo(() => {
     const list = []
+    const lookupContext = {
+      allSiteRecords,
+      toolsAtSite,
+      toolMovements,
+      materialTransactions,
+      siteMaterialPool,
+    }
 
     // 1. Process Tools Allocated to Sites (from toolsAtSite collection)
     toolsAtSite.forEach((ts) => {
-      const sName = resolveSiteName(ts.siteId, ts.siteName || ts.projectName)
+      const loc = resolveToolLocationDetails(
+        ts.siteId,
+        ts.siteName,
+        ts.projectName,
+        ts.siteCode,
+        lookupContext
+      )
       const qtyAvailable = Number(ts.quantity ?? ts.availableCount ?? 0)
       const qtyAllocated = Number(ts.totalAllocated ?? ts.quantity ?? qtyAvailable)
       list.push({
         id: ts.id || `${ts.siteId}_${ts.toolCode}`,
-        siteId: ts.siteId,
-        siteName: sName,
+        siteId: loc.siteId,
+        siteCode: loc.siteCode,
+        siteName: loc.siteName,
+        projectName: loc.projectName,
+        displayLocation: loc.displayLocation,
+        locationTag: loc.locationTag,
         toolCode: ts.toolCode || ts.toolId || 'EQ-ASSET',
         toolName: ts.toolName || ts.name || 'Equipment Item',
         quantityAvailable: qtyAvailable,
         totalAllocated: qtyAllocated,
         supervisorName: ts.supervisorName || 'Site Team',
         deployedDate: ts.deployedDate || 'Active',
-        isCompanyHq: false,
+        isCompanyHq: loc.isCompanyHq,
       })
     })
 
@@ -392,7 +345,11 @@ export default function OrganizationInventoryHub({ sites = [], projects = [] }) 
           list.push({
             id: `hq_${tc.toolCode}`,
             siteId: 'COMPANY_HQ',
-            siteName: 'Company HQ Warehouse',
+            siteCode: 'HQ',
+            siteName: COMPANY_HQ_WAREHOUSE_LABEL,
+            projectName: 'Company HQ',
+            displayLocation: COMPANY_HQ_WAREHOUSE_LABEL,
+            locationTag: COMPANY_HQ_TAG,
             toolCode: tc.toolCode || 'EQ-ASSET',
             toolName: tc.toolName || tc.name || 'Equipment Item',
             quantityAvailable: qtyAvailable,
@@ -414,7 +371,11 @@ export default function OrganizationInventoryHub({ sites = [], projects = [] }) 
             list.push({
               id: `hq_${t.id || code}`,
               siteId: 'COMPANY_HQ',
-              siteName: 'Company HQ Warehouse',
+              siteCode: 'HQ',
+              siteName: COMPANY_HQ_WAREHOUSE_LABEL,
+              projectName: 'Company HQ',
+              displayLocation: COMPANY_HQ_WAREHOUSE_LABEL,
+              locationTag: COMPANY_HQ_TAG,
               toolCode: code || 'EQ-ASSET',
               toolName: t.toolName || t.name || 'Equipment Item',
               quantityAvailable: availCount,
@@ -429,7 +390,7 @@ export default function OrganizationInventoryHub({ sites = [], projects = [] }) 
     }
 
     return list
-  }, [toolsAtSite, toolsAtCompany, tools, resolveSiteName])
+  }, [toolsAtSite, toolsAtCompany, tools, allSiteRecords, toolMovements, materialTransactions, siteMaterialPool])
 
   const filteredTools = useMemo(() => {
     return tools.filter((t) => {
@@ -451,45 +412,63 @@ export default function OrganizationInventoryHub({ sites = [], projects = [] }) 
     })
   }, [tools, toolCategory, toolStatusFilter, toolSearch])
 
-  // Unique location options for dropdown selection (deduplicated by resolved display name)
+  // Unique location options for dropdown selection (deduplicated by resolved display location)
   const uniqueLocationOptions = useMemo(() => {
-    const seenNames = new Set()
+    const seenDisplayLocations = new Set()
     const options = []
+    const lookupContext = {
+      allSiteRecords,
+      toolsAtSite,
+      toolMovements,
+      materialTransactions,
+      siteMaterialPool,
+    }
 
-    const processCandidate = (sId, rawName) => {
-      if (!sId || sId === 'HQ' || sId === 'COMPANY_HQ') return
-      const sName = resolveSiteName(sId, rawName)
-      if (!sName || !sName.trim()) return
+    const processCandidate = (sId, rawName, rawProject, rawCode) => {
+      if (!sId || isHqIdentifier(sId)) return
+      const loc = resolveToolLocationDetails(sId, rawName, rawProject, rawCode, lookupContext)
+      if (loc.isCompanyHq || !loc.displayLocation) return
 
-      const nameKey = sName.trim().toLowerCase()
-      if (!seenNames.has(nameKey)) {
-        seenNames.add(nameKey)
+      const locKey = loc.displayLocation.trim().toLowerCase()
+      if (!seenDisplayLocations.has(locKey)) {
+        seenDisplayLocations.add(locKey)
         options.push({
           id: sId,
-          name: sName.trim(),
+          displayLocation: loc.displayLocation,
+          siteCode: loc.siteCode,
+          siteName: loc.siteName,
+          projectName: loc.projectName,
           matchingIds: [sId],
-          matchingNames: [nameKey],
+          matchingCodes: loc.siteCode ? [loc.siteCode.toLowerCase()] : [],
+          matchingLabels: [locKey],
         })
       } else {
-        const existing = options.find((opt) => opt.name.trim().toLowerCase() === nameKey)
-        if (existing && !existing.matchingIds.includes(sId)) {
-          existing.matchingIds.push(sId)
+        const existing = options.find((opt) => opt.displayLocation.trim().toLowerCase() === locKey)
+        if (existing) {
+          if (!existing.matchingIds.includes(sId)) {
+            existing.matchingIds.push(sId)
+          }
+          if (loc.siteCode && !existing.matchingCodes.includes(loc.siteCode.toLowerCase())) {
+            existing.matchingCodes.push(loc.siteCode.toLowerCase())
+          }
         }
       }
     }
 
     allSiteRecords.forEach((s) => {
       const sId = s.id || s.siteId || s.projectId
-      const rawName = s.projectName || s.siteName || s.name || s.projectTitle
-      processCandidate(sId, rawName)
+      const rawName = s.siteName || s.name || s.title
+      const rawProject = s.projectName || s.projectTitle
+      const rawCode = s.siteCode || s.code
+      processCandidate(sId, rawName, rawProject, rawCode)
     })
 
     toolsAtSite.forEach((ts) => {
-      processCandidate(ts.siteId, ts.siteName || ts.projectName)
+      processCandidate(ts.siteId, ts.siteName, ts.projectName, ts.siteCode)
     })
 
-    return options.sort((a, b) => a.name.localeCompare(b.name))
-  }, [allSiteRecords, toolsAtSite, resolveSiteName])
+    return options.sort((a, b) => a.displayLocation.localeCompare(b.displayLocation))
+  }, [allSiteRecords, toolsAtSite, toolMovements, materialTransactions, siteMaterialPool])
 
   const filteredSiteTools = useMemo(() => {
     const selectedLocObj = uniqueLocationOptions.find((loc) => loc.id === selectedSiteFilter)
@@ -497,21 +476,28 @@ export default function OrganizationInventoryHub({ sites = [], projects = [] }) 
     return siteToolsBreakdown.filter((st) => {
       if (selectedSiteFilter !== 'all') {
         if (selectedSiteFilter === 'COMPANY_HQ') {
-          if (st.siteId !== 'COMPANY_HQ') return false
+          if (!st.isCompanyHq) return false
         } else if (selectedLocObj) {
           const matchesId = selectedLocObj.matchingIds.includes(st.siteId)
-          const matchesName = st.siteName && selectedLocObj.matchingNames.includes(st.siteName.trim().toLowerCase())
-          if (!matchesId && !matchesName) return false
+          const matchesCode = st.siteCode && selectedLocObj.matchingCodes.includes(st.siteCode.toLowerCase())
+          const matchesLabel = selectedLocObj.matchingLabels.includes(st.displayLocation.toLowerCase())
+          if (!matchesId && !matchesCode && !matchesLabel) return false
         } else {
-          if (st.siteId !== selectedSiteFilter) return false
+          if (
+            st.siteId !== selectedSiteFilter &&
+            st.displayLocation.toLowerCase() !== selectedSiteFilter.toLowerCase()
+          ) {
+            return false
+          }
         }
       }
       if (toolSearch.trim()) {
         const q = toolSearch.trim().toLowerCase()
-        const name = st.toolName.toLowerCase()
-        const code = st.toolCode.toLowerCase()
-        const sName = st.siteName.toLowerCase()
-        if (!name.includes(q) && !code.includes(q) && !sName.includes(q)) return false
+        const name = (st.toolName || '').toLowerCase()
+        const code = (st.toolCode || '').toLowerCase()
+        const loc = (st.displayLocation || '').toLowerCase()
+        const pName = (st.projectName || '').toLowerCase()
+        if (!name.includes(q) && !code.includes(q) && !loc.includes(q) && !pName.includes(q)) return false
       }
       return true
     })
@@ -962,20 +948,33 @@ export default function OrganizationInventoryHub({ sites = [], projects = [] }) 
                   <option value="COMPANY_HQ">Company HQ Warehouse</option>
                   {uniqueLocationOptions.map((loc) => (
                     <option key={loc.id} value={loc.id}>
-                      {loc.name}
+                      {loc.displayLocation}
                     </option>
                   ))}
                 </select>
 
                 <ExportButton
                   filename="ebricks_site_tools_allocation_breakdown"
-                  headers={['Site Name', 'Tool Name / ID', 'Quantity Available at Site', 'Total Quantity Allocated to Site', 'Supervisor / Custodian', 'Deployment Date']}
+                  headers={[
+                    'Site / Project Location',
+                    'Site ID / Code',
+                    'Project Name',
+                    'Tool Name & Code / ID',
+                    'Quantity Available at Site',
+                    'Total Quantity Allocated',
+                    'Site Custodian / Supervisor',
+                    'Status / Location Tag',
+                    'Deployment Date',
+                  ]}
                   data={filteredSiteTools.map((st) => [
-                    st.siteName,
+                    st.displayLocation,
+                    st.isCompanyHq ? 'HQ' : st.siteCode || st.siteId,
+                    st.isCompanyHq ? 'Company HQ' : st.projectName || st.siteName,
                     `${st.toolName} (${st.toolCode})`,
                     st.quantityAvailable,
                     st.totalAllocated,
                     st.supervisorName,
+                    st.locationTag,
                     st.deployedDate,
                   ])}
                   title="Export Site Allocations"
@@ -1006,9 +1005,24 @@ export default function OrganizationInventoryHub({ sites = [], projects = [] }) 
                     filteredSiteTools.map((st) => (
                       <tr key={st.id} className="hover:bg-slate-50/80 transition-colors">
                         <td className="p-3 font-bold text-blue-900">
-                          <div className="flex items-center gap-1.5">
-                            <MapPin className={`w-3.5 h-3.5 ${st.isCompanyHq ? 'text-amber-600' : 'text-blue-600'}`} />
-                            <span>{st.siteName}</span>
+                          <div className="flex items-start gap-1.5">
+                            {st.isCompanyHq ? (
+                              <Building2 className="w-3.5 h-3.5 text-amber-600 mt-0.5 shrink-0" />
+                            ) : (
+                              <MapPin className="w-3.5 h-3.5 text-blue-600 mt-0.5 shrink-0" />
+                            )}
+                            <div>
+                              <span className="font-bold text-slate-900 block">{st.displayLocation}</span>
+                              {st.isCompanyHq ? (
+                                <span className="text-[11px] font-medium text-slate-500 block">
+                                  Central Storage & Depot
+                                </span>
+                              ) : st.projectName && st.projectName !== st.siteName ? (
+                                <span className="text-[11px] font-medium text-slate-500 block">
+                                  Project: {st.projectName}
+                                </span>
+                              ) : null}
+                            </div>
                           </div>
                         </td>
                         <td className="p-3">
@@ -1030,7 +1044,7 @@ export default function OrganizationInventoryHub({ sites = [], projects = [] }) 
                               ? 'bg-blue-100 text-[#0B3470] border border-blue-200'
                               : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
                           }`}>
-                            {st.isCompanyHq ? 'Available at Company HQ Warehouse' : `Active at ${st.siteName}`}
+                            {st.locationTag}
                           </span>
                         </td>
                       </tr>
@@ -1106,7 +1120,7 @@ export default function OrganizationInventoryHub({ sites = [], projects = [] }) 
                         </div>
                         <div className="flex justify-between">
                           <span className="text-slate-400">Current Location:</span>
-                          <span className="font-bold text-slate-800">{t.currentSiteName || resolveSiteName(t.currentSiteId || t.siteId) || 'Company HQ Warehouse'}</span>
+                          <span className="font-bold text-slate-800">{resolveSiteName(t.currentSiteId || t.siteId, t.currentSiteName) || COMPANY_HQ_WAREHOUSE_LABEL}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-slate-400">Ownership:</span>

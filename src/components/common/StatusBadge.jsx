@@ -3,13 +3,13 @@ export default function StatusBadge({ status, type = 'status' }) {
 
   let colorClasses = 'bg-slate-100 text-slate-700 border-slate-200'
 
-  if (['active', 'approved', 'cleared', 'completed', 'good', 'in progress', 'live', 'paid', 'in stock'].includes(norm)) {
+  if (['active', 'approved', 'cleared', 'completed', 'good', 'in progress', 'live', 'paid', 'in stock', 'settled and closed', 'received', 'float replenished'].includes(norm)) {
     colorClasses = 'bg-emerald-50 text-emerald-700 border-emerald-200'
-  } else if (['pending', 'planning', 'in transit', 'requested', 'maintenance required', 'pending manager review', 'pending org approval', 'pending manager clearance', 'dispatched'].includes(norm)) {
+  } else if (['pending', 'planning', 'in transit', 'requested', 'maintenance required', 'pending manager review', 'pending manager approval', 'pending org approval', 'pending organization approval', 'pending manager clearance', 'dispatched', 'revision requested', 'revision required'].includes(norm)) {
     colorClasses = 'bg-amber-50 text-amber-700 border-amber-200'
-  } else if (['rejected', 'delayed', 'damaged', 'cancelled', 'on hold', 'hold', 'broken'].includes(norm)) {
+  } else if (['rejected', 'delayed', 'damaged', 'cancelled', 'on hold', 'hold', 'broken', 'rejected by manager', 'rejected by organization'].includes(norm)) {
     colorClasses = 'bg-rose-50 text-rose-700 border-rose-200'
-  } else if (['tier 1', 'tier 2', 'tier 3', 'superstructure', 'finishing', 'foundation', 'masons', 'carpenters', 'bar benders'].includes(norm)) {
+  } else if (['tier 1', 'tier 2', 'tier 3', 'superstructure', 'finishing', 'foundation', 'masons', 'carpenters', 'bar benders', 'awaiting disbursement', 'disbursed', 'awaiting receipt confirmation'].includes(norm)) {
     colorClasses = 'bg-blue-50 text-blue-700 border-blue-200'
   }
 

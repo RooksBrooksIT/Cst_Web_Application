@@ -16,26 +16,27 @@ import { saveStandardDoc, updateStandardDoc, fetchWithFallback } from './firesto
 /**
  * Team & User Governance Service
  * Complies with Section 3.1 & 4.2.3 of Architecture Specification
+ * All operations strictly scoped within /organisation/{orgId}/ hierarchy
  */
 
 export async function fetchOrgUsers(orgId) {
   if (!orgId) return []
   try {
-    // 1. Check root /users collection filtered by organizationId
-    const q = query(collection(db, 'users'), where('organizationId', '==', orgId))
-    const snap = await getDocs(q)
-    if (!snap.empty) {
-      return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+    // 1. Check /organisation/{orgId}/organizationUser
+    const orgUserSnap = await getDocs(collection(db, 'organisation', orgId, 'organizationUser'))
+    if (!orgUserSnap.empty) {
+      return orgUserSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
     }
 
-    // 2. Check /organisation/{orgId}/config_users or users subcollections
-    const subColSnap = await fetchWithFallback(orgId, 'config_users')
-    if (subColSnap.length > 0) return subColSnap
-
+    // 2. Check /organisation/{orgId}/users
     const directSnap = await getDocs(collection(db, 'organisation', orgId, 'users'))
     if (!directSnap.empty) {
       return directSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
     }
+
+    // 3. Check /organisation/{orgId}/config_users or configUsers
+    const subColSnap = await fetchWithFallback(orgId, 'config_users')
+    if (subColSnap.length > 0) return subColSnap
   } catch (e) {
     console.error('Error fetching org users:', e)
   }
@@ -43,10 +44,14 @@ export async function fetchOrgUsers(orgId) {
 }
 
 export async function createInvitationCode(orgId, inviteData) {
+  if (!orgId) throw new Error('orgId is required')
   const code = inviteData.code || Math.random().toString(36).substring(2, 10).toUpperCase()
   const payload = {
     code,
+    referralCode: code,
+    orgReferralCode: code,
     organizationId: orgId,
+    orgId,
     role: inviteData.role || 'manager', // manager, supervisor, customer
     assignedProjects: Array.isArray(inviteData.assignedProjects) ? inviteData.assignedProjects : [],
     email: inviteData.email || '',
@@ -57,34 +62,58 @@ export async function createInvitationCode(orgId, inviteData) {
     expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
   }
 
-  // Write to root /invitations/{code}
-  await setDoc(doc(db, 'invitations', code), payload)
+  // Write inside the organization's referralCodes and invitations subcollections
+  const referralRef = doc(db, 'organisation', orgId, 'referralCodes', code)
+  const inviteRef = doc(db, 'organisation', orgId, 'invitations', code)
+  await Promise.allSettled([
+    setDoc(referralRef, payload, { merge: true }),
+    setDoc(inviteRef, payload, { merge: true }),
+  ])
+
   return payload
 }
 
 export async function fetchInvitations(orgId) {
   if (!orgId) return []
   try {
-    const q = query(collection(db, 'invitations'), where('organizationId', '==', orgId))
-    const snap = await getDocs(q)
-    return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+    const inviteSnap = await getDocs(collection(db, 'organisation', orgId, 'invitations'))
+    if (!inviteSnap.empty) {
+      return inviteSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
+    }
+    const referralSnap = await getDocs(collection(db, 'organisation', orgId, 'referralCodes'))
+    return referralSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
   } catch (e) {
     return []
   }
 }
 
 export async function updateUserRoleAndProjects(orgId, uid, updates) {
-  try {
-    // Update root /users/{uid}
-    const userDocRef = doc(db, 'users', uid)
-    await updateDoc(userDocRef, {
-      ...updates,
-      updatedAt: serverTimestamp(),
-    })
-  } catch (e) {
-    // Also try updating in subcollection if exists
+  if (!orgId || !uid) return
+  const payload = {
+    ...updates,
+    updatedAt: serverTimestamp(),
+  }
+
+  // Update in organizationUser or users or config_users under /organisation/{orgId}/
+  const candidates = ['organizationUser', 'users', 'config_users', 'configUsers']
+  let updated = false
+  for (const col of candidates) {
     try {
-      await updateStandardDoc(orgId, 'config_users', uid, updates)
-    } catch (err) {}
+      const docRef = doc(db, 'organisation', orgId, col, uid)
+      const snap = await getDoc(docRef)
+      if (snap.exists()) {
+        await updateDoc(docRef, payload)
+        updated = true
+        break
+      }
+    } catch (_e) {}
+  }
+
+  if (!updated) {
+    // Default to organizationUser under orgId
+    try {
+      const defaultRef = doc(db, 'organisation', orgId, 'organizationUser', uid)
+      await setDoc(defaultRef, payload, { merge: true })
+    } catch (_err) {}
   }
 }

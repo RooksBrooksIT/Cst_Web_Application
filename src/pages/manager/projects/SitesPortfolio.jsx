@@ -93,11 +93,11 @@ export default function SitesPortfolio({ sites = [], supervisors = [] }) {
               Projects & Sites
             </span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 mt-1">Sites Directory</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 mt-1">Sites Directory</h1>
           <p className="text-xs text-slate-500">Live monitoring of active project sites, sanctioned budget utilization, and field geofences</p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap w-full sm:w-auto">
           <ExportButton
             data={filteredSites.map((s) => ({
               SiteID: s.siteId || s.id,
@@ -124,58 +124,58 @@ export default function SitesPortfolio({ sites = [], supervisors = [] }) {
       </div>
 
       {/* Summary KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs flex items-center justify-between">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs flex items-center justify-between">
           <div>
-            <p className="text-xs font-medium text-slate-500">Total Listed Sites</p>
-            <h3 className="text-2xl font-bold text-slate-900 mt-1">{summary.count}</h3>
+            <p className="text-[11px] sm:text-xs font-medium text-slate-500">Total Listed Sites</p>
+            <h3 className="text-lg sm:text-2xl font-bold text-slate-900 mt-1">{summary.count}</h3>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-blue-50 text-[#0B3470] flex items-center justify-center">
-            <Building2 className="w-5 h-5" />
+          <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-blue-50 text-[#0B3470] flex items-center justify-center shrink-0">
+            <Building2 className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
         </div>
 
-        <div className="p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs flex items-center justify-between">
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs flex items-center justify-between">
           <div>
-            <p className="text-xs font-medium text-slate-500">Sanctioned Budget</p>
-            <h3 className="text-xl font-bold text-slate-900 mt-1">{money(summary.totalBudget)}</h3>
+            <p className="text-[11px] sm:text-xs font-medium text-slate-500">Sanctioned Budget</p>
+            <h3 className="text-base sm:text-xl font-bold text-slate-900 mt-1 truncate">{money(summary.totalBudget)}</h3>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
-            <Wallet className="w-5 h-5" />
+          <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+            <Wallet className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
         </div>
 
-        <div className="p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs flex items-center justify-between">
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs flex items-center justify-between">
           <div>
-            <p className="text-xs font-medium text-slate-500">Total Expenditure</p>
-            <h3 className="text-xl font-bold text-blue-900 mt-1">{money(summary.totalSpent)}</h3>
+            <p className="text-[11px] sm:text-xs font-medium text-slate-500">Total Expenditure</p>
+            <h3 className="text-base sm:text-xl font-bold text-blue-900 mt-1 truncate">{money(summary.totalSpent)}</h3>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center">
-            <TrendingUp className="w-5 h-5" />
+          <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center shrink-0">
+            <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
         </div>
 
-        <div className="p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs flex items-center justify-between">
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs flex items-center justify-between">
           <div>
-            <p className="text-xs font-medium text-slate-500">Active Project Alerts</p>
-            <div className="flex items-baseline gap-2 mt-1">
-              <h3 className="text-2xl font-bold text-slate-900">{summary.alertSummary.totalAlerts}</h3>
+            <p className="text-[11px] sm:text-xs font-medium text-slate-500">Active Project Alerts</p>
+            <div className="flex items-baseline gap-1.5 sm:gap-2 mt-1">
+              <h3 className="text-lg sm:text-2xl font-bold text-slate-900">{summary.alertSummary.totalAlerts}</h3>
               {summary.alertSummary.criticalCount > 0 && (
-                <span className="text-xs font-semibold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
-                  {summary.alertSummary.criticalCount} Critical
+                <span className="text-[10px] sm:text-xs font-semibold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
+                  {summary.alertSummary.criticalCount} Crit
                 </span>
               )}
             </div>
           </div>
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${summary.alertSummary.criticalCount > 0 ? 'bg-rose-50 text-rose-600' : summary.alertSummary.warningCount > 0 ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}`}>
-            <AlertTriangle className="w-5 h-5" />
+          <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center shrink-0 ${summary.alertSummary.criticalCount > 0 ? 'bg-rose-50 text-rose-600' : summary.alertSummary.warningCount > 0 ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}`}>
+            <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
         </div>
       </div>
 
       {/* Controls Bar: Filters, Search, and View Mode Toggle */}
       <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-xs">
-        <div className="flex items-center gap-1 overflow-x-auto w-full lg:w-auto scrollbar-none pb-1 lg:pb-0">
+        <div className="flex items-center gap-1 overflow-x-auto w-full lg:w-auto touch-pan-x scrollbar-none pb-1 lg:pb-0">
           {['All', 'Live', 'In Progress', 'Planning', 'Completed', 'On Hold'].map((st) => (
             <button
               key={st}
@@ -192,7 +192,7 @@ export default function SitesPortfolio({ sites = [], supervisors = [] }) {
           ))}
         </div>
 
-        <div className="flex items-center gap-3 w-full lg:w-auto">
+        <div className="flex items-center gap-2 sm:gap-3 w-full lg:w-auto">
           <div className="relative flex-1 sm:w-72">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
@@ -244,8 +244,13 @@ export default function SitesPortfolio({ sites = [], supervisors = [] }) {
       ) : viewMode === 'table' ? (
         /* TABLE VIEW FORMAT */
         <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+          {/* Mobile Swipe Guidance Banner */}
+          <div className="block sm:hidden text-center py-1.5 px-3 bg-slate-50 border-b border-slate-100 text-[11px] font-medium text-slate-500">
+            ← Swipe horizontally to inspect full site details →
+          </div>
+
+          <div className="overflow-x-auto touch-pan-x">
+            <table className="w-full text-left border-collapse min-w-[720px]">
               <thead>
                 <tr className="bg-slate-50/75 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
                   <th className="py-3.5 px-4">Site Code & Name</th>

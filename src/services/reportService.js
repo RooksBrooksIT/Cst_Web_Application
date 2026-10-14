@@ -44,9 +44,31 @@ export function formatDateToKey(dateObj) {
 
 export function formatDateToISO(dateObj) {
   if (!dateObj) return ''
-  const d = new Date(dateObj)
-  if (isNaN(d.getTime())) return ''
-  return d.toISOString().slice(0, 10)
+  if (typeof dateObj?.toDate === 'function') {
+    const d = dateObj.toDate()
+    return isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10)
+  }
+  if (typeof dateObj === 'number') {
+    const d = new Date(dateObj)
+    return isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10)
+  }
+  if (dateObj instanceof Date) {
+    return isNaN(dateObj.getTime()) ? '' : dateObj.toISOString().slice(0, 10)
+  }
+  if (typeof dateObj === 'string') {
+    const s = dateObj.trim()
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10)
+    const match = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/)
+    if (match) {
+      return `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`
+    }
+    if (/^\d{8}$/.test(s)) {
+      return `${s.slice(4, 8)}-${s.slice(2, 4)}-${s.slice(0, 2)}`
+    }
+    const d = new Date(s)
+    if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10)
+  }
+  return ''
 }
 
 export function formatDateDisplay(dateInput) {
@@ -441,18 +463,7 @@ export function calculateSiteLifetimeSummary({
 // 2. PROJECT STAGE EXPENSES REPORT HUB
 // ------------------------------------------------------------------------------------------------
 
-export const PROJECT_STAGES = [
-  'Foundation',
-  'Plinth',
-  'Superstructure',
-  'Brickwork',
-  'Plastering',
-  'Electrical',
-  'Plumbing',
-  'Flooring',
-  'Painting',
-  'Finishing',
-]
+export const PROJECT_STAGES = []
 
 export function calculateProjectStageReport({
   selectedStage,
@@ -463,19 +474,31 @@ export function calculateProjectStageReport({
   contractorEntries = [],
   siteSupervisorProjectStageSchedule = [],
 }) {
-  const targetStage = selectedStage || PROJECT_STAGES[0]
+  const targetStage = selectedStage || ''
+
+  const stageMatches = (rawStage, target) => {
+    if (!rawStage || !target) return false
+    const s1 = String(rawStage).trim().toLowerCase()
+    const s2 = String(target).trim().toLowerCase()
+    if (s1 === s2) return true
+    const c1 = s1.replace(/^\d+[\.\s\-]+/, '').trim()
+    const c2 = s2.replace(/^\d+[\.\s\-]+/, '').trim()
+    return c1 === c2 || s1.includes(s2) || s2.includes(s1) || (c1 && c2 && (c1.includes(c2) || c2.includes(c1)))
+  }
 
   // Filter sites currently in this stage
-  const sitesInStage = sites.filter((s) => {
-    const stage = String(s.projectStage || s.stage || '').trim().toLowerCase()
-    return stage === targetStage.toLowerCase()
-  })
+  const sitesInStage = targetStage
+    ? sites.filter((s) => {
+        return stageMatches(s.projectStage || s.stage, targetStage)
+      })
+    : []
 
   // Filter all entries tagged with this stage across all sites
-  const stageEntries = siteSupervisorEntries.filter((e) => {
-    const stage = String(e.projectStage || e.stage || e.workStage || '').trim().toLowerCase()
-    return stage === targetStage.toLowerCase()
-  })
+  const stageEntries = targetStage
+    ? siteSupervisorEntries.filter((e) => {
+        return stageMatches(e.projectStage || e.stage || e.workStage, targetStage)
+      })
+    : []
 
   let stageTotalLabour = 0
   let stageTotalMaterial = 0
@@ -492,7 +515,7 @@ export function calculateProjectStageReport({
 
   // Match stage schedule budget if available
   const matchingSchedules = siteSupervisorProjectStageSchedule.filter((sch) =>
-    String(sch.projectStage || sch.stage || '').trim().toLowerCase() === targetStage.toLowerCase()
+    stageMatches(sch.projectStage || sch.stage, targetStage)
   )
   const stageEstimatedBudget = matchingSchedules.reduce(
     (sum, sch) => sum + parseAmount(sch.estimatedStageBudget || sch.stageBudget || sch.budget || 0),
@@ -513,8 +536,8 @@ export function calculateProjectStageReport({
   }
 
   const stageSiteSummary = sites.map((s) => {
-    const isCurrentlyInStage = String(s.projectStage || s.stage || '').toLowerCase() === targetStage.toLowerCase()
-    const entriesForSiteAndStage = siteSupervisorEntries.filter((e) => matchesSite(e, s) && String(e.projectStage || e.stage || '').toLowerCase() === targetStage.toLowerCase())
+    const isCurrentlyInStage = stageMatches(s.projectStage || s.stage, targetStage)
+    const entriesForSiteAndStage = siteSupervisorEntries.filter((e) => matchesSite(e, s) && stageMatches(e.projectStage || e.stage || e.workStage, targetStage))
     
     let spentInStage = 0
     entriesForSiteAndStage.forEach((e) => {
@@ -860,6 +883,15 @@ export function calculateDomainReports({
   workerAttendance = [],
   vehicles = [],
   siteSupervisorIncentives = [],
+  siteSupervisorEntries = [],
+  siteMaterialPool = [],
+  materialsAvailability = [],
+  materialAllocations = [],
+  sites = [],
+  siteId = 'all',
+  fromDate = null,
+  toDate = null,
+  stage = 'all',
 }) {
   switch (type) {
     case 'contractors': {
@@ -900,26 +932,343 @@ export function calculateDomainReports({
     }
 
     case 'materials': {
-      const list = materials.map((m) => {
-        const currentStock = parseAmount(m.currentTotalStock || m.currentStock || m.quantity || 0)
-        const unitRate = parseAmount(m.standardRate || m.rate || m.price || 0)
-        const allocated = parseAmount(m.allocatedStock || m.allocated || 0)
-        const consumed = parseAmount(m.totalConsumed || m.consumed || 0)
-        const valuation = currentStock * unitRate
+      const cleanKey = (str) => (str || '').trim().toLowerCase().replace(/[^a-zA-Z0-9]/g, '')
+
+      // Site matching helper
+      const isTargetSite = (record) => {
+        if (!siteId || siteId === 'all') return true
+        const target = String(siteId).trim().toLowerCase()
+        const recSiteId = String(record?.siteId || record?.projectId || record?.id || '').trim().toLowerCase()
+        const recSiteCode = String(record?.siteCode || '').trim().toLowerCase()
+        const recSiteName = String(record?.siteName || record?.projectName || record?.name || '').trim().toLowerCase()
+        if (recSiteId === target || recSiteCode === target || recSiteName === target) return true
+
+        const matchedSite = sites.find((s) => s.id === siteId)
+        if (matchedSite) {
+          const sName = String(matchedSite.projectName || matchedSite.siteName || matchedSite.name || '').trim().toLowerCase()
+          const sCode = String(matchedSite.siteCode || '').trim().toLowerCase()
+          if (sName && (recSiteName === sName || recSiteId === sName)) return true
+          if (sCode && (recSiteCode === sCode || recSiteId === sCode)) return true
+        }
+        return false
+      }
+
+      // Date range matching helper
+      const isTargetDate = (d) => {
+        if (!fromDate && !toDate) return true
+        if (!d) return true
+        const dateStr = formatDateToISO(d)
+        if (!dateStr) return true
+        if (fromDate && dateStr < fromDate) return false
+        if (toDate && dateStr > toDate) return false
+        return true
+      }
+
+      // Project stage matching helper
+      const isTargetStage = (record) => {
+        if (!stage || stage === 'all') return true
+        const target = String(stage).trim().toLowerCase()
+        const recStage = String(record?.projectStage || record?.stage || record?.currentStage || record?.stageName || '').trim().toLowerCase()
+        return recStage === target
+      }
+
+      // Map to hold aggregated material information
+      const matMap = new Map()
+
+      // 1. Process master materials catalog
+      materials.forEach((m) => {
+        const name = (m.materialName || m.name || m.displayName || m.item || '').trim()
+        if (!name) return
+        const key = cleanKey(name) || m.id
+        const unitRate = parseAmount(m.unitPrice ?? m.unitRate ?? m.standardRate ?? m.materialPrice ?? m.rate ?? m.price ?? m.cost ?? 0)
+        const centralStock = parseAmount(m.currentTotalStock ?? m.currentStock ?? m.availableCount ?? m.quantity ?? 0)
+        const minReorder = parseAmount(m.minReorderLevel ?? m.minReorder ?? 10)
+        const rawVal = parseAmount(m.totalValuation ?? m.valuation ?? 0)
+
+        matMap.set(key, {
+          materialName: name,
+          category: m.materialCategory || m.category || m.categoryName || 'Construction Materials',
+          unit: m.materialUnit || m.unit || m.unitName || 'Units',
+          unitRate,
+          centralStock,
+          allocated: parseAmount(m.allocatedStock ?? m.allocated ?? 0),
+          consumed: parseAmount(m.totalConsumed ?? m.consumed ?? 0),
+          minReorder,
+          rawValuation: rawVal,
+        })
+      })
+
+      // 2. Process central warehouse availability (materialsAvailability)
+      materialsAvailability.forEach((w) => {
+        const name = (w.materialName || w.name || '').trim()
+        if (!name) return
+        const key = cleanKey(name) || w.id
+        const rate = parseAmount(w.unitPrice ?? w.unitRate ?? w.materialPrice ?? w.standardRate ?? w.rate ?? w.price ?? 0)
+        const count = parseAmount(w.availableCount ?? w.companyAvailableCount ?? w.currentStock ?? w.quantity ?? 0)
+        const existing = matMap.get(key)
+        if (existing) {
+          if (count > 0 || existing.centralStock === 0) existing.centralStock = count
+          if (rate > 0 && existing.unitRate === 0) existing.unitRate = rate
+          if (w.unit && (!existing.unit || existing.unit === 'Units')) existing.unit = w.unit
+          if (w.category && (!existing.category || existing.category === 'Construction Materials')) existing.category = w.category
+        } else {
+          matMap.set(key, {
+            materialName: name,
+            category: w.category || w.materialCategory || 'Construction Materials',
+            unit: w.unit || w.materialUnit || 'Units',
+            unitRate: rate,
+            centralStock: count,
+            allocated: 0,
+            consumed: 0,
+            minReorder: 10,
+            rawValuation: 0,
+          })
+        }
+      })
+
+      // 3. Process siteMaterialPool
+      const matchingPools = siteMaterialPool.filter((p) => isTargetSite(p))
+      matchingPools.forEach((p) => {
+        const name = (p.materialName || p.name || '').trim()
+        if (!name) return
+        const key = cleanKey(name) || p.id
+        const rate = parseAmount(p.unitPrice ?? p.unitRate ?? p.materialPrice ?? p.standardRate ?? p.rate ?? 0)
+        const existing = matMap.get(key)
+        if (existing) {
+          if (rate > 0 && existing.unitRate === 0) existing.unitRate = rate
+          if (p.unit && (!existing.unit || existing.unit === 'Units')) existing.unit = p.unit
+          if (p.category && (!existing.category || existing.category === 'Construction Materials')) existing.category = p.category
+        } else {
+          matMap.set(key, {
+            materialName: name,
+            category: p.category || p.materialCategory || 'Construction Materials',
+            unit: p.unit || p.materialUnit || 'Units',
+            unitRate: rate,
+            centralStock: 0,
+            allocated: 0,
+            consumed: 0,
+            minReorder: 10,
+            rawValuation: 0,
+          })
+        }
+      })
+
+      // 4. Process materialAllocations
+      const matchingAllocations = materialAllocations.filter((a) => {
+        if (!isTargetSite(a)) return false
+        const aDate = a.allocationDate || a.date || a.createdAt
+        if (!isTargetDate(aDate)) return false
+        if (a.projectStage || a.stage) {
+          if (!isTargetStage(a)) return false
+        }
+        return true
+      })
+      matchingAllocations.forEach((a) => {
+        const name = (a.materialName || a.name || '').trim()
+        if (!name) return
+        const key = cleanKey(name) || a.id
+        const rate = parseAmount(a.unitRate ?? a.unitPrice ?? a.rate ?? (a.quantity ? parseAmount(a.amount || 0) / parseAmount(a.quantity) : 0))
+        const existing = matMap.get(key)
+        if (existing) {
+          if (rate > 0 && existing.unitRate === 0) existing.unitRate = rate
+          if (a.unit && (!existing.unit || existing.unit === 'Units')) existing.unit = a.unit
+        } else {
+          matMap.set(key, {
+            materialName: name,
+            category: a.category || 'Construction Materials',
+            unit: a.unit || 'Units',
+            unitRate: rate,
+            centralStock: 0,
+            allocated: 0,
+            consumed: 0,
+            minReorder: 10,
+            rawValuation: 0,
+          })
+        }
+      })
+
+      // 5. Process siteSupervisorEntries (Daily site consumption)
+      const matchingEntries = siteSupervisorEntries.filter((e) => {
+        if (!isTargetSite(e)) return false
+        const eDate = e.date || e.createdAt
+        if (!isTargetDate(eDate)) return false
+        if (!isTargetStage(e)) return false
+        return true
+      })
+      matchingEntries.forEach((e) => {
+        const matList = Array.isArray(e.materials) ? e.materials : (Array.isArray(e.materialsConsumed) ? e.materialsConsumed : [])
+        matList.forEach((mItem) => {
+          const name = (mItem.materialName || mItem.name || mItem.type || '').trim()
+          if (!name) return
+          const key = cleanKey(name)
+          const rate = parseAmount(mItem.unitPrice ?? mItem.price ?? mItem.rate ?? (mItem.quantity ? parseAmount(mItem.amount || mItem.total || 0) / parseAmount(mItem.quantity) : 0))
+          const existing = matMap.get(key)
+          if (existing) {
+            if (rate > 0 && existing.unitRate === 0) existing.unitRate = rate
+            if (mItem.unit && (!existing.unit || existing.unit === 'Units')) existing.unit = mItem.unit
+          } else {
+            matMap.set(key, {
+              materialName: name,
+              category: mItem.category || 'Construction Materials',
+              unit: mItem.unit || 'Units',
+              unitRate: rate,
+              centralStock: 0,
+              allocated: 0,
+              consumed: 0,
+              minReorder: 10,
+              rawValuation: 0,
+            })
+          }
+        })
+      })
+
+      // Now compute per-material values
+      const isSpecificSite = Boolean(siteId && siteId !== 'all')
+      const hasDateFilter = Boolean(fromDate || toDate)
+      const hasStageFilter = Boolean(stage && stage !== 'all')
+
+      let list = Array.from(matMap.entries()).map(([key, item]) => {
+        const matchesMat = (record) => {
+          const recName = (record?.materialName || record?.name || record?.type || '').trim()
+          return cleanKey(recName) === key || recName.toLowerCase() === item.materialName.toLowerCase()
+        }
+
+        // Pools for this material
+        const matPools = matchingPools.filter(matchesMat)
+
+        // Allocations for this material
+        const matAllocs = matchingAllocations.filter(matchesMat)
+        const allocFromRecords = matAllocs.reduce((sum, a) => sum + parseAmount(a.quantity ?? a.qty ?? a.allocatedCount ?? 0), 0)
+        const allocFromPools = matPools.reduce((sum, p) => sum + parseAmount(p.totalAllocated ?? p.availableCount ?? 0), 0)
+        
+        let allocated = 0
+        if (hasDateFilter) {
+          allocated = allocFromRecords
+        } else {
+          allocated = allocFromRecords > 0 ? allocFromRecords : (allocFromPools > 0 ? allocFromPools : item.allocated)
+        }
+
+        // Consumptions from matching supervisor entries
+        let consumedFromEntries = 0
+        let entryRate = 0
+        matchingEntries.forEach((e) => {
+          const matList = Array.isArray(e.materials) ? e.materials : (Array.isArray(e.materialsConsumed) ? e.materialsConsumed : [])
+          matList.forEach((mItem) => {
+            if (matchesMat(mItem)) {
+              consumedFromEntries += parseAmount(mItem.quantity ?? mItem.qty ?? mItem.count ?? 0)
+              const r = parseAmount(mItem.unitPrice ?? mItem.price ?? mItem.rate ?? 0)
+              if (r > 0) entryRate = r
+            }
+          })
+        })
+
+        const consumedFromPools = matPools.reduce((sum, p) => sum + parseAmount(p.totalConsumed ?? p.consumedCount ?? 0), 0)
+        
+        let consumed = 0
+        if (hasDateFilter || hasStageFilter) {
+          consumed = consumedFromEntries
+        } else {
+          consumed = consumedFromEntries > 0 ? consumedFromEntries : (consumedFromPools > 0 ? consumedFromPools : item.consumed)
+        }
+
+        // Current Stock:
+        let currentStock = 0
+        const sitePoolBalance = matPools.reduce((sum, p) => sum + parseAmount(p.currentBalance ?? p.availableCount ?? 0), 0)
+
+        if (isSpecificSite) {
+          currentStock = sitePoolBalance > 0
+            ? sitePoolBalance
+            : Math.max(0, allocated - consumed)
+        } else {
+          const totalOnSiteStock = siteMaterialPool.filter(matchesMat).reduce((sum, p) => sum + parseAmount(p.currentBalance ?? p.availableCount ?? 0), 0)
+          currentStock = (item.centralStock > 0 || totalOnSiteStock > 0)
+            ? (item.centralStock + totalOnSiteStock)
+            : (item.centralStock || Math.max(0, allocated - consumed))
+        }
+
+        // Unit rate resolution:
+        let unitRate = item.unitRate
+        if (unitRate === 0 && entryRate > 0) unitRate = entryRate
+        if (unitRate === 0 && matAllocs.length > 0) {
+          const allocR = parseAmount(matAllocs[0].unitRate ?? matAllocs[0].unitPrice ?? matAllocs[0].rate ?? 0)
+          if (allocR > 0) unitRate = allocR
+        }
+        if (unitRate === 0 && matPools.length > 0) {
+          const poolR = parseAmount(matPools[0].unitPrice ?? matPools[0].unitRate ?? matPools[0].materialPrice ?? matPools[0].rate ?? 0)
+          if (poolR > 0) unitRate = poolR
+        }
+
+        // Valuation:
+        let valuation = 0
+        if (currentStock > 0 && unitRate > 0) {
+          valuation = currentStock * unitRate
+        } else if (allocated > 0 && unitRate > 0 && isSpecificSite) {
+          valuation = allocated * unitRate
+        } else if (item.rawValuation > 0) {
+          valuation = item.rawValuation
+        } else if (consumed > 0 && unitRate > 0) {
+          valuation = consumed * unitRate
+        }
+
+        // Status:
+        let status = 'Adequate'
+        if (currentStock <= 0) {
+          status = 'Out of Stock'
+        } else if (currentStock <= item.minReorder) {
+          status = 'Reorder Warning'
+        } else {
+          status = 'Adequate'
+        }
+
         return {
-          materialName: m.name || m.materialName || 'Material',
-          category: m.category || 'Construction Materials',
-          unit: m.unit || 'Bags',
+          materialName: item.materialName,
+          category: item.category,
+          unit: item.unit,
           currentStock,
           allocated,
           consumed,
           unitRate,
           valuation,
-          status: currentStock <= (parseAmount(m.minReorderLevel) || 10) ? 'Reorder Warning' : 'Adequate',
+          status,
+          _hasSiteAffinity: matPools.length > 0 || matAllocs.length > 0 || consumedFromEntries > 0 || currentStock > 0 || allocated > 0 || consumed > 0,
         }
       })
+
+      // If a specific site is selected, filter to materials with activity or presence on that site
+      if (isSpecificSite) {
+        const siteSpecificRows = list.filter((r) => r._hasSiteAffinity)
+        if (siteSpecificRows.length > 0) {
+          list = siteSpecificRows
+        }
+      }
+
+      // Clean up internal metadata helper
+      list = list.map(({ _hasSiteAffinity, ...rest }) => rest)
+
+      // Sort by Material Name ascending
+      list.sort((a, b) => a.materialName.localeCompare(b.materialName))
+
       const totalValuation = list.reduce((sum, item) => sum + item.valuation, 0)
-      return { type: 'materials', title: 'Material Stock, Allocation & Consumption Report', totalValuation, records: list }
+      const totalStock = list.reduce((sum, item) => sum + item.currentStock, 0)
+      const totalAllocated = list.reduce((sum, item) => sum + item.allocated, 0)
+      const totalConsumed = list.reduce((sum, item) => sum + item.consumed, 0)
+
+      return {
+        type: 'materials',
+        title: 'Material Stock, Allocation & Consumption Report',
+        totalValuation,
+        totalStock,
+        totalAllocated,
+        totalConsumed,
+        summary: {
+          totalValuation,
+          totalStock,
+          totalAllocated,
+          totalConsumed,
+          totalMaterials: list.length,
+        },
+        records: list,
+      }
     }
 
     case 'tools': {

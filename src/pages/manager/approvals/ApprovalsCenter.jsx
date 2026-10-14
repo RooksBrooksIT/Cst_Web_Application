@@ -25,6 +25,14 @@ import {
   RotateCcw,
   Search,
 } from 'lucide-react'
+import {
+  getMaterialItemDisplay,
+  getRequestedQtyDisplay,
+  getApprovedQtyDisplay,
+  getMaterialUnitDisplay,
+  getMaterialQtyValue,
+  getMaterialCategoryDisplay,
+} from '../../../utils/materialUtils.js'
 
 function money(amount) {
   return new Intl.NumberFormat('en-IN', {
@@ -268,10 +276,10 @@ export default function ApprovalsCenter({
       if (!matchesMaterialSubTab(req, subTab)) return false
       if (siteFilter !== 'all' && req.siteId !== siteFilter) return false
       if (q) {
-        const mat = (req.materialName || '').toLowerCase()
+        const mat = (getMaterialItemDisplay(req) || '').toLowerCase()
         const siteName = (siteMap[req.siteId] || '').toLowerCase()
         const id = (req.requestId || req.id || '').toLowerCase()
-        const cat = (req.category || '').toLowerCase()
+        const cat = (getMaterialCategoryDisplay(req) || '').toLowerCase()
         if (!mat.includes(q) && !siteName.includes(q) && !id.includes(q) && !cat.includes(q)) {
           return false
         }
@@ -542,7 +550,7 @@ export default function ApprovalsCenter({
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-[#0B3470] text-white hover:bg-blue-800 shadow-xs transition-all cursor-pointer"
           >
             <Plus className="w-4 h-4" />
-            <span>Create Requisition</span>
+            <span>Create Request</span>
           </button>
         </div>
       </div>
@@ -818,7 +826,7 @@ export default function ApprovalsCenter({
           <div className="p-5 space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-slate-900">Site Raw Material Requisitions</h3>
+                <h3 className="text-sm font-bold text-slate-900">Site Raw Material Requests</h3>
                 <p className="text-xs text-slate-500">
                   Showing {filteredMaterials.length} item{filteredMaterials.length !== 1 ? 's' : ''} in{' '}
                   <span className="font-semibold text-blue-700">{subTab.toUpperCase()}</span> stage
@@ -828,10 +836,10 @@ export default function ApprovalsCenter({
                 data={filteredMaterials.map((r) => ({
                   ID: r.requestId || r.id,
                   Site: siteMap[r.siteId] || r.siteId,
-                  Material: r.materialName,
-                  RequestedQty: r.requestedQty,
-                  ApprovedQty: r.approvedQty,
-                  Unit: r.unit,
+                  Material: getMaterialItemDisplay(r),
+                  RequestedQty: getRequestedQtyDisplay(r),
+                  ApprovedQty: getApprovedQtyDisplay(r),
+                  Unit: getMaterialUnitDisplay(r),
                   Urgency: r.urgency,
                   Status: r.status,
                   GatePass: r.gatePassNumber || '',
@@ -859,7 +867,7 @@ export default function ApprovalsCenter({
                   {filteredMaterials.length === 0 ? (
                     <tr>
                       <td colSpan={9} className="py-8 text-center text-slate-400">
-                        No material requisitions matching the current filter.
+                        No material requests matching the current filter.
                       </td>
                     </tr>
                   ) : (
@@ -877,11 +885,11 @@ export default function ApprovalsCenter({
                           <td className="py-2.5 px-3 font-mono font-bold text-slate-700">{req.requestId || req.id}</td>
                           <td className="py-2.5 px-3 font-semibold text-slate-900">{siteMap[req.siteId] || req.siteId}</td>
                           <td className="py-2.5 px-3">
-                            <strong className="block text-slate-900">{req.materialName}</strong>
-                            <span className="text-[10px] text-slate-400">{req.category}</span>
+                            <strong className="block text-slate-900">{getMaterialItemDisplay(req)}</strong>
+                            <span className="text-[10px] text-slate-400">{getMaterialCategoryDisplay(req)}</span>
                           </td>
-                          <td className="py-2.5 px-3 font-bold text-slate-800">{req.requestedQty} {req.unit}</td>
-                          <td className="py-2.5 px-3 text-slate-700">{req.approvedQty ? `${req.approvedQty} ${req.unit}` : '—'}</td>
+                          <td className="py-2.5 px-3 font-bold text-slate-800">{getRequestedQtyDisplay(req)}</td>
+                          <td className="py-2.5 px-3 text-slate-700">{getApprovedQtyDisplay(req)}</td>
                           <td className="py-2.5 px-3">
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                               req.urgency === 'Critical' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
@@ -915,7 +923,7 @@ export default function ApprovalsCenter({
                                     type="button"
                                     onClick={() => {
                                       setSelectedItem(req)
-                                      setApprovedQty(String(req.requestedQty || ''))
+                                      setApprovedQty(String(req.approvedQty || getMaterialQtyValue(req) || ''))
                                       setVendorNotes('')
                                       setIsMaterialModalOpen(true)
                                     }}
@@ -994,7 +1002,7 @@ export default function ApprovalsCenter({
           <div className="p-5 space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-slate-900">Plant & Power Tool Requisitions</h3>
+                <h3 className="text-sm font-bold text-slate-900">Plant & Power Tool Requests</h3>
                 <p className="text-xs text-slate-500">
                   Showing {filteredTools.length} item{filteredTools.length !== 1 ? 's' : ''} in{' '}
                   <span className="font-semibold text-blue-700">{subTab.toUpperCase()}</span> stage
@@ -1010,7 +1018,7 @@ export default function ApprovalsCenter({
                   Status: t.status,
                   ReturnCondition: t.returnCondition || '',
                 }))}
-                filename="tool_requisition_approvals.csv"
+                filename="tool_request_approvals.csv"
               />
             </div>
 
@@ -1032,7 +1040,7 @@ export default function ApprovalsCenter({
                   {filteredTools.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="py-8 text-center text-slate-400">
-                        No equipment requisitions matching the current filter.
+                        No equipment requests matching the current filter.
                       </td>
                     </tr>
                   ) : (
@@ -1254,7 +1262,7 @@ export default function ApprovalsCenter({
         currentUser={user}
         sites={sites}
         onSuccess={() => {
-          showMsg('success', 'Requisition successfully submitted to the 5-Stage Approval Pipeline.')
+          showMsg('success', 'Request successfully submitted to the 5-Stage Approval Pipeline.')
         }}
       />
 
@@ -1265,7 +1273,7 @@ export default function ApprovalsCenter({
           setIsAuditModalOpen(false)
           setSelectedItem(null)
         }}
-        title="Requisition Lifecycle & Audit Trail"
+        title="Request Lifecycle & Audit Trail"
         subtitle={`Item #${selectedItem?.id || selectedItem?.requestId || ''} · ${siteMap[selectedItem?.siteId] || ''}`}
       >
         <div className="p-6 space-y-4">
@@ -1293,7 +1301,7 @@ export default function ApprovalsCenter({
       <Modal
         isOpen={isRejectModalOpen}
         onClose={() => setIsRejectModalOpen(false)}
-        title="Reject Requisition / Payment Claim"
+        title="Reject Request / Payment Claim"
         subtitle="Mandatory feedback will be recorded and notified to the submitter"
       >
         <form onSubmit={handleRejectSubmit} className="p-6 space-y-4">
@@ -1322,12 +1330,14 @@ export default function ApprovalsCenter({
         isOpen={isMaterialModalOpen}
         onClose={() => setIsMaterialModalOpen(false)}
         title="Authorize Raw Material Order"
-        subtitle={`Item: ${selectedItem?.materialName} for ${siteMap[selectedItem?.siteId] || selectedItem?.siteId}`}
+        subtitle={`Item: ${getMaterialItemDisplay(selectedItem)} for ${siteMap[selectedItem?.siteId] || selectedItem?.siteId}`}
       >
         <form onSubmit={handleMaterialApproveSubmit} className="p-6 space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Approved Quantity ({selectedItem?.unit}) *</label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Approved Quantity {getMaterialUnitDisplay(selectedItem) ? `(${getMaterialUnitDisplay(selectedItem)})` : ''} *
+              </label>
               <input
                 type="number"
                 value={approvedQty}
@@ -1358,7 +1368,7 @@ export default function ApprovalsCenter({
           <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
             <button type="button" onClick={() => setIsMaterialModalOpen(false)} className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer">Cancel</button>
             <button type="submit" disabled={actionLoading} className="px-5 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white shadow-xs cursor-pointer">
-              {actionLoading ? 'Saving...' : 'Authorize Requisition'}
+              {actionLoading ? 'Saving...' : 'Authorize Request'}
             </button>
           </div>
         </form>
@@ -1369,7 +1379,7 @@ export default function ApprovalsCenter({
         isOpen={isGatePassModalOpen}
         onClose={() => setIsGatePassModalOpen(false)}
         title="Issue Warehouse Gate Pass & Clear Dispatch"
-        subtitle={`Item: ${selectedItem?.materialName} (${selectedItem?.approvedQty || selectedItem?.requestedQty} ${selectedItem?.unit})`}
+        subtitle={`Item: ${getMaterialItemDisplay(selectedItem)} (${getApprovedQtyDisplay(selectedItem) !== '—' ? getApprovedQtyDisplay(selectedItem) : getRequestedQtyDisplay(selectedItem)})`}
       >
         <form onSubmit={handleGatePassSubmit} className="p-6 space-y-4">
           <div>
@@ -1490,7 +1500,7 @@ export default function ApprovalsCenter({
         isOpen={isReceiptConfirmModalOpen}
         onClose={() => setIsReceiptConfirmModalOpen(false)}
         title="Confirm Physical Delivery at Construction Site"
-        subtitle={`Verifying delivery of ${receiptType === 'material' ? selectedItem?.materialName : selectedItem?.toolName}`}
+        subtitle={`Verifying delivery of ${receiptType === 'material' ? getMaterialItemDisplay(selectedItem) : selectedItem?.toolName}`}
       >
         <form onSubmit={handleReceiptConfirmSubmit} className="p-6 space-y-4">
           <div>

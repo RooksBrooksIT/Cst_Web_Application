@@ -20,6 +20,12 @@ import {
   fetchWithFallback,
   subscribeWithFallback,
 } from './firestoreService.js'
+import {
+  notifyOrganisation,
+  notifySupervisor,
+  notifyManager,
+  NotificationType,
+} from './notificationService.js'
 
 /**
  * CST WHITE LABEL - PETTY CASH SYSTEM ENGINE
@@ -35,17 +41,33 @@ export const PETTY_CASH_REQUEST_STATUS = {
   DRAFT: 'DRAFT',
   SUBMITTED: 'SUBMITTED',
   PENDING_MANAGER_REVIEW: 'PENDING_MANAGER_REVIEW',
+  PENDING_MANAGER_APPROVAL: 'PENDING_MANAGER_REVIEW',
+  REVISION_REQUESTED: 'REVISION_REQUESTED',
+  REVISION_REQUIRED: 'REVISION_REQUESTED',
   REJECTED_BY_MANAGER: 'REJECTED_BY_MANAGER',
   PENDING_ORGANIZATION_APPROVAL: 'PENDING_ORGANIZATION_APPROVAL',
+  PENDING_ORG_APPROVAL: 'PENDING_ORGANIZATION_APPROVAL',
   REJECTED_BY_ORGANIZATION: 'REJECTED_BY_ORGANIZATION',
   APPROVED: 'APPROVED',
   AWAITING_DISBURSEMENT: 'AWAITING_DISBURSEMENT',
+  PENDING_ORG_DISBURSAL: 'AWAITING_DISBURSEMENT',
+  PENDING_DISBURSAL: 'AWAITING_DISBURSEMENT',
   DISBURSED: 'DISBURSED',
+  FUNDS_DISBURSED: 'DISBURSED',
   AWAITING_RECEIPT_CONFIRMATION: 'AWAITING_RECEIPT_CONFIRMATION',
   RECEIVED: 'RECEIVED',
+  FLOAT_ACTIVE_IN_HAND: 'RECEIVED',
   ACTIVE: 'ACTIVE',
+  IN_HAND: 'ACTIVE',
+  RECONCILIATION_SUBMITTED: 'RECONCILIATION_SUBMITTED',
+  SUBMITTED_FOR_AUDIT: 'RECONCILIATION_SUBMITTED',
+  MANAGER_AUDITED: 'MANAGER_AUDITED',
+  RECOMMENDED_FOR_CLOSURE: 'MANAGER_AUDITED',
+  SETTLED_AND_CLOSED: 'SETTLED_AND_CLOSED',
   CLOSED: 'CLOSED',
+  FLOAT_REPLENISHED: 'FLOAT_REPLENISHED',
   CANCELLED: 'CANCELLED',
+  REJECTED: 'REJECTED',
 }
 
 export const PETTY_CASH_EXPENSE_STATUS = {
@@ -179,6 +201,8 @@ export async function submitPettyCashRequest(orgId, requestData, actor) {
     expenseCategory: requestData.expenseCategory || 'Site Operational Float',
     requiredDate: requestData.requiredDate || null,
     documentUrl: requestData.documentUrl || '',
+    amount: Number(requestData.requestedAmount),
+    totalAmount: Number(requestData.requestedAmount),
     requestedAmount: Number(requestData.requestedAmount),
     approvedAmount: Number(requestData.requestedAmount),
     disbursedAmount: 0,
@@ -190,6 +214,7 @@ export async function submitPettyCashRequest(orgId, requestData, actor) {
     remarks: requestData.remarks || '',
     status: PETTY_CASH_REQUEST_STATUS.PENDING_MANAGER_REVIEW,
     statusDisplay: 'Pending Manager Review',
+    approvalStatus: 'pending_manager_review',
     currentStep: 1,
     currentBalanceAtRequest: Number(requestData.currentBalanceAtRequest) || 0,
     totalAllocatedAtRequest: Number(requestData.totalAllocatedAtRequest) || 0,
@@ -223,6 +248,25 @@ export async function submitPettyCashRequest(orgId, requestData, actor) {
     newState: { status: payload.status, requestedAmount: payload.requestedAmount },
   })
 
+  // Dispatch real-time notification to Operations Manager
+  try {
+    await notifyManager({
+      orgId,
+      title: '💵 New Petty Cash Request Submitted',
+      message: `${supervisorName} requested petty cash of ₹${Number(requestData.requestedAmount).toLocaleString('en-IN')} for ${payload.siteName || 'site'}.`,
+      type: NotificationType.PETTY_CASH_REQUEST,
+      requestId,
+      siteId: payload.siteId || '',
+      siteName: payload.siteName || '',
+      senderUser: actor,
+      senderRole: 'supervisor',
+      actionRoute: '/manager/petty-cash',
+      actionData: { requestId, siteId: payload.siteId },
+    })
+  } catch (err) {
+    console.warn('Petty cash request submission notification notice:', err)
+  }
+
   return payload
 }
 
@@ -237,32 +281,69 @@ export async function managerReviewRequest(orgId, requestId, decision, remarks, 
   if (!reqSnap.exists()) throw new Error('Petty cash request not found')
   const currentData = reqSnap.data()
 
-  const isApproved = decision === 'forward' || decision === 'approve'
+  const normDecision = String(decision || '').trim().toLowerCase()
+  const isApproved =
+    ['forward', 'approve', 'approved', 'verify', 'verified'].includes(normDecision) ||
+    decision === true
+  const isRevision =
+    ['revision', 'revision_requested', 'revision_required', 'request_revision', 'revise'].includes(normDecision)
 
-  const newStatus = isApproved
-    ? PETTY_CASH_REQUEST_STATUS.PENDING_ORGANIZATION_APPROVAL
-    : PETTY_CASH_REQUEST_STATUS.REJECTED_BY_MANAGER
-  const newStatusDisplay = isApproved ? 'Pending HQ Authorization' : 'Rejected by Manager'
-  const newStep = isApproved ? 2 : -1
+  let newStatus
+  let newStatusDisplay
+  let newStep
+  let approvalStatus
+  let historyAction
+
+  if (isApproved) {
+    newStatus = PETTY_CASH_REQUEST_STATUS.PENDING_ORGANIZATION_APPROVAL
+    newStatusDisplay = 'Pending HQ Authorization'
+    newStep = 2
+    approvalStatus = 'pending_organization_approval'
+    historyAction = 'Verified & Forwarded to HQ'
+  } else if (isRevision) {
+    newStatus = PETTY_CASH_REQUEST_STATUS.REVISION_REQUESTED
+    newStatusDisplay = 'Revision Requested'
+    newStep = 1
+    approvalStatus = 'revision_requested'
+    historyAction = 'Revision Requested by Manager'
+  } else {
+    newStatus = PETTY_CASH_REQUEST_STATUS.REJECTED_BY_MANAGER
+    newStatusDisplay = 'Rejected by Manager'
+    newStep = -1
+    approvalStatus = 'rejected_by_manager'
+    historyAction = 'Rejected by Manager'
+  }
 
   const historyEntry = {
     step: '2. Manager Review',
-    action: isApproved ? 'Verified & Forwarded to HQ' : 'Rejected by Manager',
+    action: historyAction,
     actorRole: 'Manager',
-    actorName: managerActor.name || 'Operations Manager',
-    actorId: managerActor.id || 'manager',
-    remarks: remarks || (isApproved ? 'Verified site requirements.' : 'Rejected.'),
+    actorName: managerActor?.name || 'Operations Manager',
+    actorId: managerActor?.id || 'manager',
+    remarks: remarks || (isApproved ? 'Verified site requirements.' : isRevision ? 'Revision requested.' : 'Rejected.'),
     timestamp: new Date().toISOString(),
   }
 
   const updates = {
     status: newStatus,
     statusDisplay: newStatusDisplay,
+    approvalStatus,
     currentStep: newStep,
-    managerReviewedBy: managerActor.name || 'Manager',
+    managerReviewedBy: managerActor?.name || 'Manager',
+    managerReviewerName: managerActor?.name || 'Manager',
+    managerName: managerActor?.name || 'Manager',
     managerReviewedAt: serverTimestamp(),
+    managerReviewDate: serverTimestamp(),
     managerReviewRemarks: remarks || '',
-    ...(isApproved ? {} : { rejectionReason: remarks || 'Declined by manager' }),
+    managerNotes: remarks || '',
+    revisionNotes: isRevision ? (remarks || '') : (currentData.revisionNotes || ''),
+    ...(isApproved || isRevision
+      ? {}
+      : {
+          rejectionReason: remarks || 'Declined by manager',
+          rejectedBy: managerActor?.name || 'Manager',
+          rejectedRole: 'Manager',
+        }),
     approvalHistory: [...(currentData.approvalHistory || []), historyEntry],
     updatedAt: serverTimestamp(),
   }
@@ -270,16 +351,71 @@ export async function managerReviewRequest(orgId, requestId, decision, remarks, 
   await updateDoc(reqRef, updates)
 
   await writePettyCashAuditLog(orgId, {
-    action: isApproved ? 'REQUEST_FORWARDED' : 'REQUEST_REJECTED_BY_MANAGER',
+    action: isApproved ? 'REQUEST_FORWARDED' : isRevision ? 'REQUEST_REVISION_REQUESTED' : 'REQUEST_REJECTED_BY_MANAGER',
     entityType: 'REQUEST',
     entityId: requestId,
-    actorId: managerActor.id,
-    actorName: managerActor.name,
+    actorId: managerActor?.id || 'manager',
+    actorName: managerActor?.name || 'Manager',
     actorRole: 'Manager',
     siteId: currentData.siteId,
     previousState: { status: currentData.status },
     newState: { status: newStatus },
+    metadata: { remarks },
   })
+
+  // Dispatch Notification to Organization HQ (or to Supervisor if declined/revision)
+  try {
+    if (isApproved) {
+      await notifyOrganisation({
+        orgId,
+        title: '💵 Petty Cash Request Awaiting Authorization',
+        message: `Petty cash request #${requestId} (₹${Number(currentData.requestedAmount || currentData.amount || 0).toLocaleString('en-IN')}) for ${currentData.siteName || 'site'} verified by ${managerActor?.name || 'Operations Manager'}. Awaiting HQ authorization.`,
+        type: NotificationType.PETTY_CASH_REQUEST,
+        requestId,
+        siteId: currentData.siteId || '',
+        siteName: currentData.siteName || '',
+        senderUser: managerActor,
+        senderRole: 'manager',
+        actionRoute: '/organization/petty-cash',
+        actionData: {
+          requestId,
+          siteId: currentData.siteId || '',
+          siteName: currentData.siteName || '',
+          requestedAmount: currentData.requestedAmount || currentData.amount || 0,
+        },
+      })
+    } else if (isRevision) {
+      await notifySupervisor({
+        orgId,
+        title: '⚠️ Petty Cash Revision Requested',
+        message: `Manager requested revision for petty cash request #${requestId} (${currentData.siteName || 'site'}): ${remarks || 'Please update the requested details or budget.'}`,
+        type: NotificationType.PETTY_CASH_REQUEST,
+        requestId,
+        siteId: currentData.siteId || '',
+        siteName: currentData.siteName || '',
+        forSupervisorName: currentData.supervisorName || '',
+        forSupervisorId: currentData.supervisorId || '',
+        senderUser: managerActor,
+        senderRole: 'manager',
+      })
+    } else {
+      await notifySupervisor({
+        orgId,
+        title: '❌ Petty Cash Request Declined by Manager',
+        message: `Petty cash request #${requestId} for ${currentData.siteName || 'site'} was declined by ${managerActor?.name || 'Manager'}. Reason: ${remarks || 'No reason specified'}`,
+        type: NotificationType.PETTY_CASH_REQUEST,
+        requestId,
+        siteId: currentData.siteId || '',
+        siteName: currentData.siteName || '',
+        forSupervisorName: currentData.supervisorName || '',
+        forSupervisorId: currentData.supervisorId || '',
+        senderUser: managerActor,
+        senderRole: 'manager',
+      })
+    }
+  } catch (err) {
+    console.warn('Petty cash manager review notification notice:', err)
+  }
 }
 
 /**
@@ -293,8 +429,9 @@ export async function orgAuthorizeRequest(orgId, requestId, decision, approvedAm
   if (!reqSnap.exists()) throw new Error('Petty cash request not found')
   const currentData = reqSnap.data()
 
-  const isApproved = decision === 'authorize' || decision === 'approve'
-  const parsedAmount = Number(approvedAmount) > 0 ? Number(approvedAmount) : currentData.requestedAmount
+  const normDecision = String(decision || '').trim().toLowerCase()
+  const isApproved = ['authorize', 'approve', 'approved'].includes(normDecision) || decision === true
+  const parsedAmount = Number(approvedAmount) > 0 ? Number(approvedAmount) : (currentData.requestedAmount || currentData.amount || 0)
 
   const newStatus = isApproved
     ? PETTY_CASH_REQUEST_STATUS.AWAITING_DISBURSEMENT
@@ -306,8 +443,8 @@ export async function orgAuthorizeRequest(orgId, requestId, decision, approvedAm
     step: '3. Organization Authorization',
     action: isApproved ? `Authorized by HQ (₹${parsedAmount})` : 'Rejected by Organization HQ',
     actorRole: 'Organization',
-    actorName: orgActor.name || 'HQ Finance',
-    actorId: orgActor.id || 'org_admin',
+    actorName: orgActor?.name || 'HQ Finance',
+    actorId: orgActor?.id || 'org_admin',
     remarks: remarks || '',
     timestamp: new Date().toISOString(),
   }
@@ -315,13 +452,15 @@ export async function orgAuthorizeRequest(orgId, requestId, decision, approvedAm
   const updates = {
     status: newStatus,
     statusDisplay: newStatusDisplay,
+    approvalStatus: isApproved ? 'approved' : 'rejected_by_org',
     currentStep: newStep,
     approvedAmount: parsedAmount,
     allocatedAmount: parsedAmount,
-    orgApprovedBy: orgActor.name || 'HQ Finance',
+    orgApproved: isApproved,
+    orgApprovedBy: orgActor?.name || 'HQ Finance',
     orgApprovedAt: serverTimestamp(),
     orgApprovalRemarks: remarks || '',
-    ...(isApproved ? {} : { orgRejectedBy: orgActor.name || 'HQ', rejectionReason: remarks || 'Declined by HQ' }),
+    ...(isApproved ? {} : { orgRejectedBy: orgActor?.name || 'HQ', rejectionReason: remarks || 'Declined by HQ' }),
     approvalHistory: [...(currentData.approvalHistory || []), historyEntry],
     updatedAt: serverTimestamp(),
   }
@@ -332,35 +471,91 @@ export async function orgAuthorizeRequest(orgId, requestId, decision, approvedAm
     action: isApproved ? 'ORGANIZATION_APPROVED' : 'ORGANIZATION_REJECTED',
     entityType: 'REQUEST',
     entityId: requestId,
-    actorId: orgActor.id,
-    actorName: orgActor.name,
+    actorId: orgActor?.id || 'org_admin',
+    actorName: orgActor?.name || 'HQ Finance',
     actorRole: 'Organization',
     siteId: currentData.siteId,
     previousState: { status: currentData.status },
     newState: { status: newStatus, approvedAmount: parsedAmount },
   })
+
+  // Dispatch Notification to Manager & Supervisor
+  try {
+    if (isApproved) {
+      await notifyManager({
+        orgId,
+        title: '✅ Petty Cash Request Authorized by HQ',
+        message: `HQ (${orgActor?.name || 'Finance'}) authorized petty cash request #${requestId} (₹${parsedAmount.toLocaleString('en-IN')}) for ${currentData.siteName || 'site'}. Manager disbursement required.`,
+        type: NotificationType.PETTY_CASH_REQUEST,
+        requestId,
+        siteId: currentData.siteId || '',
+        siteName: currentData.siteName || '',
+        senderUser: orgActor,
+        senderRole: 'organisation',
+        actionRoute: '/manager/petty-cash',
+      })
+    } else {
+      await notifyManager({
+        orgId,
+        title: '❌ Petty Cash Request Rejected by HQ',
+        message: `Petty cash request #${requestId} for ${currentData.siteName || 'site'} was rejected by HQ. Reason: ${remarks || 'Declined by HQ'}`,
+        type: NotificationType.PETTY_CASH_REQUEST,
+        requestId,
+        siteId: currentData.siteId || '',
+        siteName: currentData.siteName || '',
+        senderUser: orgActor,
+        senderRole: 'organisation',
+        actionRoute: '/manager/petty-cash',
+      })
+      await notifySupervisor({
+        orgId,
+        title: '❌ Petty Cash Request Rejected by HQ',
+        message: `Your petty cash request #${requestId} for ${currentData.siteName || 'site'} was rejected by HQ. Reason: ${remarks || 'Declined by HQ'}`,
+        type: NotificationType.PETTY_CASH_REQUEST,
+        requestId,
+        siteId: currentData.siteId || '',
+        siteName: currentData.siteName || '',
+        forSupervisorName: currentData.supervisorName || '',
+        forSupervisorId: currentData.supervisorId || '',
+        senderUser: orgActor,
+        senderRole: 'organisation',
+      })
+    }
+  } catch (err) {
+    console.warn('Petty cash org authorization notification notice:', err)
+  }
 }
 
 /**
- * Step 4: Manager Disburses Funds
+ * Step 4A: Manager Disburses Funds
  */
-export async function managerDisburseFunds(orgId, requestId, disburseAmount, method = 'Cash', remarks = '', managerActor) {
+export async function managerDisburseFunds(orgId, requestId, disburseAmount, method = 'Cash', referenceId = '', remarks = '', managerActor) {
   if (!orgId || !requestId) throw new Error('orgId and requestId are required')
+
+  let actualRef = typeof referenceId === 'string' ? referenceId : ''
+  let actualRemarks = typeof remarks === 'string' ? remarks : ''
+  let actualActor = managerActor
+  if (typeof remarks === 'object' && remarks !== null && !managerActor) {
+    actualActor = remarks
+    actualRemarks = actualRef
+    actualRef = ''
+  }
+
   const reqRef = doc(db, 'organisation', orgId, 'pettyCashRequests', requestId)
 
   const reqSnap = await getDoc(reqRef)
   if (!reqSnap.exists()) throw new Error('Petty cash request not found')
   const currentData = reqSnap.data()
 
-  const amt = Number(disburseAmount) > 0 ? Number(disburseAmount) : currentData.approvedAmount
+  const amt = Number(disburseAmount) > 0 ? Number(disburseAmount) : (currentData.approvedAmount || currentData.requestedAmount || 0)
 
   const historyEntry = {
     step: '4. Manager Fund Disbursement',
-    action: `Funds Disbursed via ${method} (₹${amt})`,
+    action: `Funds Disbursed via ${method} (₹${amt})${actualRef ? ` - Ref: ${actualRef}` : ''}`,
     actorRole: 'Manager',
-    actorName: managerActor.name || 'Manager',
-    actorId: managerActor.id || 'manager',
-    remarks: remarks || `Disbursed ₹${amt} via ${method}.`,
+    actorName: actualActor?.name || 'Manager',
+    actorId: actualActor?.id || 'manager',
+    remarks: actualRemarks || `Disbursed ₹${amt} via ${method}. ${actualRef ? `Ref: ${actualRef}` : ''}`,
     timestamp: new Date().toISOString(),
   }
 
@@ -369,9 +564,12 @@ export async function managerDisburseFunds(orgId, requestId, disburseAmount, met
     statusDisplay: 'Disbursed - Awaiting Field Receipt',
     currentStep: 4,
     disbursedAmount: amt,
-    disbursedBy: managerActor.name || 'Manager',
+    disbursedBy: actualActor?.name || 'Manager',
     disbursedAt: serverTimestamp(),
     disburseMethod: method,
+    paymentMode: method,
+    disbursementRef: actualRef || '',
+    transactionRef: actualRef || '',
     approvalHistory: [...(currentData.approvalHistory || []), historyEntry],
     updatedAt: serverTimestamp(),
   }
@@ -382,12 +580,114 @@ export async function managerDisburseFunds(orgId, requestId, disburseAmount, met
     action: 'CASH_DISBURSED',
     entityType: 'REQUEST',
     entityId: requestId,
-    actorId: managerActor.id,
-    actorName: managerActor.name,
+    actorId: actualActor?.id || 'manager',
+    actorName: actualActor?.name || 'Manager',
     actorRole: 'Manager',
     siteId: currentData.siteId,
-    newState: { status: updates.status, disbursedAmount: amt },
+    newState: { status: updates.status, disbursedAmount: amt, method, referenceId: actualRef },
   })
+
+  // Dispatch Notification to Supervisor
+  try {
+    await notifySupervisor({
+      orgId,
+      title: '💵 Petty Cash Funds Disbursed',
+      message: `Petty cash of ₹${amt.toLocaleString('en-IN')} for ${currentData.siteName || 'site'} has been disbursed via ${method}${actualRef ? ` (Ref: ${actualRef})` : ''} by ${actualActor?.name || 'Operations Manager'}. Please verify and confirm receipt.`,
+      type: NotificationType.PETTY_CASH_DISPATCHED,
+      requestId,
+      siteId: currentData.siteId || '',
+      siteName: currentData.siteName || '',
+      forSupervisorName: currentData.supervisorName || '',
+      forSupervisorId: currentData.supervisorId || '',
+      senderUser: actualActor,
+      senderRole: 'manager',
+    })
+  } catch (err) {
+    console.warn('Petty cash disbursement notification notice:', err)
+  }
+}
+
+/**
+ * Step 4B: Organization HQ Disburses Funds Directly (Stage 4 / Payout Release)
+ */
+export async function orgDisburseFunds(orgId, requestId, disburseAmount, method = 'Bank Transfer', referenceId = '', remarks = '', orgActor) {
+  if (!orgId || !requestId) throw new Error('orgId and requestId are required')
+  const reqRef = doc(db, 'organisation', orgId, 'pettyCashRequests', requestId)
+
+  const reqSnap = await getDoc(reqRef)
+  if (!reqSnap.exists()) throw new Error('Petty cash request not found')
+  const currentData = reqSnap.data()
+
+  const amt = Number(disburseAmount) > 0 ? Number(disburseAmount) : (currentData.approvedAmount || currentData.requestedAmount || 0)
+
+  const historyEntry = {
+    step: '4. Organization Fund Disbursement',
+    action: `Funds Disbursed via ${method} (₹${amt})${referenceId ? ` - Ref: ${referenceId}` : ''}`,
+    actorRole: 'Organization',
+    actorName: orgActor?.name || 'HQ Finance',
+    actorId: orgActor?.id || 'org_finance',
+    remarks: remarks || `Disbursed ₹${amt} via ${method}. ${referenceId ? `Ref: ${referenceId}` : ''}`,
+    timestamp: new Date().toISOString(),
+  }
+
+  const updates = {
+    status: PETTY_CASH_REQUEST_STATUS.AWAITING_RECEIPT_CONFIRMATION,
+    statusDisplay: 'Disbursed - Awaiting Field Receipt',
+    currentStep: 4,
+    disbursedAmount: amt,
+    disbursedBy: orgActor?.name || 'HQ Finance',
+    disbursedAt: serverTimestamp(),
+    disburseMethod: method,
+    paymentMode: method,
+    disbursementRef: referenceId || '',
+    transactionRef: referenceId || '',
+    orgDisbursed: true,
+    approvalHistory: [...(currentData.approvalHistory || []), historyEntry],
+    updatedAt: serverTimestamp(),
+  }
+
+  await updateDoc(reqRef, updates)
+
+  await writePettyCashAuditLog(orgId, {
+    action: 'CASH_DISBURSED_BY_HQ',
+    entityType: 'REQUEST',
+    entityId: requestId,
+    actorId: orgActor?.id || 'org_finance',
+    actorName: orgActor?.name || 'HQ Finance',
+    actorRole: 'Organization',
+    siteId: currentData.siteId,
+    newState: { status: updates.status, disbursedAmount: amt, referenceId, method },
+  })
+
+  // Dispatch Notification to Supervisor and Manager
+  try {
+    await notifySupervisor({
+      orgId,
+      title: '💵 Petty Cash Funds Disbursed by HQ',
+      message: `Petty cash of ₹${amt.toLocaleString('en-IN')} for ${currentData.siteName || 'site'} has been released via ${method}${referenceId ? ` (Ref: ${referenceId})` : ''}. Please verify and confirm receipt.`,
+      type: NotificationType.PETTY_CASH_DISPATCHED,
+      requestId,
+      siteId: currentData.siteId || '',
+      siteName: currentData.siteName || '',
+      forSupervisorName: currentData.supervisorName || '',
+      forSupervisorId: currentData.supervisorId || '',
+      senderUser: orgActor,
+      senderRole: 'organisation',
+    })
+    await notifyManager({
+      orgId,
+      title: '💵 Petty Cash Funds Disbursed by HQ',
+      message: `HQ Finance released ₹${amt.toLocaleString('en-IN')} via ${method} for ${currentData.siteName || 'site'}. Awaiting supervisor receipt confirmation.`,
+      type: NotificationType.PETTY_CASH_DISPATCHED,
+      requestId,
+      siteId: currentData.siteId || '',
+      siteName: currentData.siteName || '',
+      senderUser: orgActor,
+      senderRole: 'organisation',
+    })
+  } catch (err) {
+    console.warn('Petty cash org disbursement notification notice:', err)
+  }
 }
 
 /**
@@ -950,6 +1250,66 @@ export async function approveReconciliation(orgId, reconciliationId, remarks = '
   })
 }
 
+/**
+ * Stage 7: Organization HQ Final Settlement & General Ledger Closure
+ */
+export async function settlePettyCashReconciliation(orgId, reconciliationId, settlementType = 'CARRY_FORWARD', remarks = '', orgActor) {
+  if (!orgId || !reconciliationId) throw new Error('orgId and reconciliationId are required')
+  const recRef = doc(db, 'organisation', orgId, 'pettyCashReconciliations', reconciliationId)
+
+  const recSnap = await getDoc(recRef)
+  if (!recSnap.exists()) throw new Error('Reconciliation record not found')
+  const rData = recSnap.data()
+
+  await updateDoc(recRef, {
+    status: PETTY_CASH_REQUEST_STATUS.SETTLED_AND_CLOSED,
+    settlementType,
+    settledBy: orgActor?.name || 'HQ Finance',
+    settledById: orgActor?.id || 'org_admin',
+    settlementRemarks: remarks || 'Reconciliation settled and posted to GL.',
+    settledAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  })
+
+  await writePettyCashAuditLog(orgId, {
+    action: 'RECONCILIATION_SETTLED_AND_CLOSED',
+    entityType: 'RECONCILIATION',
+    entityId: reconciliationId,
+    actorId: orgActor?.id || 'org_admin',
+    actorName: orgActor?.name || 'HQ Finance',
+    actorRole: 'Organization',
+    siteId: rData.siteId || null,
+    metadata: { settlementType, remarks },
+  })
+
+  try {
+    await notifySupervisor({
+      orgId,
+      title: '⚖️ Petty Cash Reconciliation Settled',
+      message: `Reconciliation #${reconciliationId} for ${rData.siteName || 'site'} has been formally audited, settled, and closed by HQ Finance.`,
+      type: NotificationType.PETTY_CASH_REQUEST,
+      siteId: rData.siteId || '',
+      siteName: rData.siteName || '',
+      forSupervisorName: rData.submittedByName || '',
+      forSupervisorId: rData.submittedBy || '',
+      senderUser: orgActor,
+      senderRole: 'organisation',
+    })
+    await notifyManager({
+      orgId,
+      title: '⚖️ Petty Cash Reconciliation Settled',
+      message: `HQ Finance signed off and closed reconciliation #${reconciliationId} for ${rData.siteName || 'site'}.`,
+      type: NotificationType.PETTY_CASH_REQUEST,
+      siteId: rData.siteId || '',
+      siteName: rData.siteName || '',
+      senderUser: orgActor,
+      senderRole: 'organisation',
+    })
+  } catch (err) {
+    console.warn('Petty cash reconciliation settlement notification notice:', err)
+  }
+}
+
 // ------------------------------------------------------------------------------------------------
 // 7. FLOW D: CASH RETURN WORKFLOW (SURRENDER UNSPENT PHYSICAL CASH)
 // ------------------------------------------------------------------------------------------------
@@ -1145,6 +1505,8 @@ export async function createProactiveManagerAllocation(orgId, allocationData, ma
     isSiteExpense: Boolean(allocationData.siteId),
     expenseType: allocationData.siteId ? 'site' : 'other',
     expenseCategory: 'Proactive Site Allocation',
+    amount,
+    totalAmount: amount,
     requestedAmount: amount,
     approvedAmount: amount,
     disbursedAmount: 0,
@@ -1156,8 +1518,11 @@ export async function createProactiveManagerAllocation(orgId, allocationData, ma
     remarks: allocationData.remarks || '',
     status: PETTY_CASH_REQUEST_STATUS.PENDING_ORGANIZATION_APPROVAL,
     statusDisplay: 'Pending HQ Authorization',
+    approvalStatus: 'pending_organization_approval',
     currentStep: 2,
     managerReviewedBy: managerName,
+    managerReviewerName: managerName,
+    managerName: managerName,
     managerReviewedAt: serverTimestamp(),
     managerReviewRemarks: allocationData.remarks || 'Initiated directly by Project Manager.',
     approvalHistory: [
@@ -1188,6 +1553,158 @@ export async function createProactiveManagerAllocation(orgId, allocationData, ma
     siteId: payload.siteId,
     newState: { status: payload.status, allocatedAmount: amount },
   })
+
+  // Dispatch Notification to Organization HQ
+  try {
+    await notifyOrganisation({
+      orgId,
+      title: '💵 Proactive Float Allocation Awaiting Authorization',
+      message: `${managerName} initiated proactive float allocation #${requestId} (₹${amount.toLocaleString('en-IN')}) for ${payload.siteName || 'site'}. Awaiting HQ authorization.`,
+      type: NotificationType.PETTY_CASH_REQUEST,
+      requestId,
+      siteId: payload.siteId || '',
+      siteName: payload.siteName || '',
+      senderUser: managerActor,
+      senderRole: 'manager',
+      actionRoute: '/organization/petty-cash',
+      actionData: {
+        requestId,
+        siteId: payload.siteId || '',
+        siteName: payload.siteName || '',
+        requestedAmount: amount,
+      },
+    })
+  } catch (err) {
+    console.warn('Petty cash proactive allocation notification notice:', err)
+  }
+
+  return payload
+}
+
+/**
+ * Stage 8: Imprest Float Replenishment Order
+ * Calculates the exact delta required to restore the site wallet back to its initial cap
+ */
+export async function createImprestReplenishmentRequest(orgId, siteId, customAmount = null, actor) {
+  if (!orgId || !siteId) throw new Error('orgId and siteId are required')
+
+  const accountId = `${orgId}_${siteId}`
+  const accountRef = doc(db, 'organisation', orgId, 'pettyCashAccounts', accountId)
+  const accSnap = await getDoc(accountRef)
+
+  let targetLimit = 50000
+  let currentAvailable = 0
+  let siteName = 'Site'
+  let supervisorId = ''
+  let supervisorName = 'Site Custodian'
+  let managerId = ''
+  let managerName = ''
+
+  if (accSnap.exists()) {
+    const aData = accSnap.data()
+    targetLimit = Number(aData.fundLimit) || Number(aData.totalAllocated) || 50000
+    currentAvailable = Number(aData.availableBalance) || 0
+    siteName = aData.siteName || aData.projectName || 'Site'
+    supervisorId = aData.supervisorId || aData.custodianSupervisorId || ''
+    supervisorName = aData.supervisorName || aData.custodianSupervisorName || 'Site Custodian'
+    managerId = aData.managerId || ''
+    managerName = aData.managerName || ''
+  }
+
+  const deficit = Math.max(0, targetLimit - currentAvailable)
+  const replenishAmount = customAmount !== null && Number(customAmount) > 0 ? Number(customAmount) : deficit
+
+  if (replenishAmount <= 0) {
+    throw new Error(`Site wallet is already at full float cap (Available: ₹${currentAvailable.toLocaleString('en-IN')}, Cap: ₹${targetLimit.toLocaleString('en-IN')})`)
+  }
+
+  const timestamp = Date.now()
+  const requestId = `PCR_${timestamp}_REPLENISH_${cleanId(siteId)}`
+  const actorName = actor?.name || 'Finance Lead'
+  const actorRole = actor?.role || 'Organization'
+
+  const payload = {
+    requestId,
+    orgId,
+    organizationId: orgId,
+    requestType: 'REPLENISHMENT',
+    requestSource: 'IMPREST_REPLENISHMENT',
+    isReplenishment: true,
+    supervisorId,
+    supervisorName,
+    managerId,
+    managerName,
+    siteId,
+    siteName,
+    isSiteExpense: true,
+    expenseCategory: 'Imprest Float Replenishment',
+    amount: replenishAmount,
+    totalAmount: replenishAmount,
+    requestedAmount: replenishAmount,
+    approvedAmount: replenishAmount,
+    disbursedAmount: 0,
+    allocatedAmount: replenishAmount,
+    receivedAmount: 0,
+    totalSpent: 0,
+    remainingBalance: 0,
+    reason: `Stage 8 Imprest Replenishment to restore site float cap to ₹${targetLimit.toLocaleString('en-IN')}. (Current: ₹${currentAvailable.toLocaleString('en-IN')})`,
+    remarks: `Initiated by ${actorName} (${actorRole})`,
+    status: PETTY_CASH_REQUEST_STATUS.PENDING_ORGANIZATION_APPROVAL,
+    statusDisplay: 'Pending HQ Authorization',
+    approvalStatus: 'pending_organization_approval',
+    currentStep: 2,
+    approvalHistory: [
+      {
+        step: '1. Imprest Replenishment Triggered',
+        action: `Replenishment Order Generated (₹${replenishAmount.toLocaleString('en-IN')})`,
+        actorRole,
+        actorName,
+        actorId: actor?.id || 'admin',
+        remarks: `Float restoring order up to ₹${targetLimit.toLocaleString('en-IN')}`,
+        timestamp: new Date().toISOString(),
+      },
+    ],
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  }
+
+  const reqRef = doc(db, 'organisation', orgId, 'pettyCashRequests', requestId)
+  await setDoc(reqRef, payload)
+
+  await writePettyCashAuditLog(orgId, {
+    action: 'IMPREST_REPLENISHMENT_ORDER_CREATED',
+    entityType: 'REQUEST',
+    entityId: requestId,
+    actorId: actor?.id || 'admin',
+    actorName,
+    actorRole,
+    siteId,
+    newState: { status: payload.status, replenishAmount, targetLimit, currentAvailable },
+  })
+
+  // Dispatch Notification to Organization HQ
+  try {
+    await notifyOrganisation({
+      orgId,
+      title: '🔄 Imprest Float Replenishment Order Generated',
+      message: `Imprest replenishment order #${requestId} (₹${replenishAmount.toLocaleString('en-IN')}) created for ${siteName} to restore float cap. Awaiting HQ disbursement authorization.`,
+      type: NotificationType.PETTY_CASH_REQUEST,
+      requestId,
+      siteId,
+      siteName,
+      senderUser: actor,
+      senderRole: actorRole.toLowerCase(),
+      actionRoute: '/organization/petty-cash',
+      actionData: {
+        requestId,
+        siteId,
+        siteName,
+        requestedAmount: replenishAmount,
+      },
+    })
+  } catch (err) {
+    console.warn('Petty cash replenishment notification notice:', err)
+  }
 
   return payload
 }

@@ -5,6 +5,10 @@ import {
   deleteDoc,
   serverTimestamp,
   writeBatch,
+  collection,
+  query,
+  where,
+  getDocs,
 } from 'firebase/firestore'
 import { db } from './firebase.js'
 
@@ -193,26 +197,8 @@ export async function _writeRecord(orgId, notificationPayload) {
     readAt: null,
   }
 
-  const rootRef = doc(db, 'notifications', id)
   const tenantRef = doc(db, 'organisation', orgId, 'notifications', id)
-
-  // Write in parallel with fault-tolerant error isolation (Section 6.1)
-  const results = await Promise.allSettled([
-    setDoc(tenantRef, fullPayload, { merge: true }),
-    setDoc(rootRef, fullPayload, { merge: true }),
-  ])
-
-  const tenantFailed = results[0].status === 'rejected'
-  const rootFailed = results[1].status === 'rejected'
-
-  if (tenantFailed && rootFailed) {
-    console.error('Failed to write notification to both collections:', results[0].reason, results[1].reason)
-    throw results[0].reason
-  } else if (tenantFailed) {
-    console.warn('Tenant notification write warning:', results[0].reason)
-  } else if (rootFailed) {
-    console.warn('Root notification write warning (proceeding with tenant write):', results[1].reason)
-  }
+  await setDoc(tenantRef, fullPayload, { merge: true })
 
   return id
 }
@@ -247,26 +233,16 @@ export async function saveFcmToken({ orgId, role, userName, userId, token }) {
     createdAt: serverTimestamp(),
   }
 
-  const globalRef = doc(db, 'fcmTokens', `${orgId}_${canonicalRole}_${userId}`)
   const tenantRef = doc(db, 'organisation', orgId, 'fcmTokens', `${canonicalRole}_${userId}`)
-
-  await Promise.allSettled([
-    setDoc(tenantRef, tokenDocData, { merge: true }),
-    setDoc(globalRef, tokenDocData, { merge: true }),
-  ])
+  await setDoc(tenantRef, tokenDocData, { merge: true })
 }
 
 export async function deleteFcmToken({ orgId, role, userId }) {
   if (!orgId || !userId) return
 
   const canonicalRole = normalizeCanonicalRole(role)
-  const globalRef = doc(db, 'fcmTokens', `${orgId}_${canonicalRole}_${userId}`)
   const tenantRef = doc(db, 'organisation', orgId, 'fcmTokens', `${canonicalRole}_${userId}`)
-
-  await Promise.allSettled([
-    deleteDoc(tenantRef),
-    deleteDoc(globalRef),
-  ])
+  await deleteDoc(tenantRef).catch(() => {})
 }
 
 /**
@@ -275,7 +251,7 @@ export async function deleteFcmToken({ orgId, role, userId }) {
  * --------------------------------------------------------------------------------
  */
 export async function markAsRead(orgId, notificationId) {
-  if (!notificationId) return
+  if (!notificationId || !orgId) return
 
   const updates = {
     isRead: true,
@@ -283,32 +259,95 @@ export async function markAsRead(orgId, notificationId) {
     readAt: serverTimestamp(),
   }
 
-  const ops = []
-  if (orgId) {
-    const tenantRef = doc(db, 'organisation', orgId, 'notifications', notificationId)
-    ops.push(updateDoc(tenantRef, updates).catch(() => {}))
-  }
-  const rootRef = doc(db, 'notifications', notificationId)
-  ops.push(updateDoc(rootRef, updates).catch(() => {}))
+  const notifIdStr = String(notificationId).trim()
 
-  await Promise.allSettled(ops)
+  try {
+    // 1. Direct document set with merge (ensures document is updated reliably without missing doc errors)
+    const tenantRef = doc(db, 'organisation', orgId, 'notifications', notifIdStr)
+    await setDoc(tenantRef, updates, { merge: true })
+  } catch (directErr) {
+    console.warn('Direct markAsRead warning:', directErr)
+  }
+
+  // 2. Query fallback: if notificationId was passed as an internal entity ID (e.g. ST001, PCR_...),
+  // find any matching docs by id or notificationId and mark them read as well
+  try {
+    const notifCol = collection(db, 'organisation', orgId, 'notifications')
+    const [qById, qByNotifId] = await Promise.all([
+      getDocs(query(notifCol, where('id', '==', notifIdStr))),
+      getDocs(query(notifCol, where('notificationId', '==', notifIdStr))),
+    ])
+
+    const matchedDocs = new Map()
+    qById.forEach((d) => {
+      if (d.id !== notifIdStr) matchedDocs.set(d.id, d.ref)
+    })
+    qByNotifId.forEach((d) => {
+      if (d.id !== notifIdStr) matchedDocs.set(d.id, d.ref)
+    })
+
+    if (matchedDocs.size > 0) {
+      const batch = writeBatch(db)
+      matchedDocs.forEach((ref) => {
+        batch.set(ref, updates, { merge: true })
+      })
+      await batch.commit()
+    }
+  } catch (queryErr) {
+    // Safe to ignore fallback query issues if rules or indices restrict queries
+  }
 }
 
 export async function markAllReadForRole(orgId, role, user, notifications = []) {
   if (!orgId) return
 
-  const unreadList = (notifications || []).filter((n) => !n.isRead && n.status !== 'read')
+  const canonicalRole = normalizeCanonicalRole(role)
+  const userId = user?.uid
+
+  let unreadList = (notifications || []).filter(
+    (n) => !n.isRead && String(n.status).toLowerCase() !== 'read'
+  )
+
+  // If local list is empty or unavailable, fetch all unread notifications from Firestore
+  if (unreadList.length === 0) {
+    try {
+      const notifCol = collection(db, 'organisation', orgId, 'notifications')
+      const snap = await getDocs(notifCol)
+      snap.forEach((d) => {
+        const data = d.data()
+        if (!data.isRead && String(data.status).toLowerCase() !== 'read') {
+          if (
+            matchesRole(
+              data.targetRole || data.recipientRole,
+              data.targetRoles,
+              canonicalRole,
+              userId,
+              data.recipientId
+            )
+          ) {
+            unreadList.push({ id: d.id, firestoreDocId: d.id, ...data })
+          }
+        }
+      })
+    } catch (err) {
+      console.warn('Fetch unread for markAllRead error:', err)
+    }
+  }
+
   if (unreadList.length === 0) return
 
   const batch = writeBatch(db)
+  const updates = {
+    isRead: true,
+    status: 'read',
+    readAt: serverTimestamp(),
+  }
+
   unreadList.forEach((n) => {
-    if (n.id) {
-      const tRef = doc(db, 'organisation', orgId, 'notifications', n.id)
-      batch.update(tRef, {
-        isRead: true,
-        status: 'read',
-        readAt: serverTimestamp(),
-      })
+    const docId = n.firestoreDocId || n.id || n.notificationId
+    if (docId) {
+      const tRef = doc(db, 'organisation', orgId, 'notifications', String(docId))
+      batch.set(tRef, updates, { merge: true })
     }
   })
 
@@ -316,7 +355,9 @@ export async function markAllReadForRole(orgId, role, user, notifications = []) 
     await batch.commit()
   } catch (err) {
     console.warn('Batch mark all read warning, falling back to individual updates:', err)
-    await Promise.allSettled(unreadList.map((n) => markAsRead(orgId, n.id)))
+    await Promise.allSettled(
+      unreadList.map((n) => markAsRead(orgId, n.firestoreDocId || n.id || n.notificationId))
+    )
   }
 }
 
@@ -348,7 +389,7 @@ export async function notifyManagerAndOrganisation({
   const actorId = senderUser?.uid || senderUser?.id || ''
 
   return _writeRecord(orgId, {
-    title: title || '📦 Requisition Pending Authorization',
+    title: title || '📦 Request Pending Authorization',
     message: message || `New request submitted for ${siteName || 'site'} by ${actorName}`,
     type,
     requestType: type,
@@ -481,7 +522,7 @@ export async function notifySupervisor({
   const actorId = senderUser?.uid || senderUser?.id || ''
 
   return _writeRecord(orgId, {
-    title: title || '✅ Site Requisition Update',
+    title: title || '✅ Site Request Update',
     message: message || `Update regarding your request for ${siteName || 'site'} by ${actorName}`,
     type,
     requestType: type,
@@ -654,13 +695,8 @@ export async function scheduleDailySupervisorReminder({
     lastDeliveredAt: null,
   }
 
-  const globalSchedRef = doc(db, 'scheduled_notifications', scheduleId)
   const tenantSchedRef = doc(db, 'organisation', orgId, 'scheduled_notifications', scheduleId)
-
-  await Promise.allSettled([
-    setDoc(tenantSchedRef, payload),
-    setDoc(globalSchedRef, payload),
-  ])
+  await setDoc(tenantSchedRef, payload)
 
   return scheduleId
 }

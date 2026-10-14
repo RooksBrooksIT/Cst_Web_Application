@@ -1,0 +1,1091 @@
+================================================================================
+                    eBricks WEB APPLICATION - USER GUIDE
+                  COMPREHENSIVE SYSTEM REFERENCE & MANUAL
+================================================================================
+Document Title    : eBricks / CST Construction Management Web Application User Guide
+Product Name      : eBricks (Construction Site Tracker - CST White Label)
+Platform          : Web Application (React, Vite, TailwindCSS, Cloud Firestore)
+Target Audience   : Organization Owners, Operations Managers, Project Managers, 
+                    Finance Teams, Field Supervisors, Auditors, and System Users
+Document Version  : 1.0.0 (Production Release)
+Date of Release   : October 2026
+================================================================================
+
+--------------------------------------------------------------------------------
+TABLE OF CONTENTS
+--------------------------------------------------------------------------------
+1. EXECUTIVE INTRODUCTION & SYSTEM ARCHITECTURE
+   1.1. About eBricks Platform
+   1.2. High-Level Technical Architecture
+   1.3. Multi-Tenant Organization Isolation
+   1.4. Real-Time Synchronization Engine
+
+2. USER ROLES, PERMISSIONS & ACCESS CONTROL MATRIX
+   2.1. Organization Administrator (Executive / HQ Finance)
+   2.2. Operations Manager / Project Manager (Field Lead)
+   2.3. Site Supervisor / Site Engineer (On-Site Execution)
+   2.4. Contractors & Labour Workforce (Trades & Workers)
+   2.5. Comprehensive Role & Permission Matrix
+
+3. AUTHENTICATION, SESSIONS & PASSWORD MANAGEMENT
+   3.1. Dual Login Interface (Organization vs Manager)
+   3.2. Identifier Resolution & Credential Validation
+   3.3. 3-Step Secure OTP Password Reset Workflow
+   3.4. Session Management & Auto-Refresh Mechanics
+
+4. SUBSCRIPTION TIERS, RESOURCE LIMITS & PAYU BILLING
+   4.1. Subscription Plan Comparison Matrix (5 Tiers)
+   4.2. Resource Limits & Quota Enforcement Engine
+   4.3. Drawing Upload & Replacement Governance
+   4.4. Feature Gating & Upgrade Modals
+   4.5. PayU Payment Gateway Checkout & License Activation
+
+5. ORGANIZATION PORTAL - DETAILED MODULE WALKTHROUGH
+   5.1. Organization Dashboard & Key Performance Indicators
+   5.2. Project & Site Portfolio Management
+   5.3. Financial Control Center & Granular Cost Accounting
+   5.4. Organization HQ Expenses Management
+   5.5. Multi-Tier Approvals Center (Tier 2 Authorization)
+   5.6. Petty Cash Governance Hub (Float, Imprest, Audit)
+   5.7. Supply Chain & Inventory Hub (Materials & Tools Matrix)
+   5.8. Team & Workforce Management (Managers, Supervisors, Staff)
+   5.9. Blueprints & Layout Drawings Management
+   5.10. Construction Documents Field Viewer
+   5.11. Supervisor Stage Incentive Calculation
+   5.12. Interactive Reports & Multi-Site Analytics Center
+   5.13. Subscription & Billing Management Hub
+
+6. MANAGER PORTAL - DETAILED MODULE WALKTHROUGH
+   6.1. Manager Dashboard & Operational Telemetry
+   6.2. Approvals Center (Stage 2 Review & Stage 4 Clearance)
+   6.3. Project & Site Setup (3-Step Guided Creation Wizard)
+   6.4. Sites Portfolio & Timeline Tracking
+   6.5. Project Master Configurations
+   6.6. Layout and Construction Drawings (Upload & Inspector)
+   6.7. Supervisor Configuration & Site-Supervisor Mapping
+   6.8. Manager Daily Site Entry (Morning/Evening Progress, Materials, Muster)
+   6.9. Manager Operational Expenses
+   6.10. Materials Catalog, Live Stock & Movement Tracking
+   6.11. Tools Catalog, Asset Serials & Equipment Dispatch
+   6.12. Workforce & Contractors Hub (Directory, Wages, Muster, Wage Reports)
+   6.13. Vehicle Fleet & Transportation Logistics Hub
+   6.14. Manager Petty Cash Management Hub
+   6.15. Field Incentive Calculation
+   6.16. Notifications Center & Manager Support Hub
+
+7. END-TO-END CORE WORKFLOWS (STEP-BY-STEP PROCESSES)
+   7.1. Workflow 1: New Project Inception, Setup, GPS Tagging & Staffing
+   7.2. Workflow 2: Universal 5-Stage Approval & Request Lifecycle
+   7.3. Workflow 3: Daily Field Progress, Consumption & Sundries Logging
+   7.4. Workflow 4: Petty Cash Float Allocation, Disbursal & Reconciliation
+   7.5. Workflow 5: Material Indent, Gate Pass Dispatch & Receipt Sign-Off
+   7.6. Workflow 6: Tools Checkout, Maintenance Tracking & Return Inspection
+   7.7. Workflow 7: Workforce Onboarding, Daily Muster Roll & Wage Rollup
+   7.8. Workflow 8: Blueprints Upload, Quota Validation & Pan-Zoom Inspection
+   7.9. Workflow 9: Milestone Labor Savings, Incentive Calculation & Rollup
+   7.10. Workflow 10: Multi-Site Financial Auditing & Data Export
+   7.11. Workflow 11: Plan Upgrade & PayU Payment Processing
+
+8. SYSTEM ALERTS, ERROR HANDLING & NOTIFICATIONS
+   8.1. Automated Financial Telemetry Alerts Engine
+   8.2. Overdue Milestones & Timeline Alerts
+   8.3. Global Notification Banner & Notification Drawer
+   8.4. Real-Time Error Recovery & Audit Trail Immutability
+
+9. FREQUENTLY ASKED QUESTIONS (FAQ) & BEST PRACTICES
+   9.1. General Operational FAQs
+   9.2. Financial & Petty Cash FAQs
+   9.3. Supply Chain & Asset FAQs
+   9.4. Administrator Best Practices Checklist
+
+
+================================================================================
+1. EXECUTIVE INTRODUCTION & SYSTEM ARCHITECTURE
+================================================================================
+
+1.1. About eBricks Platform
+--------------------------------------------------------------------------------
+eBricks (Construction Site Tracker - CST) is an enterprise-grade cloud construction 
+management web and mobile platform designed to bridge the operational divide 
+between Corporate Headquarters (Organization Executives) and Field Operations 
+(Project Managers, Site Supervisors, Engineers, and Contractors).
+
+eBricks delivers real-time visibility across:
+  * Multi-site budgeting, financial tracking, client cash inflow, and expenses.
+  * 5-Stage hierarchical approval workflows for expenses, indents, and milestones.
+  * Materials inventory, stock levels, and transfer movements with gate passes.
+  * Equipment, machinery, and tools tracking with serial-level asset custody.
+  * Workforce muster rolls, wage scales, contractor bills, and attendance.
+  * Architectural blueprints, MEP drawings, and CAD document distribution.
+  * Cost-saving performance incentives for site supervisors upon stage completion.
+  * Vehicle fleet management, daily trip logs, fuel consumption, and maintenance.
+
+1.2. High-Level Technical Architecture
+--------------------------------------------------------------------------------
+The eBricks web client is built on modern web standards:
+  * Frontend Framework: React 18+ with Vite tooling for lightning-fast HMR.
+  * Routing: React Router DOM with role-based Route Guards.
+  * Styling: Tailored responsive UI with TailwindCSS, Lucide iconography, and HSL 
+    palettes (#0B3470 deep navy primary brand).
+  * Backend & Database: Google Cloud Firestore with real-time websocket subscriptions.
+  * Storage: Firebase Cloud Storage for blueprints, invoices, and vouchers.
+  * Payment Engine: PayU India integration for automated subscription licensing.
+  * Security: Multi-tenant tenant scoping, JWT session encryption, and role-based guards.
+
+1.3. Multi-Tenant Organization Isolation
+--------------------------------------------------------------------------------
+eBricks strictly isolates data at the database layer. Every organization operates 
+within its own partition under the Firestore document path:
+    /organisation/{orgId}/
+
+All project collections are nested within this tenant namespace:
+  - /organisation/{orgId}/sites
+  - /organisation/{orgId}/projects
+  - /organisation/{orgId}/siteSupervisorEntries
+  - /organisation/{orgId}/siteMaterialsRequest
+  - /organisation/{orgId}/siteToolsRequest
+  - /organisation/{orgId}/siteSupervisorProjectStageSchedule
+  - /organisation/{orgId}/pettyCashAccounts
+  - /organisation/{orgId}/pettyCashRequests
+  - /organisation/{orgId}/pettyCashExpenses
+  - /organisation/{orgId}/siteDrawings
+  - /organisation/{orgId}/workers
+  - /organisation/{orgId}/workerAttendance
+  - /organisation/{orgId}/materials
+  - /organisation/{orgId}/tools
+  - /organisation/{orgId}/vehicles
+  - /organisation/{orgId}/contractors
+
+No organization can view, query, or mutate another organization's records.
+
+1.4. Real-Time Synchronization Engine
+--------------------------------------------------------------------------------
+The web application uses Firestore `onSnapshot` real-time listeners across all 
+active pages. When an on-site supervisor enters a daily expense or muster roll 
+from the mobile app:
+  1. The entry is committed to Firestore in milliseconds.
+  2. The Manager Dashboard immediately reflects the pending approval badge.
+  3. The Organization Finance Page automatically recalculates total expenditures.
+  4. The global notification banner dispatches an alert across active browser tabs.
+
+
+================================================================================
+2. USER ROLES, PERMISSIONS & ACCESS CONTROL MATRIX
+================================================================================
+
+eBricks defines four distinct operational personas across the construction lifecycle:
+
+2.1. Organization Administrator (Role: 'Organization')
+--------------------------------------------------------------------------------
+  * Persona: Company Owner, Managing Director, CFO, or Corporate Head.
+  * Responsibilities:
+    - Complete executive oversight across all company sites and projects.
+    - Tier 2 final authorization for payments, purchase orders, and milestones.
+    - Petty Cash Imprest governance, account creation, and HQ disbursals.
+    - Financial performance analysis, client payment tracking, and budget health.
+    - Corporate expenses logging and multi-site report exports.
+    - Team creation: onboarding Managers and generating Supervisor credentials.
+    - Subscription licensing, plan upgrades, and billing via PayU.
+  * Web Route: `/organization/*` (Dashboard, Finance, Approvals, Team, Inventory, Reports)
+
+2.2. Operations Manager / Project Manager (Role: 'Manager')
+--------------------------------------------------------------------------------
+  * Persona: Chief Project Manager, Construction Head, Operations Lead.
+  * Responsibilities:
+    - Command and control over assigned construction sites.
+    - Tier 1 review and verification of supervisor expense claims and indents.
+    - Project and site setup, timeline definition, and GPS geo-tagging.
+    - Architectural drawings upload, technical blueprint distributions.
+    - Supervisor onboarding, profile management, and site assignments.
+    - Manager daily site log entry (weather, progress, materials, labour muster).
+    - Supply chain supervision (reorder levels, gate passes, tools dispatch).
+    - Workforce muster roll reviews and wage scale definitions.
+    - Vehicle fleet trip log and fuel tracking.
+    - Petty cash requests verification and local float cash disbursals.
+  * Web Route: `/manager/*` (Manager Dashboard, Approvals, Project Setup, Operations)
+
+2.3. Site Supervisor / Site Engineer (Mobile & Field Access)
+--------------------------------------------------------------------------------
+  * Persona: Field Engineer, Resident Site Supervisor, Foreman.
+  * Responsibilities:
+    - Daily attendance marking (worker muster rolls).
+    - On-site expense claims submission with physical bill photo capture.
+    - Material indents and urgent tool requisitions.
+    - Stage milestone completion submissions with quality notes.
+    - Construction drawings inspection (high-resolution pan, zoom, and CAD review).
+    - Petty cash receipt submission and end-of-cycle balance reconciliations.
+  * Access: Primacy on eBricks Mobile App; records managed by Managers on Web.
+
+2.4. Contractors & Labour Workforce (Subcontractors & Daily Wagers)
+--------------------------------------------------------------------------------
+  * Persona: Subcontractors (Masons, Carpenters, Electricians, Plumbers) & Labourers.
+  * Responsibilities:
+    - Execution of specialized work orders and physical construction tasks.
+    - Daily wage muster roll recording (Full day, Half day, Overtime).
+    - Contractor bill submissions and milestone disbursements.
+  * Access: Managed centrally within the Workforce and Contractors Hub.
+
+2.5. Comprehensive Role & Permission Matrix
+--------------------------------------------------------------------------------
++------------------------------------+--------------+---------+------------+
+| Feature / Action                   | Organization | Manager | Supervisor |
++------------------------------------+--------------+---------+------------+
+| Create / Edit Sites & Projects     | YES          | YES     | View Only  |
+| Configure Dynamic Master Dictionaries| YES        | YES     | NO         |
+| Upload Layouts & Blueprints        | YES          | YES     | View Only  |
+| Delete / Replace Blueprints        | Plan-Gated   | Plan-Gated| NO       |
+| Stage 1: Submit Daily Expenses     | YES          | YES     | YES        |
+| Stage 2: Manager Verification      | Override     | YES     | NO         |
+| Stage 3: Org Tier-2 Authorization  | YES          | NO      | NO         |
+| Stage 4: Disburse Funds / Dispatch | YES          | YES     | NO         |
+| Stage 5: Confirm Receipt on Site   | View Only    | YES     | YES        |
+| Create / Edit Petty Cash Accounts  | YES          | View/Req| View Only  |
+| Disburse Petty Cash (Bank / Cash)  | YES (Bank/HQ)| YES (Cash)| NO       |
+| Material Master & Reorder Levels   | YES          | YES     | View Only  |
+| Issue Material Gate Passes         | YES          | YES     | NO         |
+| Tools Asset Serial Tracking        | YES          | YES     | NO         |
+| Onboard Managers & Supervisors     | YES          | Supv Only| NO        |
+| Calculate Supervisor Incentives    | YES          | YES     | View Only  |
+| Access Multi-Site Financial Ledgers| YES          | Assigned| NO         |
+| Export Analytical Reports (PDF/XLS)| YES          | YES     | NO         |
+| Manage Subscriptions & PayU Billing| YES          | NO      | NO         |
++------------------------------------+--------------+---------+------------+
+
+
+================================================================================
+3. AUTHENTICATION, SESSIONS & PASSWORD MANAGEMENT
+================================================================================
+
+3.1. Dual Login Interface (Organization vs Manager)
+--------------------------------------------------------------------------------
+The login portal (`/login`) features a segmented role selector:
+  1. Organization Administrator Tab:
+     - Log in using registered Organization Email or Enterprise Identifier.
+     - Directs authorized users to `/organization/dashboard`.
+  2. Operations Manager Tab:
+     - Log in using Manager Email, Unique Username, Manager ID (e.g., MGR-104), 
+       or registered Contact Number.
+     - Directs authorized users to `/manager/dashboard`.
+
+3.2. Identifier Resolution & Credential Validation
+--------------------------------------------------------------------------------
+When a user logs in, the `authService.js` engine executes an intelligent lookup:
+  - For Organization Login:
+    1. Validates email format and signs in via Firebase Authentication.
+    2. Resolves Organization document in `/organisation/{orgId}`.
+    3. Verifies subscription status (`isSubscriptionActive` and expiration date).
+    4. Initializes organization workspace session.
+  - For Manager Login:
+    1. Inspects identifier: If formatted as an email, authenticates against Firebase.
+    2. If identifier is a username or Manager ID, performs a fast lookup across 
+       `/organisation/{orgId}/manager` collections.
+    3. Resolves profile credentials, verifying account active status.
+    4. Sets up encrypted manager session in browser localStorage.
+
+3.3. 3-Step Secure OTP Password Reset Workflow
+--------------------------------------------------------------------------------
+If an Organization Admin or Manager forgets their password, they can trigger 
+the automated 3-Step Password Reset Flow (`/forgot-password`):
+
+  [Step 1: Email Identification]
+    1. User clicks "Forgot Password?" on the login page.
+    2. Enters registered account email address.
+    3. Backend verifies email existence and checks a 60-second cooldown rate limit.
+    4. Backend generates a cryptographically secure 6-digit OTP code and dispatches 
+       a branded HTML email via SMTP.
+    5. A session token is created with a 5-minute (300 seconds) expiry window.
+
+  [Step 2: 6-Digit OTP Verification]
+    1. UI displays 6 distinct OTP input blocks with auto-focus and paste support.
+    2. Active countdown timers display:
+       - OTP Expiry Timer (5:00 minutes).
+       - Resend Code Cooldown Timer (60 seconds).
+    3. User types the 6-digit code. The system verifies correctness without exposing 
+       raw backend session states.
+    4. Maximum 5 retry attempts are allowed before lockout.
+
+  [Step 3: New Password Creation]
+    1. Upon successful OTP verification, the user enters a new password.
+    2. Password must satisfy security rules: minimum 6 characters, mixed case, numbers.
+    3. Backend updates Firebase Authentication and Firestore tenant user records.
+    4. Displays success confirmation banner and redirects to login with credentials prefilled.
+
+3.4. Session Management & Auto-Refresh Mechanics
+--------------------------------------------------------------------------------
+  * Sessions are persisted in browser `localStorage` under `constructa_session`.
+  * The `AuthContext.jsx` provider listens to Firebase Auth token state transitions.
+  * Role Guards automatically intercept unauthorized route attempts:
+    - If a Manager navigates to `/organization/*`, they are redirected to `/manager/dashboard`.
+    - If an unauthenticated user enters any protected route, they are routed to `/login`.
+  * Profile Menu provides a manual "Refresh Profile" action to pull updated 
+    permissions without logging out.
+
+
+================================================================================
+4. SUBSCRIPTION TIERS, RESOURCE LIMITS & PAYU BILLING
+================================================================================
+
+4.1. Subscription Plan Comparison Matrix (5 Tiers)
+--------------------------------------------------------------------------------
+eBricks features five tiered subscription packages tailored for different organization sizes:
+
++----------------------+------------+----------+----------+--------------------+-------------+
+| Feature / Quota      | Free Trial | Silver   | Gold     | Platinum (Scale)   | Enterprise  |
++----------------------+------------+----------+----------+--------------------+-------------+
+| Active Sites         | 1          | 5        | 10       | 5 - 50+ (Custom)   | Unlimited   |
+| Max Managers         | 1          | 2        | 5        | round(N / 2)       | Unlimited   |
+| Max Supervisors      | 1          | 3        | 10       | N (Equal to sites) | Unlimited   |
+| Total Team Members   | 2          | 5        | 15       | round(N * 1.5)     | Unlimited   |
+| Active Blueprints    | 1 doc/site | 1 doc/site| 1 doc/site| 2 docs/site        | 2 docs/site |
+| Delete Blueprint?    | NO         | NO       | YES (1)  | YES (Unlimited)    | YES (Unlim) |
+| Replace Blueprint?   | NO         | NO       | YES (1)  | YES (Unlimited)    | YES (Unlim) |
+| Finance & Approvals  | Basic      | FULL     | FULL     | FULL               | FULL        |
+| Multi-Site Inventory | View Only  | FULL     | FULL     | FULL               | FULL        |
+| Validity / Duration  | 14 Days    | Mo/6Mo/Yr| Mo/6Mo/Yr| Mo/6Mo/Yr          | Custom SLA  |
+| Pricing (Monthly)    | FREE (Rs 0)| Rs 99    | Rs 199   | Rs 39.90 / site    | Contact HQ  |
+| Pricing (6 Months)   | N/A        | Rs 594   | Rs 1,194 | Rs 239.40 / site   | Contact HQ  |
+| Pricing (Yearly)     | N/A        | Rs 1,188 | Rs 2,388 | Rs 478.80 / site   | Contact HQ  |
++----------------------+------------+----------+----------+--------------------+-------------+
+
+4.2. Resource Limits & Quota Enforcement Engine
+--------------------------------------------------------------------------------
+Resource allocation is evaluated in real-time via `SubscriptionLimitService.js`:
+  1. Pre-Site Creation Guard:
+     - Evaluates `sites.length < maxProjects`.
+     - If quota is reached, creation is blocked and `SubscriptionLimitModal` opens.
+  2. Pre-Manager Onboarding Guard:
+     - Evaluates `managers.length < maxManagers`.
+     - Recommends plan upgrade if manager quota is exhausted.
+  3. Pre-Supervisor Onboarding Guard:
+     - Evaluates `supervisors.length < maxSupervisors`.
+
+4.3. Drawing Upload & Replacement Governance
+--------------------------------------------------------------------------------
+Technical drawings and blueprints consume significant cloud storage and bandwidth.
+eBricks enforces strict tier governance on layouts:
+  * Free Trial & Silver:
+    - Maximum 1 active document per site.
+    - Deletion is disabled (0 deletes allowed).
+    - Re-upload / replacement is disabled (0 re-uploads allowed).
+    - If a user attempts to delete or replace, the system displays an upgrade prompt.
+  * Gold Plan:
+    - Maximum 1 active document per site.
+    - Allows exactly 1 deletion and 1 replacement re-upload.
+  * Platinum & Enterprise:
+    - Up to 2 active documents per site concurrently.
+    - Unlimited deletions and unlimited version replacements permitted.
+
+4.4. Feature Gating & Upgrade Modals
+--------------------------------------------------------------------------------
+When an organization is on Free Trial:
+  * Modules requiring Silver+ (Finance, Approvals, Petty Cash, Inventory Hub) render 
+    a dedicated `PlanFeatureGate` interface explaining the requirement.
+  * A prominent "Upgrade to Silver" or "Upgrade to Gold" button leads directly 
+    to the subscription checkout.
+  * Real-time limit modals display current count vs maximum allowable count.
+
+4.5. PayU Payment Gateway Checkout & License Activation
+--------------------------------------------------------------------------------
+Organizations can upgrade subscriptions without waiting for manual invoices:
+  1. Organization Admin navigates to `/organization/subscription`.
+  2. Clicks "Upgrade Plan" or chooses Silver / Gold / Platinum.
+  3. Selects duration: Monthly, 6 Months (Save 20%), or Yearly (Save 33%).
+  4. For Platinum, adjusts interactive Site Slider (5 to 50+ sites) with dynamic pricing.
+  5. Clicks "Proceed to Checkout". The system displays `PayUCheckoutModal`.
+  6. Backend generates encrypted payment transaction hash and redirects to PayU gateway.
+  7. Supports Credit/Debit Cards, Net Banking, UPI (GPay, PhonePe, Paytm), and Wallets.
+  8. Upon payment confirmation, PayU redirects back with authorization token.
+  9. The system immediately executes `activateSubscription()` in Firestore:
+     - Updates `subscriptionPlan`, `maxProjects`, `maxUsers`, `subscriptionEndDate`.
+     - Emits digital invoice and displays `TransactionCompletedScreen`.
+     - Instantly unlocks all features without requiring re-login.
+
+
+================================================================================
+5. ORGANIZATION PORTAL - DETAILED MODULE WALKTHROUGH
+================================================================================
+
+5.1. Organization Dashboard & Key Performance Indicators (`/organization/dashboard`)
+--------------------------------------------------------------------------------
+The Organization Dashboard is the central command center for executive leadership.
+  * Top Navigation Bar:
+    - eBricks brand identity and high-res logo.
+    - Global Universal Search: Searches across sites, managers, vendors, and status.
+    - Project Scope Filter: Dropdown to toggle view between "All Sites" or a specific site.
+    - Real-Time Notification Bell: Displays unread count with an interactive drawer.
+    - Profile Menu: Shows Admin Name, Email, Role, Refresh Profile, and Logout.
+  * Hero Telemetry KPI Cards:
+    1. Active Projects: Total number of non-archived construction sites.
+    2. Planned Total Budget: Cumulative contract value across selected sites.
+    3. Total Spent / Expenditure: Cumulative real expenditure (all verified expenses).
+    4. Client Payments Received: Total cash inflow received from clients.
+    5. Pending Approvals: Live count with pulsing red badge of requisitions awaiting review.
+    6. Active Workforce: Total active managers, supervisors, and labourers on site.
+  * Quick Launch Module Grid:
+    - Direct access icons to Sites, Finance, Approvals, Petty Cash, Inventory, 
+      Drawings, Team, Reports, Incentives, and Subscriptions.
+  * Active Sites Portfolio:
+    - Rich site cards with Project Name, Code, Client Name, and Manager assigned.
+    - Progress Bar showing completion percentage.
+    - Financial snapshot (Planned Budget vs Spent vs Inflow).
+    - Status badges (Planning, In Progress, On Hold, Completed).
+    - Smart Alert Badges (Overdue, Overbudget, Critical Expense deficit).
+
+5.2. Project & Site Portfolio Management (`/organization/sites`)
+--------------------------------------------------------------------------------
+  * Full listing of all company projects in responsive data table and grid formats.
+  * Search by project name, site code, client name, or location.
+  * Filter by Status: All, Live / In Progress, Planning, On Hold, Completed.
+  * Create New Site Action:
+    - Checks subscription plan quota before opening creation form.
+    - Form Fields: Project Name, Site Code (auto-generated PRJ-YYYY-XXXX), Client Name, 
+      Client Phone, Client Email, Site Location Address, Total Budget, Start Date, 
+      Estimated End Date, and Assigned Project Manager.
+  * Edit Site Attributes: Update budget, revise completion dates, or reassign managers.
+
+5.3. Financial Control Center & Granular Cost Accounting (`/organization/finance`)
+--------------------------------------------------------------------------------
+The Finance Center provides multi-site financial aggregation and drilldown:
+  * Executive Financial Summary:
+    - Total Portfolio Budget vs Actual Spend vs Inflow Income vs Net Cash Margin.
+  * Multi-Site Financial Table:
+    - Project Code, Project Name, Category, Client Info, Planned Budget, Total Spend, 
+      Inflow Received, Budget Health %, and Payment Deficit.
+  * Granular Site Financial Details Drilldown (`SiteFinancialDetailsPage.jsx`):
+    - Clicking any site opens a comprehensive financial audit page.
+    - Cost Category Breakdown:
+      1. Supervisor Site Expenses (daily materials, labour, fuel, food from site logs).
+      2. Manager Operational Expenses (field supervision, travel, meetings).
+      3. Organization HQ Expenses (direct vendor procurement, corporate overheads).
+      4. Contractor Work Bills (contractor payments and trade work orders).
+      5. Supervisor Incentive Bonuses (milestone savings rewards).
+    - Client Payment Inflow Ledger: Milestone schedule, invoice number, amount received, 
+      payment mode, date, and receipt voucher.
+    - Export Options: Dedicated Export Button for Excel (.xlsx) and CSV reports.
+
+5.4. Organization HQ Expenses Management (`/organization/expenses`)
+--------------------------------------------------------------------------------
+  * Records corporate-level expenses and direct vendor procurement:
+    - Fields: Expense Title, Category (Procurement, Equipment, Legal, HQ Admin, Safety), 
+      Vendor Name, Bill/Invoice Number, Amount, Tax/GST, Payment Method, Associated Site, 
+      and Voucher Attachment Upload.
+    - Live ledger table with date-range filtering and search.
+    - Automatically rolls into overall site financial expenditures.
+
+5.5. Multi-Tier Approvals Center - Tier 2 Authorization (`/organization/approvals`)
+--------------------------------------------------------------------------------
+The Organization Approvals Center acts as the executive authorization clearinghouse:
+  * 4 Specialized Approval Streams:
+    1. Site Expense Requisitions: Supervisor expense claims verified by Managers.
+    2. Material Indents: High-value material purchases and vendor orders.
+    3. Tool & Machinery Requisitions: Capital equipment allocations to sites.
+    4. Project Stage Milestones: Stage completion sign-offs for incentive release.
+  * Action Capabilities:
+    - Tier 2 Approve: Organization Admin inputs authorization remarks and signs off.
+    - Tier 2 Reject: Requires mandatory rejection rationale returned to the field.
+    - Batch Approval: Multi-select checkboxes to authorize multiple claims at once.
+    - Stepper Visualizer: Interactive 5-step stepper showing current progress.
+    - Audit Trail: View timestamped history of who submitted, verified, and approved.
+    - Bill Attachment Preview: High-resolution zoom modal for physical receipts.
+
+5.6. Petty Cash Governance Hub (`/organization/petty-cash`)
+--------------------------------------------------------------------------------
+Provides complete governance over decentralized site petty cash floats:
+  * 6 Specialized Governance Tabs:
+    1. Accounts Tab:
+       - Displays site petty cash float accounts, assigned supervisors, Imprest float 
+         limits, current available cash balances, and replenishment thresholds.
+       - Create or edit site petty cash accounts and set float limits (e.g., Rs 25,000).
+    2. Authorization Queue Tab:
+       - Sub-tab 'Clearance': Review float replenishment requests verified by Managers.
+       - Sub-tab 'Disbursal': Direct HQ disbursal via Bank Transfer, Cash, or UPI 
+         with UTR transaction reference capture.
+    3. Expenses Audit Tab:
+       - Full ledger of daily minor expenses spent from site cash floats.
+       - View bill photos, vendor names, expense categories, and manager sign-offs.
+    4. Cash Movement Ledger Tab:
+       - Complete debit/credit statement of all float top-ups, spends, and balances.
+    5. Reconciliations & Settlement Tab:
+       - Review end-of-period supervisor reconciliation statements.
+       - Settle balances via Carry Forward (roll to next month) or Cash Refund.
+    6. Audit Logs Tab:
+       - Immutable timestamped log of every petty cash mutation.
+
+5.7. Supply Chain & Inventory Hub (`/organization/inventory`)
+--------------------------------------------------------------------------------
+Cross-site supply chain governance across 4 tabs:
+  * Tab 1: Site Inventory Matrix:
+    - Cross-site material distribution table showing on-hand quantities across all sites.
+  * Tab 2: Materials Master & Availability:
+    - Master catalog (Cement, TMT Steel, Sand, Bricks, Aggregates, Tiles, Paint).
+    - Measurement units, standard unit rates, and total multi-site inventory valuation.
+  * Tab 3: Tools & Machinery Distribution:
+    - Heavy machinery and power tools registry.
+    - Tracks asset location (Company HQ Warehouse vs Site A vs Site B).
+  * Tab 4: Movement & Audit Trail:
+    - Complete inward delivery and site-to-site transfer log with Gate Pass numbers.
+
+5.8. Team & Workforce Management (`/organization/team`)
+--------------------------------------------------------------------------------
+  * Manager Onboarding:
+    - Create new Project Managers with Full Name, Email, Unique Username, Phone, 
+      Designation, Department, and Site Assignment.
+    - Real-time global username uniqueness validation prevents duplicate usernames.
+    - Validates against subscription manager quota.
+  * Supervisor Onboarding:
+    - Create Supervisor accounts or generate unique Invitation Registration Codes.
+    - Assign supervisor to primary and secondary construction sites.
+  * Workforce Directory:
+    - View unified table of all managers, supervisors, and mapped site workers.
+    - Filter by role, site, or search by name.
+
+5.9. Blueprints & Layout Drawings (`/organization/drawings`)
+--------------------------------------------------------------------------------
+  * Master repository for architectural layouts, structural designs, and MEP drawings.
+  * Select site and upload CAD (DWG/DXF), PDF, or high-resolution PNG/JPG drawings.
+  * Plan quota enforcement prevents unauthorized document additions.
+  * Built-in Interactive Blueprint Viewer: Pan, Zoom, Rotate, and Full-screen.
+
+5.10. Construction Documents Field Viewer (`/organization/construction-documents`)
+--------------------------------------------------------------------------------
+  * Read-only mirror of the mobile field document inspector.
+  * Allows HQ executives to inspect exactly what site engineers are viewing on site.
+  * Document search and one-click file downloads.
+
+5.11. Supervisor Stage Incentive Calculation (`/organization/incentives`)
+--------------------------------------------------------------------------------
+  * Reward site supervisors for completing stages under approved labor budgets.
+  * Select Site ID -> System auto-resolves assigned Supervisor -> Selects Stage.
+  * Launches `IncentiveCalculationSheet`:
+    - Compares Approved Labor Cost vs Actual Incurred Labor Cost.
+    - Calculates Cost Savings = Approved - Actual.
+    - Interactive Percentage Slider (0% - 100%) calculates Incentive Bonus.
+    - One-click Authorize & Save commits incentive expense directly to project ledgers.
+
+5.12. Interactive Reports & Multi-Site Analytics Center (`/organization/reports`)
+--------------------------------------------------------------------------------
+Comprehensive multi-site reporting hub across 5 major categories:
+  1. Site Expenses Reports:
+     - Daily Expense Report (materials, labor, transport, food, fuel breakdown).
+     - Date Range Report (custom start and end date filtering).
+     - Cumulative Expense Summary (overall project cost rollup).
+  2. Workforce & Attendance Reports:
+     - Muster Roll Attendance (worker-wise presence, overtime, and daily wages).
+     - Supervisor & Manager Incentives Report (performance payouts ledger).
+  3. Project Progress Reports:
+     - Milestone Progress Report (stage schedule execution and completion %).
+     - Site Status & Timeline Report (planned vs actual completion dates).
+  4. Financial Statements & Cash Flow:
+     - Financial Statement Report (comprehensive balance and expenditure sheet).
+     - Cash Flow Report (inflows vs outflows audit).
+     - Petty Cash Report (float utilizations, balances, and reimbursements).
+  5. Inventory Reports:
+     - Material Stock Ledger (inward receipts, daily consumption, closing balances).
+     - Tools & Machinery Utilization Report (asset status and custody logs).
+  * Multi-format export: One-click export to CSV, Excel, and Print-ready formats.
+
+5.13. Subscription & Billing Management Hub (`/organization/subscription`)
+--------------------------------------------------------------------------------
+  * Telemetry card displaying Current Active Plan, Expiry Date, and Days Remaining.
+  * Quota gauges: Active Sites Used / Allowed, Team Members Used / Allowed.
+  * Upgrade Matrix: Comparison of Silver, Gold, Platinum, and Enterprise plans.
+  * Duration Selector: Monthly, 6 Months, or Annual billing cycles.
+  * PayU Integration: Secure checkout modal, instant transaction receipt, invoice download.
+
+
+================================================================================
+6. MANAGER PORTAL - DETAILED MODULE WALKTHROUGH
+================================================================================
+
+6.1. Manager Dashboard & Operational Telemetry (`/manager/dashboard`)
+--------------------------------------------------------------------------------
+The Manager Dashboard provides operations managers with real-time field telemetry:
+  * Header & Navigation:
+    - Search Bar: Universal search across sites, supervisors, materials, tools, 
+      contractors, and vehicles.
+    - Manager Profile Menu: Name, Manager ID, Designation, Department, Logout.
+    - Notification Bell: Immediate alerts on supervisor submissions.
+  * Top Metric Action Cards:
+    1. Assigned Sites: Total projects under manager's direct operational supervision.
+    2. Pending Approvals: Total supervisor claims awaiting verification.
+    3. Low Stock Alerts: Count of catalog materials at or below minimum reorder level.
+    4. Pending Petty Cash: Unreviewed supervisor cash requests and expense receipts.
+    5. Active Vehicle Fleet: Vehicles currently operating on site trips.
+  * Categorized 8-Group Navigation Sidebar:
+    1. Command & Control (Dashboard, Approvals Center).
+    2. Project & Site Management (Setup Wizard, Sites Directory, Configs, Drawings).
+    3. Supervisor & Field Operations (Supervisors, Site Map, Daily Logs, Expenses).
+    4. Materials & Supply Chain (Catalog, Stock, Movements, Tools Master, Tools Movements).
+    5. Workforce & Contractors (Contractors, Labour Scales, Workers, Mapping, Muster, Reports).
+    6. Fleet & Logistics (Vehicle Fleet).
+    7. Finance & Support (Petty Cash, Incentives, Notifications, Support).
+
+6.2. Approvals Center - Stage 2 Review & Stage 4 Clearance (`/manager/approvals`)
+--------------------------------------------------------------------------------
+Managers act as the primary operational checkpoint before executive sign-off:
+  * 4 Operational Streams:
+    1. Payments Stream:
+       - Sub-tab 'Review' (Stage 1): Verify daily supervisor expense claims against 
+         physical site progress. Click 'Verify' to forward to Organization HQ or 
+         'Reject' with comments.
+       - Sub-tab 'Pending Org' (Stage 2): Track claims awaiting executive sign-off.
+       - Sub-tab 'Clearance' (Stage 4): Enter UTR payment reference upon bank transfer 
+         or link payment directly to site petty cash float.
+    2. Materials Stream:
+       - Review supervisor indents, adjust approved quantities, specify preferred vendors.
+       - Issue Dispatch Gate Pass with Gate Pass Number and vehicle details.
+       - Track supervisor receipt confirmation.
+    3. Tools Stream:
+       - Approve tool requests, assign unique Asset Serial Number from warehouse.
+       - Dispatch equipment and record return condition upon check-in.
+    4. Milestones Stream:
+       - Verify stage completion quality notes and forward for incentive release.
+  * Emergency Requisition Modal: Managers can directly submit emergency requisitions 
+    on behalf of sites when supervisors lack mobile network connectivity.
+
+6.3. Project & Site Setup - 3-Step Guided Wizard (`/manager/project-site-setup`)
+--------------------------------------------------------------------------------
+Managers can create new sites or update existing project attributes:
+  * Step 1: Project Identity & Master Attributes:
+    - Select Project Category (House, Villa, Commercial, Apartment).
+    - Select Sub-Category (1BHK, 2BHK, 3BHK, Duplex, Warehouse).
+    - Select Current Stage (Foundation, Plinth, Slab, Brickwork, Plastering, Finishing).
+    - Select Contract Type (Turnkey, Item Rate, Labour Only, Cost Plus).
+    - Select Project Status (Live, Planning, On Hold, Completed).
+  * Step 2: Client Info & GPS Geo-Tagging:
+    - Client Full Name, Contact Number, Email Address.
+    - Site Physical Address.
+    - One-Click GPS Auto-Detection: Browser retrieves precise Latitude and Longitude 
+      coordinates for field geofencing and navigation.
+  * Step 3: Budget & Timeline:
+    - Total Contract Budget (INR).
+    - Advance Amount Received from Client.
+    - Project Start Date and Estimated Completion Date.
+    - Assign Primary Site Supervisor.
+  * Update Mode: Select existing site to update milestones, client details, or record 
+    client payment installments.
+
+6.4. Sites Portfolio & Timeline Tracking (`/manager/sites`)
+--------------------------------------------------------------------------------
+  * Grid of assigned project sites with real-time visual progress bars.
+  * Key site telemetry: Assigned supervisor, contract budget, amount spent, client 
+    advance, and timeline milestones.
+  * Project alert tags (Expenses exceed received, budget overrun, overdue milestones).
+
+6.5. Project Master Configurations (`/manager/project-configs`)
+--------------------------------------------------------------------------------
+Managers can dynamically customize master dictionaries used across all forms:
+  * Categories: Add or edit project categories (e.g., Industrial Shed, Villa).
+  * Sub-Categories: Define custom structural configurations.
+  * Project Stages: Define sequence of construction stages.
+  * Contract Types: Add specialized billing agreements.
+  * Project Statuses: Manage workflow lifecycle states.
+
+6.6. Layout and Construction Drawings (`/manager/drawings`)
+--------------------------------------------------------------------------------
+  * Technical drawing upload and versioning hub.
+  * Select site, choose document type (Architectural, Structural, MEP, Blueprint), 
+    attach PDF or image, enter description, and submit.
+  * Pre-upload checks ensure site drawing quota is not exceeded.
+  * Built-in interactive document viewer with zoom and pan controls.
+
+6.7. Supervisor Configuration & Site-Supervisor Mapping
+--------------------------------------------------------------------------------
+  * Supervisor Configuration (`/manager/supervisors`):
+    - Manage field supervisor profiles (Name, Phone, Email, Username, Experience).
+    - Issue credentials or reset access pins.
+  * Site-Supervisor Mapping (`/manager/supervisor-map`):
+    - Dynamically assign or transfer supervisors across active sites.
+    - Define primary and secondary supervisors per site.
+
+6.8. Manager Daily Site Entry (`/manager/daily-logs`)
+--------------------------------------------------------------------------------
+When managers conduct field inspections, they log comprehensive daily site entries:
+  * Inspection Attributes: Select Site, Date, Current Stage, and Weather Conditions 
+    (Sunny/Clear, Rainy, Overcast, Windy, Stormy).
+  * Shift Status: Morning shift work summary and Afternoon shift progress notes.
+  * Multi-Item Material Consumption Table:
+    - Add materials consumed on site (Cement, Sand, Steel, Bricks).
+    - Enter quantity, measurement unit, unit rate, and total amount.
+  * Multi-Trade Labour Muster Roll Table:
+    - Add trade trades (Masons, Carpenters, Helpers, Electricians).
+    - Enter headcount, daily wage scale, and total trade cost.
+  * Sundries / Other Expenses:
+    - Food / Messing Cost (INR).
+    - Transportation / Cartage Cost (INR).
+    - Fuel / Diesel Cost (INR).
+  * Automatic Total Computation: Live sum of materials + labour + sundries.
+  * Commit to Ledger: Creates verified daily log and updates site spent balances.
+
+6.9. Manager Operational Expenses (`/manager/manager-expenses`)
+--------------------------------------------------------------------------------
+  * Records direct expenses incurred by project managers during field supervision:
+    - Categories: Site Travel & Fuel, Client Entertainment, Emergency Site Hardware, 
+      Safety Gear, Courier & Postage.
+    - Enter amount, description, attach receipt image, and associate with site.
+
+6.10. Materials Catalog, Live Stock & Movement Tracking
+--------------------------------------------------------------------------------
+  * Material Master Catalog (`/manager/materials-catalog`):
+    - Standard materials registry with categories (Cement, Steel, Masonry, Plumbing).
+    - Measurement units (Bags, Metric Tons, CFT, Sq.ft, Litres, Nos).
+    - Minimum reorder threshold levels and vendor directory.
+  * Material Availability & Live Stock (`/manager/materials-stock`):
+    - Real-time stock on hand per site. Highlights items below reorder levels in red.
+  * Material Information & Movements (`/manager/materials-movements`):
+    - Inwards goods received notes (GRN), inter-site transfer logs, and gate pass history.
+
+6.11. Tools Catalog, Asset Serials & Equipment Dispatch
+--------------------------------------------------------------------------------
+  * Tools Master Catalog (`/manager/tools-catalog`):
+    - Power tools, scaffolding, and heavy machinery directory.
+    - Category (Earthmoving, Concrete Equipment, Cutting, Scaffolding, Measurement).
+    - Asset condition status: Working, Under Maintenance, Decommissioned.
+  * Tools Inventory Details & Movements (`/manager/tools-movements`):
+    - Equipment dispatch to site, custody handoff to supervisors, return check-in 
+      audits, and damage condition logs.
+
+6.12. Workforce & Contractors Hub
+--------------------------------------------------------------------------------
+  * Contractors Directory (`/manager/contractors`):
+    - Trade subcontractors (Civil, Electrical, Plumbing, Fabrication, Painting).
+    - Work orders, contract agreements, bill submissions, and payment status.
+  * Labour Category Wage Scales (`/manager/labour-scales`):
+    - Base wage configuration per trade (Mason: Rs 900/day, Helper: Rs 550/day).
+    - Overtime hourly multipliers and standard shift hours (8 hours).
+  * Workers Directory (`/manager/workers`):
+    - Worker database: Full name, skill trade, daily wage rate, contact number, KYC.
+  * Worker Site Mapping (`/manager/worker-mapping`):
+    - Allocate gangs or individual workers to specific project sites.
+  * Daily Worker Attendance Muster (`/manager/attendance`):
+    - Daily muster roll grid: Mark Present (P), Half Day (HD), Overtime (OT), Absent (A).
+    - One-click bulk attendance marking and wage summary generation.
+  * Worker Attendance Report (`/manager/attendance-report`):
+    - Site-wise and worker-wise monthly attendance statement and total wages payable.
+
+6.13. Vehicle Fleet & Transportation Logistics Hub (`/manager/fleet`)
+--------------------------------------------------------------------------------
+  * Fleet Registry: Trucks, Pickups, Tippers, Tractors, and Site Vans.
+  * Vehicle Details: Registration number plate, vehicle model, capacity, insurance expiry.
+  * Driver Assignment: Assigned driver name, contact phone, and license details.
+  * Daily Fleet Logs: Trip source/destination, cargo carried, starting/ending odometer KM.
+  * Fuel Consumption: Fuel filled (litres), total fuel cost, and mileage tracking.
+
+6.14. Manager Petty Cash Management Hub (`/manager/petty-cash`)
+--------------------------------------------------------------------------------
+  * Stage 2 review of supervisor float replenishment requests.
+  * Direct field cash disbursals from manager petty cash reserves.
+  * Daily review and approval of supervisor petty cash vouchers.
+  * Proactive float allocations and end-of-month cash reconciliation reviews.
+
+6.15. Field Incentive Calculation (`/manager/incentive-calculation`)
+--------------------------------------------------------------------------------
+  * Mirror of the stage incentive calculation sheet for operational validation.
+  * Verifies that completed stage quality meets engineering standards before 
+    incentive bonuses are submitted to Organization HQ.
+
+6.16. Notifications Center & Manager Support Hub
+--------------------------------------------------------------------------------
+  * Notifications Hub (`/manager/notifications`):
+    - Comprehensive list of real-time alerts: pending approvals, low stock, muster 
+      submissions, and stage completions.
+    - Deep links directly to the relevant approval or module tab.
+  * Manager Support Hub (`/manager/support`):
+    - Frequently Asked Questions (FAQ) repository.
+    - Submit operational support tickets or contact eBricks technical assistance.
+
+
+================================================================================
+7. END-TO-END CORE WORKFLOWS (STEP-BY-STEP PROCESSES)
+================================================================================
+
+7.1. Workflow 1: New Project Inception, Setup, GPS Tagging & Staffing
+--------------------------------------------------------------------------------
+  1. Organization Admin or Manager opens `/manager/project-site-setup`.
+  2. System automatically queries `SubscriptionLimitService` to verify site quota.
+  3. [Step 1] User selects Project Category, Sub-Category, Stage, Contract Type, 
+     and Project Status.
+  4. [Step 2] User enters Client Full Name, Phone, Email, and Site Physical Address.
+  5. User clicks "Auto-Detect GPS" -> Browser retrieves Latitude and Longitude.
+  6. [Step 3] User enters Total Contract Budget, Client Advance Received, Start Date, 
+     and Estimated End Date.
+  7. User assigns primary Project Manager and Site Supervisor.
+  8. Clicks "Create Project & Site". System executes atomic multi-document write:
+     - Writes `/organisation/{orgId}/sites/{siteId}`.
+     - Writes `/organisation/{orgId}/projects/{projectId}`.
+     - Initializes initial financial balance ledger (`totalSiteExpensesPerDay`).
+     - Initializes empty drawing usage quota document (`siteDrawingsUsage`).
+  9. Project immediately appears across Organization and Manager dashboards.
+
+7.2. Workflow 2: Universal 5-Stage Approval & Request Lifecycle
+--------------------------------------------------------------------------------
+Every expenditure, material purchase, and milestone passes through a 5-stage lifecycle:
+
+  [Stage 1: Supervisor Submission]
+    - Field Supervisor submits daily expense claim or material indent via mobile app.
+    - Uploads physical bill photo and enters amount, category, and remarks.
+    - Status set to: `pending_manager_review` (Step 1 of 5).
+    - Notification dispatched to Operations Manager.
+
+  [Stage 2: Manager Verification]
+    - Manager opens `/manager/approvals`.
+    - Inspects claim details and zooms in on bill photo attachment.
+    - Manager clicks 'Verify': Sets status to `pending_org_approval` (Step 2 of 5).
+    - (Or clicks 'Reject': Sets status to `rejected_by_manager` with mandatory reason).
+    - Notification dispatched to Organization Admin.
+
+  [Stage 3: Organization Tier-2 Authorization]
+    - Organization Admin opens `/organization/approvals`.
+    - Reviews verified claim and executive financial context.
+    - Admin clicks 'Authorize': Sets status to `pending_manager_clearance` (Step 3 of 5).
+    - (Or clicks 'Decline': Sets status to `rejected_by_org` with rejection notes).
+
+  [Stage 4: Manager Clearance & Disbursal / Gate Pass]
+    - For Payments: Manager/Finance transfers funds, inputs Bank UTR Reference Number, 
+      and marks as 'Payment Disbursed' -> Status becomes `approved` (Step 4 of 5).
+    - For Materials: Manager issues Dispatch Gate Pass with transporter details.
+
+  [Stage 5: Site Receipt Confirmation]
+    - Field Supervisor confirms physical arrival of cash or materials on site.
+    - Clicks 'Confirm Receipt' -> Status transitions to `received` / `completed` (Step 5 of 5).
+    - Immutable audit trail records timestamp, actor ID, and action at each step.
+
+7.3. Workflow 3: Daily Field Progress, Consumption & Sundries Logging
+--------------------------------------------------------------------------------
+  1. Manager visits site and opens `/manager/daily-logs`.
+  2. Selects Site ID and inspection date.
+  3. Records weather condition and writes morning and afternoon progress summaries.
+  4. In Materials Table: Clicks "Add Material", selects Cement (50 Bags @ Rs 380 = Rs 19,000).
+  5. In Labour Table: Clicks "Add Trade", selects Masons (4 @ Rs 900 = Rs 3,600) and 
+     Helpers (6 @ Rs 550 = Rs 3,300).
+  6. Enters Sundries: Food (Rs 450), Transport (Rs 600), Fuel (Rs 1,200).
+  7. System computes Total Daily Incurred Expense = Rs 28,150.
+  8. Manager clicks "Save Daily Site Entry".
+  9. Entry is stored under `/organisation/{orgId}/dailySiteLogs` and rolled into 
+     site financial spent totals.
+
+7.4. Workflow 4: Petty Cash Float Allocation, Disbursal & Reconciliation
+--------------------------------------------------------------------------------
+  1. Organization Admin sets up Site Imprest Float Account in `/organization/petty-cash` 
+     (e.g., Float Limit: Rs 30,000, Low Balance Threshold: Rs 5,000).
+  2. Supervisor submits Float Replenishment Request via mobile app.
+  3. Manager verifies request in `/manager/petty-cash`.
+  4. Organization Admin authorizes request and disburses Rs 25,000 via Net Banking 
+     (enters UTR Reference: UTR98421045).
+  5. Supervisor confirms receipt of cash on site. Available balance becomes Rs 25,000.
+  6. Throughout the week, supervisor logs minor expenses (tea, nails, emergency courier) 
+     with bill photos.
+  7. Manager approves vouchers. Float balance automatically decrements.
+  8. At month-end, supervisor submits End-of-Period Reconciliation Statement.
+  9. Organization Admin reviews closing balance and settles via Carry Forward to 
+     next cycle.
+
+7.5. Workflow 5: Material Indent, Gate Pass Dispatch & Receipt Sign-Off
+--------------------------------------------------------------------------------
+  1. Supervisor identifies steel shortage on site and creates Material Requisition 
+     (TMT 12mm Steel - 2 Metric Tons).
+  2. Manager reviews indent in `/manager/approvals`, verifies against project stage, 
+     and approves quantity.
+  3. Organization Admin authorizes purchase order.
+  4. Manager coordinates delivery from vendor, issues Dispatch Gate Pass 
+     (GP-2026-0842), and assigns delivery truck.
+  5. Delivery truck arrives at site. Supervisor inspects physical weight and tags.
+  6. Supervisor clicks "Confirm Receipt" on mobile app.
+  7. Site stock availability automatically increments by 2 Metric Tons in 
+     `/manager/materials-stock`.
+
+7.6. Workflow 6: Tools Checkout, Maintenance Tracking & Return Inspection
+--------------------------------------------------------------------------------
+  1. Supervisor submits Tool Requisition for a Concrete Vibrator Needle.
+  2. Manager opens `/manager/approvals` -> Tools Stream.
+  3. Manager selects available unit from warehouse: Asset ID `VIB-014` (Condition: Working).
+  4. Manager dispatches tool with delivery notes.
+  5. Supervisor confirms custody receipt on site. Asset location updates from 
+     'HQ Warehouse' to 'Site Alpha'.
+  6. When concreting finishes, supervisor initiates tool return.
+  7. Manager inspects equipment at warehouse, confirms return, logs condition as 
+     'Working', and updates asset status back to 'Available at HQ'.
+
+7.7. Workflow 7: Workforce Onboarding, Daily Muster Roll & Wage Rollup
+--------------------------------------------------------------------------------
+  1. Manager configures trade wage scales in `/manager/labour-scales` (e.g., Barbender: 
+     Rs 850/day, Overtime: Rs 150/hour).
+  2. Manager registers workers in `/manager/workers` (Aadhaar, Phone, Skill, Daily Rate).
+  3. Maps worker gang to construction site in `/manager/worker-mapping`.
+  4. Each morning, supervisor/manager opens `/manager/attendance`.
+  5. System loads mapped workers for the selected site and date.
+  6. Marks attendance: Ramesh (Present), Suresh (Present + 2 hrs OT), Ganesh (Half Day).
+  7. System computes daily wage obligation:
+     - Full day = Base Rate.
+     - Half day = Base Rate / 2.
+     - Overtime = Base Rate + (OT Hours * OT Hourly Rate).
+  8. Clicks "Save Muster Roll". Data rolls into monthly worker wage reports.
+
+7.8. Workflow 8: Blueprints Upload, Quota Validation & Pan-Zoom Inspection
+--------------------------------------------------------------------------------
+  1. Project Manager opens `/manager/drawings`.
+  2. Selects target site. System inspects subscription tier:
+     - If Free Trial or Silver: Max 1 doc allowed. If 1 doc already exists, deletion 
+       and re-upload buttons are locked with upgrade badges.
+     - If Gold: 1 doc allowed; 1 deletion and 1 replacement allowed.
+     - If Platinum: Up to 2 active docs allowed with unlimited replacements.
+  3. Manager selects file (PDF or high-res blueprint image), inputs document title 
+     (e.g., "Ground Floor Structural Layout Rev-2"), and clicks "Upload Blueprint".
+  4. Document uploads securely to Firebase Cloud Storage. Metadata saved to Firestore.
+  5. Field engineers open `/manager/construction-documents` or mobile app.
+  6. Clicks "Inspect Blueprint" -> Opens `BlueprintViewerModal`.
+  7. Field engineer can pinch, zoom in up to 500%, pan across structural grid lines, 
+     rotate 90 degrees, or download offline.
+
+7.9. Workflow 9: Milestone Labor Savings, Incentive Calculation & Rollup
+--------------------------------------------------------------------------------
+  1. A project stage (e.g., 'Foundation Stage') is completed on site.
+  2. Organization Admin or Manager opens `/organization/incentives`.
+  3. Selects Site ID -> System resolves assigned Supervisor -> Selects Stage.
+  4. System queries:
+     - Approved Planned Labor Budget for Foundation Stage: Rs 2,50,000.
+     - Actual Labor Muster Cost Incurred during Foundation Stage: Rs 1,95,000.
+  5. System calculates Cost Savings: Rs 2,50,000 - Rs 1,95,000 = Rs 55,000 saved.
+  6. Because savings > 0, the interactive Incentive Percentage Slider unlocks.
+  7. Management sets incentive slider to 20%.
+  8. System calculates Supervisor Incentive Bonus: Rs 55,000 * 20% = Rs 11,000.
+  9. Management clicks "Authorize & Save Incentive".
+  10. System commits incentive expense document under `siteSupervisorIncentives`.
+  11. The Rs 11,000 is automatically rolled into `totalSiteExpensesPerDay` and 
+      reflected in site financial reports.
+
+7.10. Workflow 10: Multi-Site Financial Auditing & Data Export
+--------------------------------------------------------------------------------
+  1. CFO or Auditor opens `/organization/reports`.
+  2. Selects 'Financial Reports' -> 'Financial Statement'.
+  3. Selects Date Range (e.g., Current Financial Quarter) and site scope.
+  4. System aggregates:
+     - Initial contract budgets.
+     - Inflow payments received from clients.
+     - Outflows: Material procurement, daily supervisor claims, contractor payouts, 
+       manager expenses, petty cash spends, and incentives.
+     - Net Operating Margin.
+  5. Auditor clicks `ExportButton` -> System generates formatted Excel (.xlsx) and 
+     CSV spreadsheets with customized headers and currency formatting.
+
+7.11. Workflow 11: Plan Upgrade & PayU Payment Processing
+--------------------------------------------------------------------------------
+  1. Organization Admin hits site quota (e.g., 5 of 5 sites used on Silver plan).
+  2. System displays `SubscriptionLimitModal` with "Upgrade to Gold" button.
+  3. Admin navigates to `/organization/subscription`.
+  4. Selects 'Gold Plan' (10 Sites, 5 Managers, 10 Supervisors) and 'Annual Billing' 
+     (Rs 2,388/year).
+  5. Clicks "Proceed to PayU Gateway".
+  6. `PayUCheckoutModal` initializes encrypted checkout session.
+  7. Admin completes payment via UPI or Corporate Net Banking.
+  8. PayU confirms authorization. Backend updates organization subscription document.
+  9. Web application immediately updates active site quota from 5 to 10.
+  10. Admin can immediately create the 6th site without refreshing.
+
+
+================================================================================
+8. SYSTEM ALERTS, ERROR HANDLING & NOTIFICATIONS
+================================================================================
+
+8.1. Automated Financial Telemetry Alerts Engine (`projectAlerts.js`)
+--------------------------------------------------------------------------------
+eBricks continuously evaluates financial and timeline telemetry across all sites:
+  1. Critical Expense Over Received Alert:
+     - Condition: Total Expenses Incurred > Customer Payments Received.
+     - Badge: "🚨 Expenses Exceed Received" (Red alert banner).
+     - Rationale: Project is operating in a negative cash flow position funded by 
+       company reserves rather than client milestones.
+  2. Budget Overrun Warning Alert:
+     - Condition: Total Expenses Incurred >= 90% of Total Contract Budget.
+     - Badge: "⚠️ Budget Approaching Limit" (Amber alert).
+     - If Expenses > 100%: "🚨 Budget Overrun Critical" (Red alert).
+  3. Customer Payment Deficit Alert:
+     - Condition: Total Contract Budget - Total Customer Payments Received > 50%.
+     - Alerts management that substantial milestone receivables are overdue.
+
+8.2. Overdue Milestones & Timeline Alerts
+--------------------------------------------------------------------------------
+  * Condition: Current Date > Estimated End Date AND Status != 'Completed'.
+  * Badge: "⏰ Project Overdue" (Rose alert).
+  * Prompts managers to negotiate contract time extensions or accelerate staffing.
+
+8.3. Global Notification Banner & Notification Drawer
+--------------------------------------------------------------------------------
+  * Global Notification Banner (`NotificationBanner.jsx`):
+    - When critical requisitions or alerts occur, a prominent top banner appears.
+    - Features direct action button (e.g., "Review Claim") that routes directly 
+      to the relevant approval tab.
+  * Notification Drawer (`NotificationDrawer.jsx`):
+    - Slide-out right panel showing historical notifications grouped by date.
+    - Unread indicator badge and one-click "Mark All as Read".
+
+8.4. Real-Time Error Recovery & Audit Trail Immutability
+--------------------------------------------------------------------------------
+  * Report Error Boundaries: All reporting hubs are wrapped in `ReportErrorBoundary` 
+    to catch unexpected rendering exceptions and provide a one-click "Retry Report" button.
+  * Atomic Firestore Batches: Critical multi-document operations (site setup, incentives, 
+    petty cash reconciliations) execute as atomic batches or transactions, preventing 
+    partial state corruptions.
+  * Immutable Audit Trail: Requisition approval histories are stored as append-only 
+    arrays with ISO timestamps, preventing audit tampering.
+
+
+================================================================================
+9. FREQUENTLY ASKED QUESTIONS (FAQ) & BEST PRACTICES
+================================================================================
+
+9.1. General Operational FAQs
+--------------------------------------------------------------------------------
+Q: Can a Manager log in using their username instead of email?
+A: Yes. The eBricks Manager login accepts Email, Unique Username, Manager ID (e.g., 
+   MGR-102), or registered Contact Phone Number.
+
+Q: How do I switch sites on the Organization Dashboard?
+A: Click the "Project Selector" dropdown in the top header. Selecting a site filters 
+   all metrics, expense rollups, and progress bars to that specific project. Select 
+   "All Projects" to view portfolio aggregates.
+
+Q: Can multiple supervisors be assigned to a single construction site?
+A: Yes. eBricks supports primary and secondary supervisor assignments via the 
+   Site-Supervisor Map (`/manager/supervisor-map`).
+
+9.2. Financial & Petty Cash FAQs
+--------------------------------------------------------------------------------
+Q: Why does a site show a red alert saying "Expenses Exceed Received"?
+A: This alert triggers when cumulative verified site expenses exceed total cash 
+   received from the client, warning management of negative project cash flow.
+
+Q: What happens if a petty cash float falls below the threshold?
+A: The system automatically highlights the account in amber and allows managers 
+   to trigger an automated Imprest Replenishment Request.
+
+Q: Who can authorize stage incentive bonuses?
+A: While Managers can verify and calculate incentives, final authorization and ledger 
+   commitment requires Organization Administrator sign-off.
+
+9.3. Supply Chain & Asset FAQs
+--------------------------------------------------------------------------------
+Q: Can I delete an architectural blueprint on the Silver Plan?
+A: No. Free Trial and Silver plans permit 1 active blueprint per site in view-only 
+   mode. Deletion and re-upload require upgrading to Gold (1 delete/replace) or 
+   Platinum (unlimited).
+
+Q: How do material reorder levels work?
+A: In the Materials Catalog, each item has a `minReorderLevel` (e.g., 20 bags). When 
+   on-hand site stock drops to or below this level, the dashboard displays a low-stock alert.
+
+9.4. Administrator Best Practices Checklist
+--------------------------------------------------------------------------------
+  [x] Complete Master Configurations (Categories, Sub-Categories, Stages) before 
+      creating your first live construction site.
+  [x] Always auto-detect GPS coordinates during site setup to enable field geo-tagging.
+  [x] Require all supervisors to upload clear physical bill photos for all expense claims.
+  [x] Conduct weekly petty cash reconciliations to prevent cash leakage.
+  [x] Set conservative material reorder thresholds to prevent construction stoppages.
+  [x] Verify stage milestones and calculate supervisor incentives promptly upon stage 
+      completion to motivate field personnel.
+  [x] Export quarterly financial ledgers to Excel for corporate audit compliance.
+
+================================================================================
+                     END OF eBricks USER GUIDE (.TXT)
+================================================================================

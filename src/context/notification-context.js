@@ -12,6 +12,7 @@ export function useNotifications() {
       dismissBanner: () => {},
       markAsRead: async () => {},
       markAllAsRead: async () => {},
+      refreshNotifications: async () => [],
       navigateNotification: () => {},
       requestBrowserPermission: async () => 'unsupported',
     }

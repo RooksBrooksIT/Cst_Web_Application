@@ -18,6 +18,12 @@ import {
   LayoutGrid,
   Clock,
   Tag,
+  PlusCircle,
+  PackagePlus,
+  Truck,
+  FileText,
+  Calculator,
+  ArrowDownCircle,
 } from 'lucide-react'
 import {
   fetchMaterials,
@@ -27,6 +33,7 @@ import {
   subscribeAllSiteMaterialPools,
   createMaterialRequest,
   allocateMaterialToSite,
+  addCompanyStock,
 } from '../../../services/materialService.js'
 import { resolveSite, getNormalizedSiteOptions } from '../../../utils/siteUtils.js'
 
@@ -53,6 +60,20 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
   const [loading, setLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [filterState, setFilterState] = useState('ALL') // 'ALL' | 'LOW' | 'OUT'
+
+  // Add Stock / Inward Modal State
+  const [showAddStockModal, setShowAddStockModal] = useState(false)
+  const [stockMaterial, setStockMaterial] = useState(null)
+  const [stockQty, setStockQty] = useState('')
+  const [stockRate, setStockRate] = useState('')
+  const [stockSupplier, setStockSupplier] = useState('')
+  const [stockInvoice, setStockInvoice] = useState('')
+  const [stockChallan, setStockChallan] = useState('')
+  const [stockVehicle, setStockVehicle] = useState('')
+  const [stockDate, setStockDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [stockRemarks, setStockRemarks] = useState('')
+  const [submittingAddStock, setSubmittingAddStock] = useState(false)
+  const [stockError, setStockError] = useState('')
 
   // Direct Site Material Allocation Modal (Flow 2)
   const [showAllocateModal, setShowAllocateModal] = useState(false)
@@ -277,6 +298,91 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
     })
   }, [consolidatedTelemetry, searchQuery, filterState])
 
+  // Real-time Add Stock / Inward Telemetry & Calculations
+  const currentStockVal = useMemo(() => {
+    return Number(stockMaterial?.companyAvailableCount ?? stockMaterial?.centralQty ?? 0)
+  }, [stockMaterial])
+
+  const parsedQtyToAdd = useMemo(() => {
+    const val = Number(stockQty)
+    return isNaN(val) ? 0 : val
+  }, [stockQty])
+
+  const isValidStockQty = parsedQtyToAdd > 0
+  const calculatedNewStock = isValidStockQty ? currentStockVal + parsedQtyToAdd : currentStockVal
+  const parsedUnitRate = Number(stockRate) || Number(stockMaterial?.unitPrice) || 0
+  const calculatedTotalValuation = isValidStockQty ? parsedQtyToAdd * parsedUnitRate : 0
+
+  // Open Add Stock / Inward Modal
+  const handleOpenAddStockModal = (presetMaterial = null) => {
+    const target = presetMaterial || (consolidatedTelemetry.length > 0 ? consolidatedTelemetry[0] : null)
+    setStockMaterial(target)
+    setStockQty('')
+    setStockRate(target?.unitPrice ? String(target.unitPrice) : '')
+    setStockSupplier('')
+    setStockInvoice('')
+    setStockChallan('')
+    setStockVehicle('')
+    setStockDate(new Date().toISOString().split('T')[0])
+    setStockRemarks('Stock Inward to Central Warehouse')
+    setStockError('')
+    setShowAddStockModal(true)
+  }
+
+  // Submit Add Stock / Inward Transaction
+  const handleAddStockSubmit = async (e) => {
+    e.preventDefault()
+    setStockError('')
+    if (!orgId) return
+
+    if (!stockMaterial) {
+      setStockError('Please select a valid material from the Master Catalog.')
+      return
+    }
+
+    const qty = Number(stockQty)
+    if (isNaN(qty) || qty <= 0) {
+      setStockError('Stock quantity must be a valid number greater than 0.')
+      return
+    }
+
+    setSubmittingAddStock(true)
+    try {
+      await addCompanyStock(
+        orgId,
+        {
+          materialId: stockMaterial.materialId || stockMaterial.id,
+          materialName: stockMaterial.materialName || stockMaterial.displayName,
+          displayName: stockMaterial.displayName || stockMaterial.materialName,
+          category: stockMaterial.category,
+          unit: stockMaterial.unitStr,
+          quantity: qty,
+          unitPrice: parsedUnitRate,
+          totalAmount: calculatedTotalValuation,
+          date: stockDate,
+          supplierName: stockSupplier.trim(),
+          invoiceNumber: stockInvoice.trim(),
+          challanNumber: stockChallan.trim(),
+          vehicleNumber: stockVehicle.trim(),
+          remarks: stockRemarks.trim(),
+        },
+        currentUser
+      )
+
+      onNotify?.(
+        `Successfully added ${qty} ${stockMaterial.unitStr} of ${stockMaterial.displayName || stockMaterial.materialName} to Central Warehouse! New stock: ${calculatedNewStock} ${stockMaterial.unitStr}.`,
+        'success'
+      )
+      setShowAddStockModal(false)
+    } catch (err) {
+      console.error('Error adding stock:', err)
+      setStockError(err.message || 'Failed to add stock. Please try again.')
+      onNotify?.(err.message || 'Failed to add stock', 'error')
+    } finally {
+      setSubmittingAddStock(false)
+    }
+  }
+
   // Direct Site Material Allocation Handlers (Flow 2)
   const handleOpenAllocateModal = (presetMaterial = null) => {
     if (normalizedSites.length > 0) {
@@ -385,16 +491,16 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
           requestedQty: Number(reqQty) || 1,
           unit: requisitionMaterial.unitStr,
           urgency: reqUrgency,
-          remarks: 'Automated requisition triggered from Material Availability telemetry hub',
+          remarks: 'Automated request triggered from Material Availability telemetry hub',
         },
         currentUser
       )
 
-      onNotify?.('Material requisition submitted to Approvals Center!', 'success')
+      onNotify?.('Material request submitted to Approvals Center!', 'success')
       setRequisitionMaterial(null)
     } catch (err) {
       console.error(err)
-      onNotify?.(err.message || 'Failed to submit requisition', 'error')
+      onNotify?.(err.message || 'Failed to submit request', 'error')
     } finally {
       setSubmittingReq(false)
     }
@@ -416,6 +522,14 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => handleOpenAddStockModal()}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 text-xs font-bold transition-all shadow-xs cursor-pointer"
+          >
+            <PlusCircle className="w-4 h-4" />
+            <span>Add Stock (Inward)</span>
+          </button>
           <button
             type="button"
             onClick={() => handleOpenAllocateModal()}
@@ -662,8 +776,17 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
                         <div className="flex items-center justify-end gap-1.5">
                           <button
                             type="button"
+                            onClick={() => handleOpenAddStockModal(m)}
+                            className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition-colors flex items-center gap-1 shadow-xs cursor-pointer"
+                            title="Add Stock / Inward to Central Warehouse"
+                          >
+                            <PlusCircle className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Add Stock</span>
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => setInspectMaterial(m)}
-                            className="p-1.5 rounded-lg text-slate-600 hover:text-blue-700 hover:bg-blue-50 border border-slate-200 transition-colors"
+                            className="p-1.5 rounded-lg text-slate-600 hover:text-blue-700 hover:bg-blue-50 border border-slate-200 transition-colors cursor-pointer"
                             title="Inspect Site Breakdown"
                           >
                             <Eye className="w-4 h-4" />
@@ -671,10 +794,10 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
                           <button
                             type="button"
                             onClick={() => handleOpenRequisition(m)}
-                            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#0B3470] text-white hover:bg-[#082855] transition-colors flex items-center gap-1 shadow-xs"
+                            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#0B3470] text-white hover:bg-[#082855] transition-colors flex items-center gap-1 shadow-xs cursor-pointer"
                           >
                             <ShoppingCart className="w-3.5 h-3.5" />
-                            <span>Requisition</span>
+                            <span>Request</span>
                           </button>
                         </div>
                       </td>
@@ -770,7 +893,7 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
                 </div>
 
                 {/* Footer Actions */}
-                <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between">
+                <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap">
                   <button
                     onClick={() => setInspectMaterial(m)}
                     className="inline-flex items-center gap-1 text-xs font-bold text-slate-600 hover:text-blue-700 cursor-pointer"
@@ -779,13 +902,24 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
                     <span>Site Pool ({m.siteInventories.length})</span>
                   </button>
 
-                  <button
-                    onClick={() => handleOpenRequisition(m)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#0B3470] hover:bg-[#082855] rounded-lg transition-colors cursor-pointer shadow-xs"
-                  >
-                    <ShoppingCart className="w-3.5 h-3.5" />
-                    <span>Raise Requisition</span>
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => handleOpenAddStockModal(m)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors cursor-pointer shadow-xs"
+                      title="Add Stock to Central Warehouse"
+                    >
+                      <PlusCircle className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Add Stock</span>
+                    </button>
+
+                    <button
+                      onClick={() => handleOpenRequisition(m)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#0B3470] hover:bg-[#082855] rounded-lg transition-colors cursor-pointer shadow-xs"
+                    >
+                      <ShoppingCart className="w-3.5 h-3.5" />
+                      <span>Raise Request</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             )
@@ -1082,7 +1216,7 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
               <div>
-                <h3 className="text-base font-bold text-slate-900">Raise Material Requisition</h3>
+                <h3 className="text-base font-bold text-slate-900">Raise Material Request</h3>
                 <p className="text-xs text-slate-500">{requisitionMaterial.displayName || requisitionMaterial.materialName}</p>
               </div>
               <button
@@ -1157,6 +1291,304 @@ export default function MaterialsStock({ orgId, sites = [], currentUser, onNotif
                   className="px-5 py-2 font-bold text-white bg-[#0B3470] hover:bg-[#082855] rounded-xl shadow-xs disabled:opacity-50"
                 >
                   {submittingReq ? 'Submitting...' : 'Submit Request'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================================================= */}
+      {/* ADD STOCK / CENTRAL WAREHOUSE INWARD MODAL */}
+      {/* ======================================================================================= */}
+      {showAddStockModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 max-h-[92vh] overflow-y-auto">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+              <div>
+                <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 uppercase font-mono flex items-center gap-1.5 w-fit">
+                  <PackagePlus className="w-3.5 h-3.5" />
+                  Central Warehouse · Stock Inward Flow
+                </span>
+                <h3 className="text-lg font-bold text-slate-900 mt-1">Add Stock to Central Warehouse</h3>
+                <p className="text-xs text-slate-500">
+                  Replenish central warehouse inventory and record audit transaction.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddStockModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Error banner if any */}
+            {stockError && (
+              <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{stockError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleAddStockSubmit} className="space-y-4 text-xs">
+              {/* Material Selector if not locked or if opened globally */}
+              <div>
+                <label className="block font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                  Select Material from Master Catalog
+                </label>
+                <select
+                  value={stockMaterial?.displayName || stockMaterial?.materialName || ''}
+                  onChange={(e) => {
+                    const found = consolidatedTelemetry.find(
+                      (m) => (m.displayName || m.materialName) === e.target.value
+                    )
+                    if (found) {
+                      setStockMaterial(found)
+                      if (found.unitPrice) setStockRate(String(found.unitPrice))
+                    }
+                  }}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 font-bold text-slate-900 cursor-pointer"
+                >
+                  {consolidatedTelemetry.map((m) => (
+                    <option key={m.id || m.materialId} value={m.displayName || m.materialName}>
+                      {m.displayName || m.materialName} ({m.materialId}) - Current: {m.companyAvailableCount} {m.unitStr}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Read-Only Material Details Card (populated automatically from Material Master) */}
+              {stockMaterial && (
+                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                      Master Material Specifications (Read-Only)
+                    </span>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-100 text-blue-800">
+                      ID: {stockMaterial.materialId || stockMaterial.id}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className="bg-white p-2 rounded-lg border border-slate-200/80">
+                      <span className="text-[10px] text-slate-400 font-semibold block uppercase">Material Name</span>
+                      <p className="text-xs font-bold text-slate-900 truncate mt-0.5">
+                        {stockMaterial.displayName || stockMaterial.materialName}
+                      </p>
+                    </div>
+                    <div className="bg-white p-2 rounded-lg border border-slate-200/80">
+                      <span className="text-[10px] text-slate-400 font-semibold block uppercase">Category</span>
+                      <p className="text-xs font-bold text-slate-900 truncate mt-0.5">
+                        {stockMaterial.category || 'General'}
+                      </p>
+                    </div>
+                    <div className="bg-white p-2 rounded-lg border border-slate-200/80">
+                      <span className="text-[10px] text-slate-400 font-semibold block uppercase">Unit</span>
+                      <p className="text-xs font-bold text-slate-900 truncate mt-0.5">
+                        {stockMaterial.unitStr}
+                      </p>
+                    </div>
+                    <div className="bg-white p-2 rounded-lg border border-slate-200/80">
+                      <span className="text-[10px] text-slate-400 font-semibold block uppercase">Base Price</span>
+                      <p className="text-xs font-bold text-slate-900 truncate mt-0.5">
+                        ₹{stockMaterial.unitPrice || 0}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Stock Quantity to Add & Real-time Live Calculation Display */}
+              {stockMaterial && (
+                <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/70 space-y-3">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-emerald-950 flex items-center gap-1.5 uppercase tracking-wider">
+                      <Calculator className="w-4 h-4 text-emerald-700" />
+                      Live Central Warehouse Stock Telemetry
+                    </span>
+                    {isValidStockQty ? (
+                      <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-200 text-emerald-900">
+                        + {parsedQtyToAdd} {stockMaterial.unitStr} Ready
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded text-[11px] font-medium text-amber-800 bg-amber-100">
+                        Awaiting Valid Quantity
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center text-center">
+                    {/* Current Stock */}
+                    <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-2xs">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">Current Stock</span>
+                      <p className="text-lg font-black text-slate-800 mt-0.5">
+                        {currentStockVal.toLocaleString()} <span className="text-xs font-medium text-slate-500">{stockMaterial.unitStr}</span>
+                      </p>
+                    </div>
+
+                    {/* Stock to Add Input Card */}
+                    <div className="bg-white p-2.5 rounded-xl border-2 border-emerald-500 shadow-xs text-left">
+                      <label className="text-[10px] uppercase font-bold text-emerald-800 block mb-1">
+                        Stock to Add *
+                      </label>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          required
+                          min="0.01"
+                          step="any"
+                          autoFocus
+                          placeholder="e.g. 60"
+                          value={stockQty}
+                          onChange={(e) => setStockQty(e.target.value)}
+                          className="w-full px-2 py-1 bg-emerald-50/50 border border-emerald-300 rounded-lg text-sm font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                        <span className="text-xs font-semibold text-slate-500 shrink-0">{stockMaterial.unitStr}</span>
+                      </div>
+                    </div>
+
+                    {/* Calculated New Total */}
+                    <div className={`p-3 rounded-xl border shadow-2xs transition-all ${isValidStockQty ? 'bg-emerald-600 text-white border-emerald-700' : 'bg-white text-slate-400 border-slate-200'}`}>
+                      <span className={`text-[10px] uppercase font-bold block ${isValidStockQty ? 'text-emerald-100' : 'text-slate-400'}`}>
+                        Calculated New Stock
+                      </span>
+                      <p className={`text-lg font-black mt-0.5 ${isValidStockQty ? 'text-white' : 'text-slate-400'}`}>
+                        {calculatedNewStock.toLocaleString()} <span className={`text-xs font-medium ${isValidStockQty ? 'text-emerald-100' : 'text-slate-400'}`}>{stockMaterial.unitStr}</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Formula visual indicator */}
+                  <div className="flex items-center justify-between text-[11px] text-emerald-800 bg-white/70 px-3 py-1.5 rounded-lg border border-emerald-100">
+                    <span>
+                      Formula: <strong>{currentStockVal}</strong> (Current) + <strong>{parsedQtyToAdd || 0}</strong> (Inward)
+                    </span>
+                    <span className="font-bold text-emerald-950">
+                      = {calculatedNewStock.toLocaleString()} {stockMaterial.unitStr}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Consignment Financials & Date */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                    Purchase Rate (₹ / {stockMaterial?.unitStr || 'Unit'})
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={stockRate}
+                    onChange={(e) => setStockRate(e.target.value)}
+                    placeholder="e.g. 380"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 font-medium text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                    Total Valuation (₹)
+                  </label>
+                  <div className="px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl font-bold text-slate-800 text-sm">
+                    ₹{calculatedTotalValuation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                    Inward Date *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={stockDate}
+                    onChange={(e) => setStockDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 font-medium text-slate-900"
+                  />
+                </div>
+              </div>
+
+              {/* Logistics & Tracking Fields */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                    Supplier / Vendor Name
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Ultratech Logistics Pvt Ltd"
+                    value={stockSupplier}
+                    onChange={(e) => setStockSupplier(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 font-medium text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                    Invoice / Challan No.
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. INV-9842 / DC-101"
+                    value={stockInvoice}
+                    onChange={(e) => setStockInvoice(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 font-medium text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                    Vehicle Number
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. KA-04-E-1234"
+                    value={stockVehicle}
+                    onChange={(e) => setStockVehicle(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 font-medium text-slate-900"
+                  />
+                </div>
+              </div>
+
+              {/* Inward Remarks */}
+              <div>
+                <label className="block font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                  Inward Audit Remarks
+                </label>
+                <textarea
+                  rows="2"
+                  value={stockRemarks}
+                  onChange={(e) => setStockRemarks(e.target.value)}
+                  placeholder="Notes on batch quality, packaging, delivery condition..."
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 font-medium text-slate-900"
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowAddStockModal(false)}
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl font-medium cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingAddStock || !isValidStockQty}
+                  className="px-5 py-2 font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <PackagePlus className="w-4 h-4" />
+                  <span>
+                    {submittingAddStock
+                      ? 'Recording Inward...'
+                      : `Confirm & Add ${parsedQtyToAdd > 0 ? `${parsedQtyToAdd} ${stockMaterial?.unitStr || ''}` : 'Stock'}`}
+                  </span>
                 </button>
               </div>
             </form>

@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect, Component } from 'react'
+import { useLocation } from 'react-router-dom'
 import SiteExpensesReportHub from './SiteExpensesReportHub'
 import ProjectStageReportsHub from './ProjectStageReportsHub'
 import SiteStatusReportHub from './SiteStatusReportHub'
@@ -8,6 +9,53 @@ import DomainInventoryReportsHub from './DomainInventoryReportsHub'
 import WorkerAttendanceReport from './WorkerAttendanceReport'
 import { money, parseAmount } from '../../../services/reportService'
 import ExportButton from '../../../components/common/ExportButton'
+import { useAuth } from '../../../hooks/useAuth'
+import { CONFIG_SECTIONS, subscribeConfigItems } from '../../../services/projectConfigService'
+import {
+  subscribeMaterialsAvailability,
+  subscribeAllSiteMaterialPools,
+} from '../../../services/materialService'
+import { subscribeWithFallback } from '../../../services/firestoreService'
+import { getNormalizedSiteOptions } from '../../../utils/siteUtils.js'
+
+class ReportErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('Report render error caught by boundary:', error, errorInfo)
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="bg-white rounded-2xl border border-rose-200 p-8 text-center space-y-4 shadow-xs">
+          <div className="w-12 h-12 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mx-auto text-xl font-bold">
+            ⚠️
+          </div>
+          <h3 className="text-sm font-bold text-slate-800">Unable to load report content</h3>
+          <p className="text-xs text-slate-500 max-w-md mx-auto">
+            {this.state.error?.message || 'An unexpected rendering error occurred while generating this report view.'}
+          </p>
+          <button
+            type="button"
+            onClick={() => this.setState({ hasError: false, error: null })}
+            className="px-4 py-2 rounded-xl text-xs font-bold bg-[#0B3470] text-white hover:bg-blue-800 transition-colors cursor-pointer"
+          >
+            Retry Report
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 export default function OrganizationReportsHub(props) {
   const {
@@ -32,9 +80,92 @@ export default function OrganizationReportsHub(props) {
     sitePayments = [],
     dailySiteLogs = [],
     orgId,
+    projectStages = [],
+    materialsAvailability: propMaterialsAvailability = [],
+    siteMaterialPool: propSiteMaterialPool = [],
+    materialAllocations: propMaterialAllocations = [],
   } = props
 
+  const { orgId: authOrgId } = useAuth()
+  const activeOrgId = orgId || authOrgId
+  const [stagesFromConfig, setStagesFromConfig] = useState([])
+  const [internalMaterialsAvailability, setInternalMaterialsAvailability] = useState([])
+  const [internalSiteMaterialPool, setInternalSiteMaterialPool] = useState([])
+  const [internalMaterialAllocations, setInternalMaterialAllocations] = useState([])
+
+  useEffect(() => {
+    if (!activeOrgId) return
+    let unsub1 = () => {}
+    let unsub2 = () => {}
+    let unsub3 = () => {}
+
+    if (!propMaterialsAvailability || propMaterialsAvailability.length === 0) {
+      unsub1 = subscribeMaterialsAvailability(
+        activeOrgId,
+        (data) => setInternalMaterialsAvailability(data || []),
+        (err) => console.error('Error subscribing to materialsAvailability:', err)
+      )
+    }
+
+    if (!propSiteMaterialPool || propSiteMaterialPool.length === 0) {
+      unsub2 = subscribeAllSiteMaterialPools(
+        activeOrgId,
+        (data) => setInternalSiteMaterialPool(data || []),
+        (err) => console.error('Error subscribing to siteMaterialPool:', err)
+      )
+    }
+
+    if (!propMaterialAllocations || propMaterialAllocations.length === 0) {
+      unsub3 = subscribeWithFallback(
+        activeOrgId,
+        'materialAllocations',
+        (data) => setInternalMaterialAllocations(data || []),
+        (err) => console.error('Error subscribing to materialAllocations:', err)
+      )
+    }
+
+    return () => {
+      unsub1()
+      unsub2()
+      unsub3()
+    }
+  }, [activeOrgId, propMaterialsAvailability, propSiteMaterialPool, propMaterialAllocations])
+
+  const resolvedMaterialsAvailability =
+    propMaterialsAvailability && propMaterialsAvailability.length > 0
+      ? propMaterialsAvailability
+      : internalMaterialsAvailability
+
+  const resolvedSiteMaterialPool =
+    propSiteMaterialPool && propSiteMaterialPool.length > 0
+      ? propSiteMaterialPool
+      : internalSiteMaterialPool
+
+  const resolvedMaterialAllocations =
+    propMaterialAllocations && propMaterialAllocations.length > 0
+      ? propMaterialAllocations
+      : internalMaterialAllocations
+
+  React.useEffect(() => {
+    if (projectStages && projectStages.length > 0) return
+    if (!activeOrgId) return
+    const unsub = subscribeConfigItems(
+      activeOrgId,
+      CONFIG_SECTIONS.stage,
+      (list) => setStagesFromConfig(list || []),
+      (err) => console.error('Error subscribing to project stages:', err)
+    )
+    return () => unsub()
+  }, [activeOrgId, projectStages])
+
+  const configuredStageNames = useMemo(() => {
+    const list = (projectStages && projectStages.length > 0) ? projectStages : stagesFromConfig
+    const names = (list || []).map((s) => (typeof s === 'string' ? s : s.projectStage || s.name || '').trim()).filter(Boolean)
+    return [...new Set(names)]
+  }, [projectStages, stagesFromConfig])
+
   const allSites = sites.length > 0 ? sites : projects
+  const normalizedAllSites = useMemo(() => getNormalizedSiteOptions(allSites), [allSites])
 
   const categories = [
     {
@@ -100,6 +231,35 @@ export default function OrganizationReportsHub(props) {
     financial_reports: 'statement',
     inventory_reports: 'materials',
   })
+
+  const location = useLocation()
+
+  // Sync category and subReport with URL params if provided
+  useEffect(() => {
+    if (!location?.search) return
+    try {
+      const params = new URLSearchParams(location.search)
+      const cat = params.get('category') || params.get('tab') || params.get('type')
+      const sub = params.get('sub') || params.get('subReport') || params.get('report')
+
+      if (cat) {
+        const found = categories.find((c) => c.id === cat || c.label.toLowerCase().includes(cat.toLowerCase()))
+        if (found) {
+          setActiveCategory(found.id)
+          if (sub) {
+            setActiveSubReports((prev) => ({ ...prev, [found.id]: sub }))
+          }
+        } else if (cat.includes('project')) {
+          setActiveCategory('project_reports')
+          if (sub) {
+            setActiveSubReports((prev) => ({ ...prev, project_reports: sub }))
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Could not parse reports URL params:', e)
+    }
+  }, [location?.search])
 
   const currentSubReport = activeSubReports[activeCategory]
 
@@ -400,9 +560,9 @@ export default function OrganizationReportsHub(props) {
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all cursor-pointer"
             >
               <option value="all">All Managed Sites</option>
-              {allSites.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.projectName || s.siteName || s.name || s.id}
+              {normalizedAllSites.map((s, idx) => (
+                <option key={`hub-site-${s.id || s.siteId || idx}-${idx}`} value={s.id || s.siteId}>
+                  {s.label || s.projectName || s.siteName || s.name || s.id}
                 </option>
               ))}
             </select>
@@ -452,13 +612,11 @@ export default function OrganizationReportsHub(props) {
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all cursor-pointer"
             >
               <option value="all">All Stages</option>
-              <option value="Foundation">Foundation</option>
-              <option value="Plinth">Plinth</option>
-              <option value="Structure">Structure</option>
-              <option value="Brickwork">Brickwork</option>
-              <option value="Plastering">Plastering</option>
-              <option value="Flooring">Flooring</option>
-              <option value="Finishing">Finishing</option>
+              {configuredStageNames.map((stg) => (
+                <option key={stg} value={stg}>
+                  {stg}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -480,119 +638,140 @@ export default function OrganizationReportsHub(props) {
       </div>
 
       {/* 5. Active Report Content */}
-      <div className="space-y-6">
-        {activeCategory === 'site_expenses' && (
-          <SiteExpensesReportHub
-            sites={allSites}
-            siteSupervisorEntries={siteSupervisorEntries}
-            managerExpenses={managerExpenses}
-            organizationEntries={organizationEntries}
-            contractorEntries={contractorEntries}
-            totalSiteExpensesPerDay={totalSiteExpensesPerDay}
-            sitePayments={sitePayments}
-            siteSupervisorIncentives={siteSupervisorIncentives}
-            dailySiteLogs={dailySiteLogs}
-            subReport={currentSubReport}
-            initialSiteId={appliedFilters.siteId}
-            initialDate={appliedFilters.date}
-            initialFromDate={appliedFilters.fromDate}
-            initialToDate={appliedFilters.toDate}
-            initialStage={appliedFilters.stage}
-          />
-        )}
+      <ReportErrorBoundary>
+        <div className="space-y-6">
+          {activeCategory === 'site_expenses' && (
+            <SiteExpensesReportHub
+              sites={allSites}
+              siteSupervisorEntries={siteSupervisorEntries}
+              managerExpenses={managerExpenses}
+              organizationEntries={organizationEntries}
+              contractorEntries={contractorEntries}
+              totalSiteExpensesPerDay={totalSiteExpensesPerDay}
+              sitePayments={sitePayments}
+              siteSupervisorIncentives={siteSupervisorIncentives}
+              dailySiteLogs={dailySiteLogs}
+              subReport={currentSubReport}
+              initialSiteId={appliedFilters.siteId}
+              initialDate={appliedFilters.date}
+              initialFromDate={appliedFilters.fromDate}
+              initialToDate={appliedFilters.toDate}
+              initialStage={appliedFilters.stage}
+              projectStages={configuredStageNames}
+            />
+          )}
 
-        {activeCategory === 'workforce_reports' && (
-          <>
-            {currentSubReport === 'muster' && (
-              <WorkerAttendanceReport
-                orgId={orgId}
-                sites={allSites}
-                initialMonth={appliedFilters.date ? appliedFilters.date.slice(0, 7) : new Date().toISOString().slice(0, 7)}
-                initialSiteId={appliedFilters.siteId}
-              />
-            )}
-            {currentSubReport === 'incentives' && (
-              <DomainInventoryReportsHub
-                contractors={contractors}
-                contractorBills={contractorBills}
-                contractorEntries={contractorEntries}
-                materials={materials}
-                tools={tools}
-                workers={workers}
-                workerAttendance={workerAttendance}
-                vehicles={vehicles}
-                siteSupervisorIncentives={siteSupervisorIncentives}
-                subReport="incentives"
-                initialSiteId={appliedFilters.siteId}
-              />
-            )}
-          </>
-        )}
+          {activeCategory === 'workforce_reports' && (
+            <>
+              {currentSubReport === 'muster' && (
+                <WorkerAttendanceReport
+                  orgId={orgId}
+                  sites={allSites}
+                  initialMonth={appliedFilters.date ? appliedFilters.date.slice(0, 7) : new Date().toISOString().slice(0, 7)}
+                  initialSiteId={appliedFilters.siteId}
+                />
+              )}
+              {currentSubReport === 'incentives' && (
+                <DomainInventoryReportsHub
+                  contractors={contractors}
+                  contractorBills={contractorBills}
+                  contractorEntries={contractorEntries}
+                  materials={materials}
+                  tools={tools}
+                  workers={workers}
+                  workerAttendance={workerAttendance}
+                  vehicles={vehicles}
+                  siteSupervisorIncentives={siteSupervisorIncentives}
+                  siteMaterialPool={resolvedSiteMaterialPool}
+                  materialsAvailability={resolvedMaterialsAvailability}
+                  materialAllocations={resolvedMaterialAllocations}
+                  siteSupervisorEntries={siteSupervisorEntries}
+                  sites={allSites}
+                  subReport="incentives"
+                  initialSiteId={appliedFilters.siteId}
+                  initialFromDate={appliedFilters.fromDate}
+                  initialToDate={appliedFilters.toDate}
+                  initialStage={appliedFilters.stage}
+                  projectStages={configuredStageNames}
+                />
+              )}
+            </>
+          )}
 
-        {activeCategory === 'project_reports' && (
-          <>
-            {currentSubReport === 'progress' && (
-              <ProjectStageReportsHub
-                sites={allSites}
-                siteSupervisorEntries={siteSupervisorEntries}
-                managerExpenses={managerExpenses}
-                organizationEntries={organizationEntries}
-                contractorEntries={contractorEntries}
-                subReport="progress"
-                initialStage={appliedFilters.stage}
-              />
-            )}
-            {currentSubReport === 'status' && (
-              <SiteStatusReportHub
-                sites={allSites}
-                initialSiteId={appliedFilters.siteId}
-                initialStage={appliedFilters.stage}
-              />
-            )}
-          </>
-        )}
+          {activeCategory === 'project_reports' && (
+            <>
+              {currentSubReport === 'status' ? (
+                <SiteStatusReportHub
+                  sites={allSites}
+                  initialSiteId={appliedFilters.siteId}
+                  initialStage={appliedFilters.stage}
+                />
+              ) : (
+                <ProjectStageReportsHub
+                  sites={allSites}
+                  siteSupervisorEntries={siteSupervisorEntries}
+                  managerExpenses={managerExpenses}
+                  organizationEntries={organizationEntries}
+                  contractorEntries={contractorEntries}
+                  subReport={currentSubReport}
+                  initialStage={appliedFilters.stage}
+                  projectStages={configuredStageNames}
+                />
+              )}
+            </>
+          )}
 
-        {activeCategory === 'financial_reports' && (
-          <>
-            {(currentSubReport === 'statement' || currentSubReport === 'cash_flow') && (
-              <FinancialStatusReportHub
-                sites={allSites}
-                sitePayments={sitePayments}
-                totalSiteExpensesPerDay={totalSiteExpensesPerDay}
-                siteSupervisorEntries={siteSupervisorEntries}
-                subReport={currentSubReport}
-                initialSiteId={appliedFilters.siteId}
-              />
-            )}
-            {currentSubReport === 'petty_cash' && (
-              <PettyCashInsightsReportHub
-                sites={allSites}
-                pettyCashAccounts={pettyCashAccounts}
-                pettyCashExpenses={pettyCashExpenses}
-                pettyCashRequests={pettyCashRequests}
-                subReport="audit"
-                initialSiteId={appliedFilters.siteId}
-              />
-            )}
-          </>
-        )}
+          {activeCategory === 'financial_reports' && (
+            <>
+              {(currentSubReport === 'statement' || currentSubReport === 'cash_flow') && (
+                <FinancialStatusReportHub
+                  sites={allSites}
+                  sitePayments={sitePayments}
+                  totalSiteExpensesPerDay={totalSiteExpensesPerDay}
+                  siteSupervisorEntries={siteSupervisorEntries}
+                  subReport={currentSubReport}
+                  initialSiteId={appliedFilters.siteId}
+                />
+              )}
+              {currentSubReport === 'petty_cash' && (
+                <PettyCashInsightsReportHub
+                  sites={allSites}
+                  pettyCashAccounts={pettyCashAccounts}
+                  pettyCashExpenses={pettyCashExpenses}
+                  pettyCashRequests={pettyCashRequests}
+                  subReport="audit"
+                  initialSiteId={appliedFilters.siteId}
+                />
+              )}
+            </>
+          )}
 
-        {activeCategory === 'inventory_reports' && (
-          <DomainInventoryReportsHub
-            contractors={contractors}
-            contractorBills={contractorBills}
-            contractorEntries={contractorEntries}
-            materials={materials}
-            tools={tools}
-            workers={workers}
-            workerAttendance={workerAttendance}
-            vehicles={vehicles}
-            siteSupervisorIncentives={siteSupervisorIncentives}
-            subReport={currentSubReport}
-            initialSiteId={appliedFilters.siteId}
-          />
-        )}
-      </div>
+          {activeCategory === 'inventory_reports' && (
+            <DomainInventoryReportsHub
+              contractors={contractors}
+              contractorBills={contractorBills}
+              contractorEntries={contractorEntries}
+              materials={materials}
+              tools={tools}
+              workers={workers}
+              workerAttendance={workerAttendance}
+              vehicles={vehicles}
+              siteSupervisorIncentives={siteSupervisorIncentives}
+              siteMaterialPool={resolvedSiteMaterialPool}
+              materialsAvailability={resolvedMaterialsAvailability}
+              materialAllocations={resolvedMaterialAllocations}
+              siteSupervisorEntries={siteSupervisorEntries}
+              sites={allSites}
+              subReport={currentSubReport}
+              initialSiteId={appliedFilters.siteId}
+              initialFromDate={appliedFilters.fromDate}
+              initialToDate={appliedFilters.toDate}
+              initialStage={appliedFilters.stage}
+              projectStages={configuredStageNames}
+            />
+          )}
+        </div>
+      </ReportErrorBoundary>
     </div>
   )
 }

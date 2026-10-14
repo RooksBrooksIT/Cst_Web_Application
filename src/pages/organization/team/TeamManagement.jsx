@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import {
   Users,
   HardHat,
@@ -22,9 +22,18 @@ import ExportButton from '../../../components/common/ExportButton'
 import { createInvitationCode, fetchOrgUsers } from '../../../services/userService'
 import { subscribeSupervisors, fetchSupervisors } from '../../../services/supervisorService'
 import { subscribeWorkers, fetchWorkers } from '../../../services/workforceService'
-import { subscribeManagers, fetchManagers, createManager } from '../../../services/managerService'
+import {
+  subscribeManagers,
+  fetchManagers,
+  createManager,
+  checkGlobalUsernameUniqueness,
+  warmupUsernameCache,
+  isUsernameCachedAsTaken,
+} from '../../../services/managerService'
 import { collection, onSnapshot } from 'firebase/firestore'
 import { db } from '../../../services/firebase'
+import { SubscriptionLimitService } from '../../../services/subscriptionLimitService'
+import SubscriptionLimitModal from '../../../components/common/SubscriptionLimitModal'
 
 /**
  * Normalizes any workforce member (Manager, Supervisor, Worker)
@@ -356,6 +365,10 @@ export default function TeamManagement({
     assignedProjects: [],
   })
 
+  // Plan Limits & Quotas State
+  const [planLimits, setPlanLimits] = useState(null)
+  const [limitModalData, setLimitModalData] = useState(null)
+
   // Manager Creation Modal State
   const [isManagerModalOpen, setIsManagerModalOpen] = useState(false)
   const [managerFormData, setManagerFormData] = useState({
@@ -371,9 +384,112 @@ export default function TeamManagement({
   const [managerError, setManagerError] = useState('')
   const [managerSuccess, setManagerSuccess] = useState('')
 
+  // Manager Username Real-Time Validation State
+  const [isCheckingUsername, setIsCheckingUsername] = useState(false)
+  const [usernameStatusText, setUsernameStatusText] = useState(null)
+  const [isUsernameValid, setIsUsernameValid] = useState(null)
+  const usernameValidationSeq = useRef(0)
+
+  // Warm up username cache and load plan limits on mount
+  useEffect(() => {
+    warmupUsernameCache()
+    if (orgId) {
+      SubscriptionLimitService.getActivePlanLimits(orgId).then(setPlanLimits)
+    }
+  }, [orgId])
+
+  // Debounced real-time case-insensitive username uniqueness check
+  useEffect(() => {
+    if (!isManagerModalOpen) {
+      setIsCheckingUsername(false)
+      setUsernameStatusText(null)
+      setIsUsernameValid(null)
+      return
+    }
+
+    const clean = (managerFormData.username || '').trim()
+    const cleanLower = clean.toLowerCase()
+    const seq = ++usernameValidationSeq.current
+
+    if (!clean) {
+      setIsCheckingUsername(false)
+      setUsernameStatusText(null)
+      setIsUsernameValid(null)
+      return
+    }
+
+    if (clean.length < 3) {
+      setIsCheckingUsername(false)
+      setUsernameStatusText('Username must be at least 3 characters')
+      setIsUsernameValid(false)
+      return
+    }
+
+    // Instant 0ms synchronous cache check
+    if (isUsernameCachedAsTaken(cleanLower)) {
+      setIsCheckingUsername(false)
+      setUsernameStatusText('Username already exists')
+      setIsUsernameValid(false)
+      return
+    }
+
+    setIsCheckingUsername(true)
+    setUsernameStatusText('Checking username...')
+    setIsUsernameValid(null)
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await checkGlobalUsernameUniqueness(orgId, clean)
+        if (seq === usernameValidationSeq.current && (managerFormData.username || '').trim().toLowerCase() === cleanLower) {
+          setIsCheckingUsername(false)
+          setIsUsernameValid(res.isUnique)
+          setUsernameStatusText(res.isUnique ? 'Username is available ✓' : 'Username already exists')
+        }
+      } catch (_err) {
+        if (seq === usernameValidationSeq.current) {
+          setIsCheckingUsername(false)
+          setIsUsernameValid(false)
+          setUsernameStatusText('Error checking username')
+        }
+      }
+    }, 250)
+
+    return () => clearTimeout(timer)
+  }, [managerFormData.username, isManagerModalOpen, orgId])
+
+  async function handleOpenCreateManagerModal() {
+    setManagerError('')
+    setManagerSuccess('')
+    const check = await SubscriptionLimitService.canCreateManager({
+      orgId,
+      currentManagersCount: metrics.managersCount,
+      currentTotalUsersCount: metrics.total + 1,
+      currentPlanName: planLimits?.planName,
+    })
+    if (!check.isAllowed) {
+      setLimitModalData({
+        title: check.title || 'Manager Quota Reached',
+        message: check.message,
+        planName: check.planName || planLimits?.planName,
+        currentCount: check.currentCount,
+        maxLimit: check.maxLimit,
+        recommendedPlan: check.upgradePlan || 'Gold',
+        resourceType: check.reason?.includes('TOTAL') ? 'Team User' : 'Manager',
+      })
+      return
+    }
+    setIsManagerModalOpen(true)
+  }
+
   async function handleCreateManagerSubmit(e) {
     e.preventDefault()
     if (!orgId) return
+
+    if (isUsernameValid === false) {
+      setManagerError(usernameStatusText || 'Username already exists')
+      return
+    }
+
     setManagerSubmitLoading(true)
     setManagerError('')
     setManagerSuccess('')
@@ -390,12 +506,26 @@ export default function TeamManagement({
         department: 'Operations',
         designation: 'Site Manager',
       })
+      setUsernameStatusText(null)
+      setIsUsernameValid(null)
+      setIsCheckingUsername(false)
       setTimeout(() => {
         setIsManagerModalOpen(false)
         setManagerSuccess('')
       }, 1500)
     } catch (err) {
-      setManagerError(err.message || 'Failed to create Manager account.')
+      if (err.code === 'TOTAL_USERS_LIMIT_REACHED' || err.code === 'MANAGER_LIMIT_REACHED' || err.code === 'SUBSCRIPTION_EXPIRED') {
+        setIsManagerModalOpen(false)
+        setLimitModalData({
+          title: err.code === 'SUBSCRIPTION_EXPIRED' ? 'Subscription Expired' : 'Manager Quota Reached',
+          message: err.message,
+          planName: planLimits?.planName,
+          recommendedPlan: err.upgradePlan || 'Gold',
+          resourceType: err.code?.includes('TOTAL') ? 'Team User' : 'Manager',
+        })
+      } else {
+        setManagerError(err.message || 'Failed to create Manager account.')
+      }
     } finally {
       setManagerSubmitLoading(false)
     }
@@ -741,7 +871,7 @@ export default function TeamManagement({
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/90 shadow-xs">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 sm:p-6 rounded-2xl border border-slate-200/90 shadow-xs">
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-widest bg-blue-50 text-[#0B3470] border border-blue-200/80">
@@ -750,7 +880,7 @@ export default function TeamManagement({
             <span className="text-slate-300">·</span>
             <span className="text-xs text-slate-500 font-medium">Multi-Tier Workforce Hub</span>
           </div>
-          <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
+          <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
             <span>Staff, Managers & Field Roles</span>
           </h1>
           <p className="text-xs text-slate-500 mt-1 max-w-2xl">
@@ -758,14 +888,10 @@ export default function TeamManagement({
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5 flex-wrap">
+        <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap w-full sm:w-auto">
           <button
             type="button"
-            onClick={() => {
-              setManagerError('')
-              setManagerSuccess('')
-              setIsManagerModalOpen(true)
-            }}
+            onClick={handleOpenCreateManagerModal}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white transition-colors shadow-xs cursor-pointer"
           >
             <UserPlus className="w-3.5 h-3.5" />
@@ -792,12 +918,50 @@ export default function TeamManagement({
         </div>
       </div>
 
+      {/* Subscription Team Quotas Status Bar */}
+      {planLimits && (
+        <div className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
+          <div className="flex items-center justify-between text-xs pb-1 border-b border-slate-100">
+            <span className="font-semibold text-slate-700">Subscription Quota Allocation</span>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+              {planLimits.planName} Plan
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+              <span className="text-slate-500">Total Team Users:</span>
+              <span className={`font-mono font-bold ${metrics.total + 1 >= (planLimits.maxUsers || 2) ? 'text-rose-600' : 'text-slate-800'}`}>
+                {metrics.total + 1} / {planLimits.maxUsers === 999999 ? 'Unlimited' : planLimits.maxUsers}
+              </span>
+            </div>
+            <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+              <span className="text-slate-500">Dedicated Managers:</span>
+              <span className={`font-mono font-bold ${metrics.managersCount >= (planLimits.maxManagers || 1) ? 'text-rose-600' : 'text-slate-800'}`}>
+                {metrics.managersCount} / {planLimits.maxManagers === 999999 ? 'Unlimited' : planLimits.maxManagers}
+              </span>
+            </div>
+            <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+              <span className="text-slate-500">Site Supervisors:</span>
+              <span className={`font-mono font-bold ${metrics.supervisorsCount >= (planLimits.maxSupervisors || 1) ? 'text-rose-600' : 'text-slate-800'}`}>
+                {metrics.supervisorsCount} / {planLimits.maxSupervisors === 999999 ? 'Unlimited' : planLimits.maxSupervisors}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <SubscriptionLimitModal
+        isOpen={Boolean(limitModalData)}
+        onClose={() => setLimitModalData(null)}
+        {...limitModalData}
+      />
+
       {/* Interactive Metric Cards (Clickable quick filters) */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-3.5">
         <button
           type="button"
           onClick={() => handleRoleFilterChange('ALL')}
-          className={`p-4 rounded-2xl border text-left transition-all duration-200 ${
+          className={`p-3.5 sm:p-4 rounded-2xl border text-left transition-all duration-200 ${
             activeRoleFilter === 'ALL'
               ? 'bg-slate-900 text-white border-slate-900 shadow-md ring-2 ring-slate-900/10'
               : 'bg-white text-slate-700 border-slate-200/90 hover:border-slate-300 shadow-xs hover:-translate-y-0.5'
@@ -818,7 +982,7 @@ export default function TeamManagement({
         <button
           type="button"
           onClick={() => handleRoleFilterChange('MANAGER')}
-          className={`p-4 rounded-2xl border text-left transition-all duration-200 ${
+          className={`p-3.5 sm:p-4 rounded-2xl border text-left transition-all duration-200 ${
             activeRoleFilter === 'MANAGER'
               ? 'bg-[#0B3470] text-white border-[#0B3470] shadow-md ring-2 ring-blue-500/20'
               : 'bg-white text-slate-700 border-slate-200/90 hover:border-blue-200 shadow-xs hover:-translate-y-0.5'
@@ -830,7 +994,7 @@ export default function TeamManagement({
             </span>
             <Shield className={`w-4 h-4 ${activeRoleFilter === 'MANAGER' ? 'text-blue-200' : 'text-blue-600'}`} />
           </div>
-          <div className="text-2xl font-black">{metrics.managersCount}</div>
+          <div className="text-xl sm:text-2xl font-black">{metrics.managersCount}</div>
           <div className={`text-[11px] mt-1 ${activeRoleFilter === 'MANAGER' ? 'text-blue-200' : 'text-slate-400'}`}>
             Operations & Project Leads
           </div>
@@ -839,7 +1003,7 @@ export default function TeamManagement({
         <button
           type="button"
           onClick={() => handleRoleFilterChange('SUPERVISOR')}
-          className={`p-4 rounded-2xl border text-left transition-all duration-200 ${
+          className={`p-3.5 sm:p-4 rounded-2xl border text-left transition-all duration-200 ${
             activeRoleFilter === 'SUPERVISOR'
               ? 'bg-emerald-700 text-white border-emerald-700 shadow-md ring-2 ring-emerald-500/20'
               : 'bg-white text-slate-700 border-slate-200/90 hover:border-emerald-200 shadow-xs hover:-translate-y-0.5'
@@ -851,7 +1015,7 @@ export default function TeamManagement({
             </span>
             <HardHat className={`w-4 h-4 ${activeRoleFilter === 'SUPERVISOR' ? 'text-emerald-200' : 'text-emerald-600'}`} />
           </div>
-          <div className="text-2xl font-black">{metrics.supervisorsCount}</div>
+          <div className="text-xl sm:text-2xl font-black">{metrics.supervisorsCount}</div>
           <div className={`text-[11px] mt-1 ${activeRoleFilter === 'SUPERVISOR' ? 'text-emerald-100' : 'text-slate-400'}`}>
             Field Supervisors
           </div>
@@ -860,7 +1024,7 @@ export default function TeamManagement({
         <button
           type="button"
           onClick={() => handleRoleFilterChange('WORKER')}
-          className={`p-4 rounded-2xl border text-left transition-all duration-200 ${
+          className={`p-3.5 sm:p-4 rounded-2xl border text-left transition-all duration-200 ${
             activeRoleFilter === 'WORKER'
               ? 'bg-amber-600 text-white border-amber-600 shadow-md ring-2 ring-amber-500/20'
               : 'bg-white text-slate-700 border-slate-200/90 hover:border-amber-200 shadow-xs hover:-translate-y-0.5'
@@ -872,18 +1036,18 @@ export default function TeamManagement({
             </span>
             <Wrench className={`w-4 h-4 ${activeRoleFilter === 'WORKER' ? 'text-amber-200' : 'text-amber-600'}`} />
           </div>
-          <div className="text-2xl font-black">{metrics.workersCount}</div>
+          <div className="text-xl sm:text-2xl font-black">{metrics.workersCount}</div>
           <div className={`text-[11px] mt-1 ${activeRoleFilter === 'WORKER' ? 'text-amber-100' : 'text-slate-400'}`}>
             Trades & General Labor
           </div>
         </button>
 
-        <div className="p-4 rounded-2xl border border-slate-200/90 bg-white text-slate-700 shadow-xs flex flex-col justify-between">
+        <div className="col-span-2 sm:col-span-1 p-3.5 sm:p-4 rounded-2xl border border-slate-200/90 bg-white text-slate-700 shadow-xs flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
             <span className="text-[10px] font-bold uppercase tracking-wider text-purple-600">Site Deployments</span>
             <Building2 className="w-4 h-4 text-purple-600" />
           </div>
-          <div className="text-2xl font-black text-slate-900">
+          <div className="text-xl sm:text-2xl font-black text-slate-900">
             {metrics.assignedCount}
             <span className="text-xs font-medium text-slate-400 ml-1.5">/ {metrics.total}</span>
           </div>
@@ -894,10 +1058,10 @@ export default function TeamManagement({
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-xs space-y-3">
+      <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/90 shadow-xs space-y-3">
         {/* Role Tabs */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-          <div className="flex items-center gap-1.5 bg-slate-100/80 p-1 rounded-xl overflow-x-auto">
+          <div className="flex items-center gap-1.5 bg-slate-100/80 p-1 rounded-xl overflow-x-auto touch-pan-x scrollbar-none max-w-full">
             <button
               type="button"
               onClick={() => handleRoleFilterChange('ALL')}
@@ -1036,8 +1200,13 @@ export default function TeamManagement({
 
       {/* Main Unified Workforce Table */}
       <div className="bg-white border border-slate-200/90 rounded-2xl shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-700">
+        {/* Mobile Swipe Guidance Banner */}
+        <div className="block sm:hidden text-center py-1.5 px-3 bg-slate-50 border-b border-slate-100 text-[11px] font-medium text-slate-500">
+          ← Swipe horizontally to inspect full roster →
+        </div>
+
+        <div className="overflow-x-auto touch-pan-x">
+          <table className="w-full text-left text-xs text-slate-700 min-w-[700px]">
             <thead className="bg-slate-50/90 text-slate-500 font-semibold border-b border-slate-100">
               <tr>
                 <th className="p-3.5 pl-5 min-w-[220px]">Member Name & ID</th>
@@ -1182,7 +1351,7 @@ export default function TeamManagement({
 
         {/* Pagination Bar */}
         {totalPages > 1 && (
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-3.5 bg-slate-50/80 border-t border-slate-100 text-xs text-slate-500">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 sm:px-5 py-3.5 bg-slate-50/80 border-t border-slate-100 text-xs text-slate-500">
             <span>
               Showing <strong className="text-slate-800">{(safeCurrentPage - 1) * pageSize + 1}</strong> to{' '}
               <strong className="text-slate-800">{Math.min(safeCurrentPage * pageSize, filteredWorkforce.length)}</strong> of{' '}
@@ -1330,8 +1499,8 @@ export default function TeamManagement({
                   className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
                 >
                   <option value="">Unassigned</option>
-                  {sites.map((s) => (
-                    <option key={s.id} value={s.id}>
+                  {sites.map((s, idx) => (
+                    <option key={`team-site-${s.id || s.siteId || idx}-${idx}`} value={s.id}>
                       {s.projectName || s.siteName || s.name}
                     </option>
                   ))}
@@ -1366,6 +1535,9 @@ export default function TeamManagement({
           setIsManagerModalOpen(false)
           setManagerError('')
           setManagerSuccess('')
+          setUsernameStatusText(null)
+          setIsUsernameValid(null)
+          setIsCheckingUsername(false)
         }}
         title="Create New Organization Manager Account"
       >
@@ -1398,14 +1570,40 @@ export default function TeamManagement({
 
             <label className="block text-xs font-medium text-slate-700">
               Username *
-              <input
-                required
-                value={managerFormData.username}
-                onChange={(e) => setManagerFormData({ ...managerFormData, username: e.target.value })}
-                placeholder="e.g. Sharan123"
-                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
-              />
-              <span className="text-[10px] text-slate-400 block mt-0.5">Global case-insensitive unique login ID</span>
+              <div className="relative mt-1">
+                <input
+                  required
+                  value={managerFormData.username}
+                  onChange={(e) => setManagerFormData({ ...managerFormData, username: e.target.value.replace(/\s+/g, '') })}
+                  placeholder="e.g. Sharan123"
+                  className={`w-full bg-slate-50 border rounded-xl p-2.5 pr-8 text-xs text-slate-900 outline-none transition-colors ${
+                    isUsernameValid === false
+                      ? 'border-rose-400 focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20'
+                      : isUsernameValid === true
+                      ? 'border-emerald-400 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20'
+                      : 'border-slate-300 focus:bg-white focus:border-blue-600'
+                  }`}
+                />
+                {isCheckingUsername && (
+                  <RefreshCw className="w-3.5 h-3.5 text-slate-400 animate-spin absolute right-3 top-1/2 -translate-y-1/2" />
+                )}
+              </div>
+              {isCheckingUsername ? (
+                <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1 mt-1">
+                  Checking username...
+                </span>
+              ) : isUsernameValid === false && usernameStatusText ? (
+                <span className="text-[11px] text-rose-600 font-semibold flex items-center gap-1 mt-1">
+                  <span className="text-xs">⚠️</span>
+                  {usernameStatusText}
+                </span>
+              ) : isUsernameValid === true ? (
+                <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1 mt-1">
+                  Username is available ✓
+                </span>
+              ) : (
+                <span className="text-[10px] text-slate-400 block mt-0.5">Global case-insensitive unique login ID</span>
+              )}
             </label>
           </div>
 
@@ -1481,8 +1679,8 @@ export default function TeamManagement({
             </button>
             <button
               type="submit"
-              disabled={managerSubmitLoading}
-              className="w-1/2 py-2.5 rounded-xl font-bold bg-[#0B3470] hover:bg-blue-800 text-white text-xs shadow-sm transition-colors flex items-center justify-center gap-2"
+              disabled={managerSubmitLoading || isCheckingUsername || isUsernameValid === false}
+              className="w-1/2 py-2.5 rounded-xl font-bold bg-[#0B3470] hover:bg-blue-800 text-white text-xs shadow-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
             >
               {managerSubmitLoading ? 'Saving Manager...' : '✓ Create Manager Account'}
             </button>

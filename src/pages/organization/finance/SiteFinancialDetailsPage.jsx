@@ -1,7 +1,9 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
+import { Image as ImageIcon } from 'lucide-react'
 import StatusBadge from '../../../components/common/StatusBadge'
 import ExportButton from '../../../components/common/ExportButton'
+import BillImagePreviewModal from '../../../components/common/BillImagePreviewModal'
 import { fetchSiteGranularExpenses } from '../../../services/financeService'
 import {
   amountValue,
@@ -24,6 +26,15 @@ export default function SiteFinancialDetailsPage({
   const [expenseSearch, setExpenseSearch] = useState('')
   const [expenseCategoryFilter, setExpenseCategoryFilter] = useState('all')
   const [expenseSort, setExpenseSort] = useState('newest')
+  const [previewModal, setPreviewModal] = useState({
+    isOpen: false,
+    imageUrl: '',
+    title: '',
+    vendor: '',
+    amount: '',
+    billNo: '',
+    date: '',
+  })
 
   const siteId = site.siteId || site.siteid || site.id || site.code || ''
   const siteName = site.siteName || site.sitename || site.projectName || site.name || siteId
@@ -220,6 +231,13 @@ export default function SiteFinancialDetailsPage({
         {/* Action Buttons */}
         <div className="flex items-center gap-2 flex-wrap">
           <Link
+            to="/organization/expenses"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-blue-50 text-blue-800 border border-blue-200/80 hover:bg-blue-100 transition-colors"
+          >
+            <span>🧾</span> Organization Expenses
+          </Link>
+
+          <Link
             to="/organization/petty-cash"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200/80 hover:bg-amber-100 transition-colors"
           >
@@ -251,11 +269,11 @@ export default function SiteFinancialDetailsPage({
       </div>
 
       {/* 2. Site Profile & Metadata Header Card */}
-      <div className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-xs space-y-5">
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-4 sm:p-6 shadow-xs space-y-4 sm:space-y-5">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100">
           <div className="space-y-1">
-            <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">{siteName}</h1>
+            <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap">
+              <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">{siteName}</h1>
               <span className="font-mono text-xs px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-700 font-semibold border border-slate-200">
                 {siteId}
               </span>
@@ -279,14 +297,14 @@ export default function SiteFinancialDetailsPage({
         </div>
 
         {/* 4-Item Metadata Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 text-xs">
           <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-1">
             <span className="text-slate-400 block font-medium">Category & Structure</span>
             <strong className="text-slate-900 block text-sm font-bold">{category} • {subCategory}</strong>
           </div>
           <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-1">
             <span className="text-slate-400 block font-medium">Client / Project Owner</span>
-            <strong className="text-slate-900 block text-sm font-bold">{ownerName}</strong>
+            <strong className="text-slate-900 block text-sm font-bold truncate">{ownerName}</strong>
             <small className="text-slate-500 block">{ownerPhone}</small>
           </div>
           <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-1">
@@ -300,62 +318,62 @@ export default function SiteFinancialDetailsPage({
         </div>
       </div>
 
-      {/* 3. 4-Column Executive Financial KPI Bento Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* 3. 4-Column Executive Financial KPI Bento Grid (2 cols on mobile, 4 on lg:) */}
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
         {/* Metric 1: Budget */}
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-3 relative overflow-hidden">
+        <div className="p-3.5 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-2 sm:space-y-3 relative overflow-hidden flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Contract Budget</span>
-            <span className="w-8 h-8 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center font-bold text-sm">
+            <span className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider">Contract Budget</span>
+            <span className="w-6 h-6 sm:w-8 sm:h-8 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center font-bold text-xs shrink-0">
               ₹
             </span>
           </div>
           <div>
-            <strong className="text-2xl font-extrabold text-slate-900 tracking-tight block font-mono">
+            <strong className="text-lg sm:text-xl lg:text-2xl font-extrabold text-slate-900 tracking-tight block font-mono truncate">
               {money(budget)}
             </strong>
-            <span className="text-xs text-slate-400 block mt-1">Total approved contract allocation</span>
+            <span className="text-[10px] sm:text-xs text-slate-400 block mt-0.5 sm:mt-1 line-clamp-1">Approved contract</span>
           </div>
         </div>
 
         {/* Metric 2: Customer Inflow */}
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-3 relative overflow-hidden">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Customer Inflow</span>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200">
-              ↓ {realizationPercent}% Realized
+        <div className="p-3.5 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-2 sm:space-y-3 relative overflow-hidden flex flex-col justify-between">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider">Customer Inflow</span>
+            <span className="px-1.5 py-0.2 sm:px-2 sm:py-0.5 rounded-full text-[9px] sm:text-[10px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+              ↓ {realizationPercent}%
             </span>
           </div>
           <div>
-            <strong className="text-2xl font-extrabold text-emerald-700 tracking-tight block font-mono">
+            <strong className="text-lg sm:text-xl lg:text-2xl font-extrabold text-emerald-700 tracking-tight block font-mono truncate">
               {money(received)}
             </strong>
-            <span className="text-xs text-slate-400 block mt-1">Invoiced milestone payments received</span>
+            <span className="text-[10px] sm:text-xs text-slate-400 block mt-0.5 sm:mt-1 line-clamp-1">Payments received</span>
           </div>
         </div>
 
         {/* Metric 3: Consolidated Expenses */}
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-3 relative overflow-hidden">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Expenses</span>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-50 text-rose-700 border border-rose-200">
-              ↑ {usagePercent}% Spent
+        <div className="p-3.5 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-2 sm:space-y-3 relative overflow-hidden flex flex-col justify-between">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider">Total Expenses</span>
+            <span className="px-1.5 py-0.2 sm:px-2 sm:py-0.5 rounded-full text-[9px] sm:text-[10px] font-extrabold bg-rose-50 text-rose-700 border border-rose-200 shrink-0">
+              ↑ {usagePercent}%
             </span>
           </div>
           <div>
-            <strong className="text-2xl font-extrabold text-rose-600 tracking-tight block font-mono">
+            <strong className="text-lg sm:text-xl lg:text-2xl font-extrabold text-rose-600 tracking-tight block font-mono truncate">
               {money(spent)}
             </strong>
-            <span className="text-xs text-slate-400 block mt-1">Actual consolidated project outflows</span>
+            <span className="text-[10px] sm:text-xs text-slate-400 block mt-0.5 sm:mt-1 line-clamp-1">Project outflows</span>
           </div>
         </div>
 
         {/* Metric 4: Cash in Hand / Margin */}
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-3 relative overflow-hidden">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Net Cash in Hand</span>
+        <div className="p-3.5 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-2 sm:space-y-3 relative overflow-hidden flex flex-col justify-between">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider">Net Cash in Hand</span>
             <span
-              className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border ${
+              className={`px-1.5 py-0.2 sm:px-2 sm:py-0.5 rounded-full text-[9px] sm:text-[10px] font-extrabold border shrink-0 ${
                 cashInHand >= 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'
               }`}
             >
@@ -364,25 +382,25 @@ export default function SiteFinancialDetailsPage({
           </div>
           <div>
             <strong
-              className={`text-2xl font-extrabold tracking-tight block font-mono ${
+              className={`text-lg sm:text-xl lg:text-2xl font-extrabold tracking-tight block font-mono truncate ${
                 cashInHand >= 0 ? 'text-purple-700' : 'text-rose-600'
               }`}
             >
               {money(cashInHand)}
             </strong>
-            <span className="text-xs text-slate-400 block mt-1">Net liquid balance (Received - Spent)</span>
+            <span className="text-[10px] sm:text-xs text-slate-400 block mt-0.5 sm:mt-1 line-clamp-1">Net liquid buffer</span>
           </div>
         </div>
       </div>
 
       {/* 4. Budget Utilization & Remaining Margin Cushion Bar */}
-      <div className="p-6 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-4">
+      <div className="p-4 sm:p-6 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-3 sm:space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Budget Cushion & Consumption</span>
             <div className="flex items-center gap-3 mt-1">
-              <span className="text-sm font-semibold text-slate-700">Remaining Budget Cushion:</span>
-              <strong className={`text-lg font-extrabold font-mono ${budgetRemaining >= 0 ? 'text-slate-900' : 'text-rose-600'}`}>
+              <span className="text-xs sm:text-sm font-semibold text-slate-700">Remaining Cushion:</span>
+              <strong className={`text-base sm:text-lg font-extrabold font-mono ${budgetRemaining >= 0 ? 'text-slate-900' : 'text-rose-600'}`}>
                 {money(budgetRemaining)}
               </strong>
             </div>
@@ -423,7 +441,7 @@ export default function SiteFinancialDetailsPage({
       </div>
 
       {/* 5. Site Petty Cash Float Banner */}
-      <div className="p-5 rounded-2xl bg-gradient-to-r from-slate-50 to-amber-50/40 border border-slate-200/90 flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-slate-50 to-amber-50/40 border border-slate-200/90 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="text-base text-amber-600">◈</span>
@@ -441,19 +459,19 @@ export default function SiteFinancialDetailsPage({
           <p className="text-xs text-slate-500">Supervisor on-site spendable cash allocation & emergency disbursements</p>
         </div>
 
-        <div className="grid grid-cols-3 gap-3 text-center">
-          <div className="p-2.5 rounded-xl bg-white border border-slate-200">
-            <span className="text-[10px] text-slate-400 block font-semibold">Disbursed</span>
-            <strong className="text-xs font-bold text-slate-800 font-mono">{money(pcReceived)}</strong>
+        <div className="grid grid-cols-3 gap-1.5 sm:gap-3 text-center">
+          <div className="p-2 sm:p-2.5 rounded-xl bg-white border border-slate-200">
+            <span className="text-[10px] text-slate-400 block font-semibold truncate">Disbursed</span>
+            <strong className="text-[11px] sm:text-xs font-bold text-slate-800 font-mono truncate block">{money(pcReceived)}</strong>
           </div>
-          <div className="p-2.5 rounded-xl bg-white border border-slate-200">
-            <span className="text-[10px] text-slate-400 block font-semibold">Spent</span>
-            <strong className="text-xs font-bold text-rose-600 font-mono">{money(pcSpent)}</strong>
+          <div className="p-2 sm:p-2.5 rounded-xl bg-white border border-slate-200">
+            <span className="text-[10px] text-slate-400 block font-semibold truncate">Spent</span>
+            <strong className="text-[11px] sm:text-xs font-bold text-rose-600 font-mono truncate block">{money(pcSpent)}</strong>
           </div>
-          <div className="p-2.5 rounded-xl bg-white border border-slate-200">
-            <span className="text-[10px] text-slate-400 block font-semibold">Remaining Float</span>
+          <div className="p-2 sm:p-2.5 rounded-xl bg-white border border-slate-200">
+            <span className="text-[10px] text-slate-400 block font-semibold truncate">Remaining</span>
             <strong
-              className={`text-xs font-bold font-mono ${
+              className={`text-[11px] sm:text-xs font-bold font-mono truncate block ${
                 pcRemaining >= 0 ? 'text-emerald-700' : 'text-rose-600'
               }`}
             >
@@ -465,7 +483,7 @@ export default function SiteFinancialDetailsPage({
 
       {/* 6. Standard Web Tabbed Interface */}
       <div className="space-y-4">
-        <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl overflow-x-auto w-fit">
+        <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl overflow-x-auto w-full max-w-full [scrollbar-width:none] [&::-webkit-scrollbar]:hidden touch-pan-x">
           {[
             { id: 'summary', label: 'Financial Health & Breakdown', icon: '📊' },
             { id: 'income', label: `Client Inflow Payments (${sitePaymentItems.length})`, icon: '💵' },
@@ -475,7 +493,7 @@ export default function SiteFinancialDetailsPage({
               key={t.id}
               type="button"
               onClick={() => setActiveTab(t.id)}
-              className={`px-3.5 py-2 text-xs font-bold flex items-center gap-2 rounded-lg transition-all whitespace-nowrap cursor-pointer ${
+              className={`px-3.5 py-2 text-xs font-bold flex items-center gap-2 rounded-lg transition-all whitespace-nowrap cursor-pointer shrink-0 ${
                 activeTab === t.id
                   ? 'bg-[#0B3470] text-white shadow-xs'
                   : 'text-slate-600 hover:text-slate-900 bg-transparent'
@@ -654,14 +672,18 @@ export default function SiteFinancialDetailsPage({
 
             {/* Standard Data Table for Payments */}
             <div className="bg-white border border-slate-200/90 rounded-2xl shadow-xs overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs text-slate-700">
+              <div className="sm:hidden flex items-center justify-between px-3 py-1.5 bg-emerald-50/70 border-b border-emerald-100 text-[10px] text-emerald-700 font-medium">
+                <span>← Swipe horizontally to view full ledger →</span>
+                <span className="font-mono">{sitePaymentItems.length} Records</span>
+              </div>
+              <div className="overflow-x-auto touch-pan-x [scrollbar-width:thin]">
+                <table className="w-full min-w-[620px] text-left text-xs text-slate-700">
                   <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
                     <tr>
-                      <th className="p-3.5">Milestone / Description</th>
-                      <th className="p-3.5">Payment Date</th>
-                      <th className="p-3.5">Payment Ref / Stage</th>
-                      <th className="p-3.5 text-right">Inflow Amount</th>
+                      <th className="p-3.5 whitespace-nowrap">Milestone / Description</th>
+                      <th className="p-3.5 whitespace-nowrap">Payment Date</th>
+                      <th className="p-3.5 whitespace-nowrap">Payment Ref / Stage</th>
+                      <th className="p-3.5 text-right whitespace-nowrap">Inflow Amount</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -682,15 +704,15 @@ export default function SiteFinancialDetailsPage({
                               </strong>
                               <span className="text-[11px] text-slate-400">Transaction ID: {p.id}</span>
                             </td>
-                            <td className="p-3.5 text-slate-600">
+                            <td className="p-3.5 text-slate-600 whitespace-nowrap">
                               {formatDate(p.paymentDate || p.date || p.createdAt)}
                             </td>
-                            <td className="p-3.5">
+                            <td className="p-3.5 whitespace-nowrap">
                               <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
                                 {p.stage || p.projectStage || 'Milestone Entry'}
                               </span>
                             </td>
-                            <td className="p-3.5 text-right font-mono font-extrabold text-sm text-emerald-700">
+                            <td className="p-3.5 text-right font-mono font-extrabold text-sm text-emerald-700 whitespace-nowrap">
                               + {money(amt)}
                             </td>
                           </tr>
@@ -710,7 +732,7 @@ export default function SiteFinancialDetailsPage({
             {/* Filter Toolbar for Itemized Expenses */}
             <div className="p-4 bg-white border border-slate-200/90 rounded-2xl shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
               {/* Search */}
-              <div className="relative flex-1 max-w-sm">
+              <div className="relative flex-1 w-full md:max-w-sm">
                 <span className="absolute inset-y-0 left-3 flex items-center text-slate-400 text-xs">⌕</span>
                 <input
                   type="text"
@@ -722,7 +744,7 @@ export default function SiteFinancialDetailsPage({
               </div>
 
               {/* Category Filter Pills & Actions */}
-              <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap w-full md:w-auto">
                 <select
                   value={expenseCategoryFilter}
                   onChange={(e) => setExpenseCategoryFilter(e.target.value)}
@@ -764,7 +786,7 @@ export default function SiteFinancialDetailsPage({
             </div>
 
             {/* Results Count & Filter Summary */}
-            <div className="flex items-center justify-between text-xs text-slate-500 px-1">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs text-slate-500 px-1">
               <span>
                 Showing <strong>{filteredGranularExpenses.length}</strong> of {granularExpenses.length} ledger entries
               </span>
@@ -775,8 +797,12 @@ export default function SiteFinancialDetailsPage({
 
             {/* Standard Data Table for Expenses */}
             <div className="bg-white border border-slate-200/90 rounded-2xl shadow-xs overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs text-slate-700">
+              <div className="sm:hidden flex items-center justify-between px-3 py-1.5 bg-blue-50/70 border-b border-blue-100 text-[10px] text-blue-700 font-medium">
+                <span>← Swipe horizontally to view itemized expenses →</span>
+                <span className="font-mono">6 Columns</span>
+              </div>
+              <div className="overflow-x-auto touch-pan-x [scrollbar-width:thin]">
+                <table className="w-full min-w-[680px] text-left text-xs text-slate-700">
                   <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
                     <tr>
                       <th className="p-3.5">Date</th>
@@ -784,19 +810,20 @@ export default function SiteFinancialDetailsPage({
                       <th className="p-3.5">Category</th>
                       <th className="p-3.5">Vendor / Payee</th>
                       <th className="p-3.5">Stage</th>
+                      <th className="p-3.5">Bill Document</th>
                       <th className="p-3.5 text-right">Amount</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {loadingExpenses ? (
                       <tr>
-                        <td colSpan={6} className="p-12 text-center text-slate-500 text-xs">
+                        <td colSpan={7} className="p-12 text-center text-slate-500 text-xs">
                           <span className="animate-pulse">Loading itemized expense ledger...</span>
                         </td>
                       </tr>
                     ) : filteredGranularExpenses.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="p-12 text-center text-slate-400 text-xs">
+                        <td colSpan={7} className="p-12 text-center text-slate-400 text-xs">
                           No granular expense vouchers matching the criteria.
                         </td>
                       </tr>
@@ -827,6 +854,31 @@ export default function SiteFinancialDetailsPage({
                               <span className="text-slate-400 text-[11px]">-</span>
                             )}
                           </td>
+                          <td className="p-3.5 whitespace-nowrap">
+                            {exp.billUrl || exp.imageUrl ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPreviewModal({
+                                    isOpen: true,
+                                    imageUrl: exp.billUrl || exp.imageUrl,
+                                    title: exp.title || 'Expense Document',
+                                    vendor: exp.vendorName || '',
+                                    amount: exp.amount || '',
+                                    billNo: exp.billNo || exp.id || '',
+                                    date: formatDate(exp.date),
+                                  })
+                                }
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 text-xs font-semibold transition-all cursor-pointer shadow-2xs"
+                                title="Click to view uploaded bill image"
+                              >
+                                <ImageIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                <span>View Bill</span>
+                              </button>
+                            ) : (
+                              <span className="text-[11px] text-slate-400 italic">-</span>
+                            )}
+                          </td>
                           <td className="p-3.5 text-right font-mono font-extrabold text-sm text-rose-600 whitespace-nowrap">
                             - {money(exp.amount)}
                           </td>
@@ -840,6 +892,18 @@ export default function SiteFinancialDetailsPage({
           </div>
         )}
       </div>
+
+      {/* Universal Bill Image / Document Previewer Modal */}
+      <BillImagePreviewModal
+        isOpen={previewModal.isOpen}
+        onClose={() => setPreviewModal({ ...previewModal, isOpen: false })}
+        imageUrl={previewModal.imageUrl}
+        title={previewModal.title}
+        vendor={previewModal.vendor}
+        amount={previewModal.amount}
+        billNo={previewModal.billNo}
+        date={previewModal.date}
+      />
     </div>
   )
 }

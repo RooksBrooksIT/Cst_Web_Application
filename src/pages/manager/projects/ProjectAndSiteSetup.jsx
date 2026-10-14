@@ -39,6 +39,8 @@ import {
 import {
   fetchSupervisors,
 } from '../../../services/supervisorService'
+import { SubscriptionLimitService } from '../../../services/subscriptionLimitService'
+import SubscriptionLimitModal from '../../../components/common/SubscriptionLimitModal'
 import Modal from '../../../components/common/Modal'
 
 function money(amount) {
@@ -57,6 +59,11 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
   const initialTab = searchParams.get('tab') === 'update' ? 'update' : 'create'
   const initialSiteId = searchParams.get('siteId') || ''
   const [activeTab, setActiveTab] = useState(initialTab)
+
+  // Subscription Limit States
+  const [planLimits, setPlanLimits] = useState(null)
+  const [limitModalOpen, setLimitModalOpen] = useState(false)
+  const [limitModalData, setLimitModalData] = useState(null)
 
   // Guided Stepper Step for Create Mode: 1 | 2 | 3
   const [step, setStep] = useState(1)
@@ -107,6 +114,35 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
       unsubProjects()
     }
   }, [orgId])
+
+  // Real-time Plan Limits
+  useEffect(() => {
+    if (!orgId) return
+    SubscriptionLimitService.getActivePlanLimits(orgId)
+      .then(setPlanLimits)
+      .catch(console.error)
+  }, [orgId])
+
+  const handleSwitchToCreateTab = async () => {
+    if (orgId) {
+      try {
+        const check = await SubscriptionLimitService.canCreateSite({
+          orgId,
+          currentPlanName: planLimits?.planName,
+          currentSitesCount: existingProjects.length,
+        })
+        if (check.allowed === false || check.isAllowed === false) {
+          setLimitModalData(check)
+          setLimitModalOpen(true)
+          return
+        }
+      } catch (err) {
+        console.warn('Quota check error:', err)
+      }
+    }
+    setActiveTab('create')
+    setSearchParams({})
+  }
 
   // =========================================================================
   // TAB 1: CREATE NEW SITE STATE
@@ -169,8 +205,22 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
   // Financial Computations for Step 2
   const budgetNum = Number(formData.projectBudget) || 0
   const paidNum = Number(formData.amountPaid) || 0
-  const balanceRemaining = Math.max(0, budgetNum - paidNum)
-  const receivedPercentage = budgetNum > 0 ? Math.min(100, Math.round((paidNum / budgetNum) * 100)) : 0
+
+  // Real-time Validation: Initial Amount Paid / Advance must not be greater than Total Project Budget
+  const isAdvanceExceedingBudget = Boolean(
+    paidNum > 0 && paidNum > budgetNum
+  )
+
+  // Do not calculate a negative or invalid remaining balance when advance exceeds budget
+  const balanceRemaining = isAdvanceExceedingBudget ? 0 : Math.max(0, budgetNum - paidNum)
+  const receivedPercentage = budgetNum > 0 ? (isAdvanceExceedingBudget ? 100 : Math.min(100, Math.round((paidNum / budgetNum) * 100))) : 0
+
+  // Automatically clear budget validation banner message once valid advance is entered
+  useEffect(() => {
+    if (!isAdvanceExceedingBudget && errorMsg === 'Initial amount cannot be greater than the project budget.') {
+      setErrorMsg('')
+    }
+  }, [isAdvanceExceedingBudget, errorMsg])
 
   // Browser GPS Location Fetcher
   const handleFetchGps = () => {
@@ -198,6 +248,20 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
     )
   }
 
+  // Date Range Validation: End date must be strictly after start date
+  const isDateRangeInvalid = Boolean(
+    formData.plannedStartDate &&
+    formData.plannedEndDate &&
+    new Date(formData.plannedEndDate).getTime() <= new Date(formData.plannedStartDate).getTime()
+  )
+
+  // Automatically clear date validation banner message once valid dates are selected
+  useEffect(() => {
+    if (!isDateRangeInvalid && errorMsg === 'End date must be after the start date.') {
+      setErrorMsg('')
+    }
+  }, [isDateRangeInvalid, errorMsg])
+
   // Step 1 Validation
   const validateStep1 = () => {
     if (!formData.siteName.trim()) {
@@ -208,11 +272,9 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
       setErrorMsg('Location Address is required')
       return false
     }
-    if (formData.plannedStartDate && formData.plannedEndDate) {
-      if (new Date(formData.plannedEndDate) < new Date(formData.plannedStartDate)) {
-        setErrorMsg('Planned End Date must be on or after Planned Start Date')
-        return false
-      }
+    if (isDateRangeInvalid) {
+      setErrorMsg('End date must be after the start date.')
+      return false
     }
     setErrorMsg('')
     return true
@@ -233,8 +295,8 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
       setErrorMsg('Owner Phone Number must be exactly 10 digits')
       return false
     }
-    if (paidNum > budgetNum && budgetNum > 0) {
-      setErrorMsg('Initial Amount Paid / Advance cannot exceed Total Project Budget')
+    if (isAdvanceExceedingBudget) {
+      setErrorMsg('Initial amount cannot be greater than the project budget.')
       return false
     }
     setErrorMsg('')
@@ -244,6 +306,7 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
   // Step 3 & Final Submission
   const handleCreateSubmit = async (e) => {
     if (e) e.preventDefault()
+    if (!validateStep1() || !validateStep2()) return
     if (!formData.termsAgreed) {
       setErrorMsg('Please review and confirm compliance with project standards')
       return
@@ -252,6 +315,18 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
     setSubmitting(true)
     setErrorMsg('')
     try {
+      const limitCheck = await SubscriptionLimitService.canCreateSite({
+        orgId,
+        currentPlanName: planLimits?.planName,
+        currentSitesCount: existingProjects.length,
+      })
+      if (limitCheck.allowed === false || limitCheck.isAllowed === false) {
+        setLimitModalData(limitCheck)
+        setLimitModalOpen(true)
+        setSubmitting(false)
+        return
+      }
+
       const managerActor = {
         id: currentUser?.uid || 'mgr_lead',
         name: currentUser?.displayName || currentUser?.fullName || 'Operations Manager',
@@ -260,10 +335,24 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
       const result = await createProjectAndSiteAtomic(orgId, formData, managerActor)
       setSuccessModalData(result)
       onNotify?.(`Project & Site "${result.siteName}" created successfully!`, 'success')
+      if (orgId) {
+        SubscriptionLimitService.getActivePlanLimits(orgId).then(setPlanLimits).catch(console.error)
+      }
     } catch (err) {
       console.error(err)
-      setErrorMsg(err.message || 'Failed to create project and site')
-      onNotify?.(err.message || 'Failed to create project and site', 'error')
+      if (err.code === 'SUBSCRIPTION_LIMIT_REACHED' || err.code === 'SITE_LIMIT_REACHED' || err.code === 'SUBSCRIPTION_EXPIRED' || err.details) {
+        setLimitModalData(err.details || {
+          reason: err.code === 'SUBSCRIPTION_EXPIRED' ? 'SUBSCRIPTION_EXPIRED' : 'SITE_LIMIT_REACHED',
+          planName: planLimits?.planName || 'Current Plan',
+          currentCount: existingProjects.length,
+          maxLimit: planLimits?.quotas?.maxProjects || planLimits?.maxProjects,
+          message: err.message,
+        })
+        setLimitModalOpen(true)
+      } else {
+        setErrorMsg(err.message || 'Failed to create project and site')
+        onNotify?.(err.message || 'Failed to create project and site', 'error')
+      }
     } finally {
       setSubmitting(false)
     }
@@ -509,36 +598,46 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
           </p>
         </div>
 
-        {/* Dual Tab Switcher */}
-        <div className="flex items-center gap-1 bg-slate-100 p-1.5 rounded-xl self-start sm:self-auto">
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('create')
-              setSearchParams({})
-            }}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 'create'
-                ? 'bg-[#0B3470] text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <span>＋</span> Create New Site
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('update')
-              setSearchParams({ tab: 'update' })
-            }}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 'update'
-                ? 'bg-[#0B3470] text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <span>✏️</span> Update Site
-          </button>
+        {/* Dual Tab Switcher & Quota */}
+        <div className="flex flex-wrap items-center gap-3">
+          {(planLimits?.quotas || planLimits?.maxProjects) && (
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+              <span className="text-slate-500 font-medium">Site Quota:</span>
+              <span className="font-bold text-slate-800">
+                {existingProjects.length} / {(planLimits.quotas?.maxProjects ?? planLimits.maxProjects) >= 999999 ? '∞' : (planLimits.quotas?.maxProjects ?? planLimits.maxProjects)}
+              </span>
+              <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                {planLimits.planName}
+              </span>
+            </div>
+          )}
+          <div className="flex items-center gap-1 bg-slate-100 p-1.5 rounded-xl self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={handleSwitchToCreateTab}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'create'
+                  ? 'bg-[#0B3470] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>＋</span> Create New Site
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('update')
+                setSearchParams({ tab: 'update' })
+              }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'update'
+                  ? 'bg-[#0B3470] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>✏️</span> Update Site
+            </button>
+          </div>
         </div>
       </div>
 
@@ -724,8 +823,18 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
                       type="date"
                       value={formData.plannedEndDate}
                       onChange={(e) => setFormData({ ...formData, plannedEndDate: e.target.value })}
-                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-500/20"
+                      className={`w-full px-3.5 py-2.5 bg-slate-50 rounded-xl text-xs font-semibold text-slate-900 focus:bg-white focus:ring-2 transition-colors ${
+                        isDateRangeInvalid
+                          ? 'border-2 border-rose-500 focus:ring-rose-500/20 focus:border-rose-500 text-rose-900'
+                          : 'border border-slate-200 focus:ring-blue-500/20'
+                      }`}
                     />
+                    {isDateRangeInvalid && (
+                      <p className="text-[11px] font-semibold text-rose-600 flex items-center gap-1 mt-1">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                        <span>End date must be after the start date.</span>
+                      </p>
+                    )}
                   </div>
 
                   <div className="space-y-1.5 md:col-span-2">
@@ -753,10 +862,15 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
                 <div className="flex items-center justify-end pt-5 border-t border-slate-100">
                   <button
                     type="button"
+                    disabled={isDateRangeInvalid}
                     onClick={() => {
-                      if (validateStep1()) setStep(2)
+                      if (!isDateRangeInvalid && validateStep1()) setStep(2)
                     }}
-                    className="px-6 py-2.5 bg-[#0B3470] hover:bg-blue-800 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-2 cursor-pointer"
+                    className={`px-6 py-2.5 rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-2 ${
+                      isDateRangeInvalid
+                        ? 'bg-slate-300 text-slate-500 cursor-not-allowed opacity-60'
+                        : 'bg-[#0B3470] hover:bg-blue-800 text-white cursor-pointer'
+                    }`}
                   >
                     <span>Next: Project Scope & Budget</span>
                     <ArrowRight className="w-4 h-4" />
@@ -851,31 +965,53 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
                       value={formData.amountPaid}
                       onChange={(e) => setFormData({ ...formData, amountPaid: e.target.value })}
                       placeholder="e.g. 1500000"
-                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-500/20 font-mono"
+                      className={`w-full px-3.5 py-2.5 bg-slate-50 rounded-xl text-xs font-semibold text-slate-900 focus:bg-white focus:ring-2 font-mono transition-colors ${
+                        isAdvanceExceedingBudget
+                          ? 'border-2 border-rose-500 focus:ring-rose-500/20 focus:border-rose-500 text-rose-900'
+                          : 'border border-slate-200 focus:ring-blue-500/20'
+                      }`}
                     />
+                    {isAdvanceExceedingBudget && (
+                      <p className="text-[11px] font-semibold text-rose-600 flex items-center gap-1 mt-1">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                        <span>Initial amount cannot be greater than the project budget.</span>
+                      </p>
+                    )}
                   </div>
 
                   {/* Interactive Financial Preview Card */}
-                  <div className="md:col-span-2 p-4 rounded-xl bg-blue-50/50 border border-blue-200 space-y-3">
+                  <div className={`md:col-span-2 p-4 rounded-xl border space-y-3 transition-colors ${
+                    isAdvanceExceedingBudget ? 'bg-rose-50/40 border-rose-200' : 'bg-blue-50/50 border-blue-200'
+                  }`}>
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
                       <div>
-                        <span className="text-blue-700 font-bold uppercase tracking-wider text-[10px]">Financial Float Summary</span>
+                        <span className={`font-bold uppercase tracking-wider text-[10px] ${
+                          isAdvanceExceedingBudget ? 'text-rose-700' : 'text-blue-700'
+                        }`}>
+                          Financial Float Summary
+                        </span>
                         <div className="flex items-center gap-4 mt-1 font-bold">
                           <span>Budget: <strong className="text-slate-900">{money(budgetNum)}</strong></span>
-                          <span>Advance Paid: <strong className="text-blue-800">{money(paidNum)}</strong></span>
-                          <span>Balance: <strong className="text-emerald-700">{money(balanceRemaining)}</strong></span>
+                          <span>Advance Paid: <strong className={isAdvanceExceedingBudget ? 'text-rose-700' : 'text-blue-800'}>{money(paidNum)}</strong></span>
+                          <span>Balance: <strong className={isAdvanceExceedingBudget ? 'text-rose-600' : 'text-emerald-700'}>{money(balanceRemaining)}</strong></span>
                         </div>
                       </div>
-                      <span className="text-xs font-extrabold text-blue-900 bg-blue-100 px-2.5 py-1 rounded-lg self-start sm:self-auto">
-                        {receivedPercentage}% Funded
+                      <span className={`text-xs font-extrabold px-2.5 py-1 rounded-lg self-start sm:self-auto ${
+                        isAdvanceExceedingBudget ? 'text-rose-900 bg-rose-100' : 'text-blue-900 bg-blue-100'
+                      }`}>
+                        {isAdvanceExceedingBudget ? 'Budget Exceeded' : `${receivedPercentage}% Funded`}
                       </span>
                     </div>
 
                     {/* Progress Bar */}
-                    <div className="w-full h-2.5 bg-blue-100 rounded-full overflow-hidden">
+                    <div className={`w-full h-2.5 rounded-full overflow-hidden ${
+                      isAdvanceExceedingBudget ? 'bg-rose-100' : 'bg-blue-100'
+                    }`}>
                       <div
-                        className="h-full bg-[#0B3470] transition-all duration-500 rounded-full"
-                        style={{ width: `${receivedPercentage}%` }}
+                        className={`h-full transition-all duration-500 rounded-full ${
+                          isAdvanceExceedingBudget ? 'bg-rose-500' : 'bg-[#0B3470]'
+                        }`}
+                        style={{ width: `${isAdvanceExceedingBudget ? 100 : receivedPercentage}%` }}
                       />
                     </div>
                   </div>
@@ -1013,10 +1149,15 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
                   </button>
                   <button
                     type="button"
+                    disabled={isAdvanceExceedingBudget}
                     onClick={() => {
-                      if (validateStep2()) setStep(3)
+                      if (!isAdvanceExceedingBudget && validateStep2()) setStep(3)
                     }}
-                    className="px-6 py-2.5 bg-[#0B3470] hover:bg-blue-800 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-2 cursor-pointer"
+                    className={`px-6 py-2.5 rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-2 ${
+                      isAdvanceExceedingBudget
+                        ? 'bg-slate-300 text-slate-500 cursor-not-allowed opacity-60'
+                        : 'bg-[#0B3470] hover:bg-blue-800 text-white cursor-pointer'
+                    }`}
                   >
                     <span>Next: Supervisor Assignment</span>
                     <ArrowRight className="w-4 h-4" />
@@ -1156,7 +1297,7 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
                   </button>
                   <button
                     type="button"
-                    disabled={!formData.termsAgreed || submitting}
+                    disabled={!formData.termsAgreed || submitting || isAdvanceExceedingBudget}
                     onClick={handleCreateSubmit}
                     className="px-6 py-2.5 bg-[#0B3470] hover:bg-blue-800 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
                   >
@@ -1912,6 +2053,13 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
           </div>
         </Modal>
       )}
+
+      {/* Subscription Limit Modal */}
+      <SubscriptionLimitModal
+        isOpen={limitModalOpen}
+        onClose={() => setLimitModalOpen(false)}
+        limitData={limitModalData}
+      />
     </div>
   )
 }

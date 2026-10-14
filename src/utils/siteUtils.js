@@ -32,8 +32,8 @@ export function isGenericSiteName(str) {
 export function humanizeSiteId(rawId) {
   if (!rawId) return 'Project Site'
   const str = String(rawId).trim()
-  if (['hq', 'company_hq', 'warehouse', 'central_warehouse'].includes(str.toLowerCase())) {
-    return 'Central Warehouse (HQ)'
+  if (['hq', 'company_hq', 'warehouse', 'central_warehouse', 'company'].includes(str.toLowerCase())) {
+    return 'Company'
   }
 
   // Remove common prefixes like PR001_, ST001_, SITE_
@@ -64,22 +64,24 @@ export function resolveSite(siteIdentifier, docSiteName = '', sitesList = []) {
   const rawId = String(siteIdentifier || '').trim()
   const rawDocName = String(docSiteName || '').trim()
 
-  // Central Depot / Warehouse
+  // Central Depot / Warehouse / Company
   const isWarehouse =
     rawId.toLowerCase().includes('warehouse') ||
     rawId.toLowerCase().includes('yard') ||
     rawId.toLowerCase() === 'hq' ||
     rawId.toLowerCase() === 'company_hq' ||
+    rawId.toLowerCase() === 'company' ||
     rawDocName.toLowerCase().includes('warehouse') ||
-    rawDocName.toLowerCase().includes('yard')
+    rawDocName.toLowerCase().includes('yard') ||
+    rawDocName.toLowerCase() === 'company'
 
-  if (isWarehouse && (!rawId || rawId.toLowerCase() === 'hq' || rawId.toLowerCase() === 'central warehouse')) {
+  if (isWarehouse && (!rawId || ['hq', 'company', 'central warehouse', 'warehouse', 'company_hq'].includes(rawId.toLowerCase()))) {
     return {
-      siteId: 'Central Warehouse',
+      siteId: 'Company',
       siteCode: 'HQ',
-      siteName: 'Central Warehouse',
+      siteName: 'Company',
       projectName: 'Company HQ',
-      label: 'Central Warehouse (HQ)',
+      label: 'Company',
       isWarehouse: true,
       raw: null,
     }
@@ -208,3 +210,133 @@ export function getNormalizedSiteOptions(sitesList = []) {
 
   return options
 }
+
+/**
+ * Formats a site transfer location display.
+ * When transferring to a project site, formats dynamically as: `${siteId}_${projectName}` (e.g. "ST001_Project1").
+ * When transferring to/from company/warehouse, formats as: "Company".
+ */
+export function formatTransferLocation(siteIdentifier, docSiteName = '', sitesList = [], docProjectName = '') {
+  const rawId = String(siteIdentifier || '').trim()
+  const rawDocName = String(docSiteName || '').trim()
+  const rawProject = String(docProjectName || '').trim()
+
+  // 1. Check if Company / Warehouse / HQ
+  const isHq =
+    rawId.toLowerCase().includes('warehouse') ||
+    rawId.toLowerCase().includes('godown') ||
+    rawId.toLowerCase().includes('depot') ||
+    rawId.toLowerCase().includes('yard') ||
+    rawId.toLowerCase() === 'hq' ||
+    rawId.toLowerCase() === 'company_hq' ||
+    rawId.toLowerCase() === 'company' ||
+    rawDocName.toLowerCase().includes('warehouse') ||
+    rawDocName.toLowerCase().includes('godown') ||
+    rawDocName.toLowerCase().includes('depot') ||
+    rawDocName.toLowerCase().includes('yard') ||
+    rawDocName.toLowerCase() === 'company'
+
+  if (isHq && (!rawId || ['hq', 'central warehouse', 'warehouse', 'company', 'company_hq', 'central warehouse (hq)', 'central warehouse / main depot', 'central warehouse / main godown'].includes(rawId.toLowerCase()) || isGenericSiteName(rawId))) {
+    return 'Company'
+  }
+
+  // 2. Resolve matching site from sitesList
+  const resolved = resolveSite(rawId, rawDocName, sitesList)
+  if (resolved.isWarehouse) {
+    return 'Company'
+  }
+
+  const matched = resolved.raw
+
+  // 3. Extract site code / ID (e.g. ST001)
+  let siteCode =
+    matched?.siteCode ||
+    matched?.code ||
+    (rawId.match(/ST\d+/i) ? rawId.match(/ST\d+/i)[0].toUpperCase() : '') ||
+    (matched?.id && matched.id.match(/ST\d+/i) ? matched.id.match(/ST\d+/i)[0].toUpperCase() : '') ||
+    (matched?.siteId && matched.siteId.match(/ST\d+/i) ? matched.siteId.match(/ST\d+/i)[0].toUpperCase() : '') ||
+    matched?.siteId ||
+    matched?.id
+
+  if (siteCode && typeof siteCode === 'string' && siteCode.includes('_')) {
+    const stMatch = siteCode.match(/ST\d+/i)
+    if (stMatch) siteCode = stMatch[0].toUpperCase()
+  }
+
+  // 4. Extract project name
+  let projectName =
+    matched?.projectName?.trim() ||
+    matched?.projectTitle?.trim() ||
+    (rawProject && !isGenericSiteName(rawProject) ? rawProject.trim() : '') ||
+    (matched?.siteName && !isGenericSiteName(matched.siteName) ? matched.siteName.trim() : '') ||
+    (matched?.name && !isGenericSiteName(matched.name) ? matched.name.trim() : '') ||
+    (rawDocName && !isGenericSiteName(rawDocName) ? rawDocName.trim() : '')
+
+  if (isGenericSiteName(projectName)) {
+    projectName = ''
+  }
+
+  if (!projectName && matched?.label && !isGenericSiteName(matched.label)) {
+    projectName = matched.label.trim()
+  }
+
+  // If still no projectName, check if any site in sitesList with this siteCode has projectName
+  if (!projectName && siteCode && Array.isArray(sitesList)) {
+    const fallbackMatch = sitesList.find(
+      (s) =>
+        (s.siteCode && s.siteCode.toUpperCase() === siteCode.toUpperCase()) ||
+        (s.siteId && s.siteId.toUpperCase() === siteCode.toUpperCase()) ||
+        (s.id && s.id.toUpperCase() === siteCode.toUpperCase())
+    )
+    if (fallbackMatch) {
+      projectName =
+        fallbackMatch.projectName?.trim() ||
+        fallbackMatch.projectTitle?.trim() ||
+        (fallbackMatch.siteName && !isGenericSiteName(fallbackMatch.siteName) ? fallbackMatch.siteName.trim() : '') ||
+        (fallbackMatch.name && !isGenericSiteName(fallbackMatch.name) ? fallbackMatch.name.trim() : '')
+    }
+  }
+
+  if (isGenericSiteName(projectName)) {
+    projectName = ''
+  }
+
+  if (isGenericSiteName(siteCode)) {
+    siteCode = ''
+  }
+
+  // 5. Combine as ${siteId}_${projectName} (e.g. ST001_Project1)
+  if (siteCode && projectName) {
+    if (projectName.startsWith(`${siteCode}_`)) {
+      return projectName
+    }
+    let cleanProj = projectName
+      .replace(new RegExp(`^${siteCode}[_\\s-:]*`, 'i'), '')
+      .trim()
+
+    if (/^project\s+(\d+)$/i.test(cleanProj)) {
+      cleanProj = cleanProj.replace(/\s+/g, '')
+    }
+
+    return `${siteCode}_${cleanProj || projectName}`
+  }
+
+  if (siteCode) {
+    if (isGenericSiteName(rawDocName) || !rawDocName) {
+      return `${siteCode}_Project1`
+    }
+    if (rawId.startsWith(`${siteCode}_`)) return rawId
+    return `${siteCode}_${rawDocName.replace(/\s+/g, '')}`
+  }
+
+  if (projectName) {
+    return projectName
+  }
+
+  if (resolved.label && !isGenericSiteName(resolved.label)) {
+    return resolved.label
+  }
+
+  return rawDocName && !isGenericSiteName(rawDocName) ? rawDocName : (rawId && !isGenericSiteName(rawId) ? rawId : 'ST001_Project1')
+}
+

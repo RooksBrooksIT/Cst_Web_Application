@@ -1,6 +1,7 @@
 import { signInWithEmailAndPassword } from 'firebase/auth'
 import { collection, collectionGroup, doc, getDoc, getDocs } from 'firebase/firestore'
 import { auth, db, persistenceReady } from './firebase.js'
+import { ensureStorageAuthenticated } from './appStorageService.js'
 
 
 const SESSION_KEY = 'constructa_session'
@@ -200,6 +201,13 @@ async function loginManager(identifier, password) {
 
       // 2. Validate Password against Manager credentials
       if (storedPassword && storedPassword === rawPassword) {
+        if (email && email.includes('@')) {
+          await authenticate(email, rawPassword).catch(() => null)
+        }
+        if (!auth.currentUser && orgId) {
+          await ensureStorageAuthenticated(orgId).catch(() => null)
+        }
+
         return createSession(managerId || docId, email || `${userName || docId}@ebricks.local`, orgId, 'Manager', {
           ...data,
           Email: email,

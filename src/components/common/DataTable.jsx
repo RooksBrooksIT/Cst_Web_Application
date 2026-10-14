@@ -35,14 +35,18 @@ export default function DataTable({
 
   return (
     <div className="bg-white border border-slate-200/90 rounded-2xl shadow-xs overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-xs text-slate-700">
+      <div className="sm:hidden flex items-center justify-between px-3 py-1.5 bg-slate-50 border-b border-slate-100 text-[10px] text-slate-500 font-medium">
+        <span>← Swipe horizontally to view full table →</span>
+        <span>{columns.length} Columns</span>
+      </div>
+      <div className="overflow-x-auto touch-pan-x [scrollbar-width:thin]">
+        <table className="w-full min-w-[680px] text-left text-xs text-slate-700">
           <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
             <tr>
               {columns.map((col, idx) => (
                 <th
                   key={idx}
-                  className={`p-3.5 ${col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'} ${col.className || ''}`}
+                  className={`p-3.5 whitespace-nowrap ${col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'} ${col.className || ''}`}
                 >
                   {col.header}
                 </th>
@@ -82,7 +86,7 @@ export default function DataTable({
       </div>
 
       {totalPages > 1 && (
-        <div className="flex items-center justify-between px-4 py-3 bg-slate-50 border-t border-slate-100 text-xs text-slate-500">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 px-4 py-3 bg-slate-50 border-t border-slate-100 text-xs text-slate-500">
           <span>
             Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, filteredData.length)} of {filteredData.length} records
           </span>
@@ -91,7 +95,7 @@ export default function DataTable({
               type="button"
               disabled={page === 1}
               onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 disabled:opacity-40 hover:bg-slate-50"
+              className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 disabled:opacity-40 hover:bg-slate-50 cursor-pointer disabled:cursor-not-allowed"
             >
               Previous
             </button>
@@ -102,7 +106,7 @@ export default function DataTable({
               type="button"
               disabled={page === totalPages}
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 disabled:opacity-40 hover:bg-slate-50"
+              className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 disabled:opacity-40 hover:bg-slate-50 cursor-pointer disabled:cursor-not-allowed"
             >
               Next
             </button>

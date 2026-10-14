@@ -322,7 +322,7 @@ export default function OrgFinancePage({
             <span>Financial Command Center</span>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
+            <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
               Financial Management & Site Ledgers
             </h1>
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-2xs">
@@ -336,7 +336,13 @@ export default function OrgFinancePage({
         </div>
 
         {/* Quick Navigation & Export Action */}
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap w-full lg:w-auto">
+          <Link
+            to="/organization/expenses"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-blue-50 text-blue-800 border border-blue-200/80 hover:bg-blue-100 transition-colors shadow-2xs"
+          >
+            <span>🧾</span> Organization Expenses
+          </Link>
           <Link
             to="/organization/petty-cash"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200/80 hover:bg-amber-100 transition-colors shadow-2xs"
@@ -389,90 +395,97 @@ export default function OrgFinancePage({
         </div>
       </div>
 
-      {/* 2. Executive Financial KPI Bento Grid (5 Cards) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      {/* 2. Executive Financial KPI Bento Grid (5 Cards - 2 cols on mobile, 5 on lg) */}
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 sm:gap-4">
         {/* KPI 1: Total Budget */}
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-2 relative overflow-hidden">
-          <div className="flex items-center justify-between text-xs text-slate-500 font-bold uppercase tracking-wider">
+        <div className="p-3.5 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1.5 sm:space-y-2 relative overflow-hidden flex flex-col justify-between">
+          <div className="flex items-center justify-between text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wider">
             <span>Portfolio Budget</span>
-            <span className="w-7 h-7 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center font-bold text-xs">
+            <span className="w-6 h-6 sm:w-7 sm:h-7 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center font-bold text-xs shrink-0">
               ₹
             </span>
           </div>
-          <strong className="text-xl lg:text-2xl font-extrabold text-slate-900 tracking-tight block font-mono">
-            {money(globalTotalBudget)}
-          </strong>
-          <span className="text-[11px] text-slate-400 block">Across {sites.length} registered project sites</span>
+          <div>
+            <strong className="text-lg sm:text-xl lg:text-2xl font-extrabold text-slate-900 tracking-tight block font-mono truncate">
+              {money(globalTotalBudget)}
+            </strong>
+            <span className="text-[10px] sm:text-[11px] text-slate-400 block line-clamp-1 mt-0.5">Across {sites.length} sites</span>
+          </div>
         </div>
 
         {/* KPI 2: Total Customer Inflow */}
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-2 relative overflow-hidden">
-          <div className="flex items-center justify-between text-xs text-slate-500 font-bold uppercase tracking-wider">
+        <div className="p-3.5 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1.5 sm:space-y-2 relative overflow-hidden flex flex-col justify-between">
+          <div className="flex items-center justify-between text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wider gap-1">
             <span>Total Inflow</span>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200">
-              ↓ {globalRealizationPercent}% Realized
+            <span className="px-1.5 py-0.2 sm:px-2 sm:py-0.5 rounded-full text-[9px] sm:text-[10px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+              ↓ {globalRealizationPercent}%
             </span>
           </div>
-          <strong className="text-xl lg:text-2xl font-extrabold text-emerald-700 tracking-tight block font-mono">
-            {money(globalTotalIncome)}
-          </strong>
-          <span className="text-[11px] text-slate-400 block">Total client milestone payments</span>
+          <div>
+            <strong className="text-lg sm:text-xl lg:text-2xl font-extrabold text-emerald-700 tracking-tight block font-mono truncate">
+              {money(globalTotalIncome)}
+            </strong>
+            <span className="text-[10px] sm:text-[11px] text-slate-400 block line-clamp-1 mt-0.5">Payments received</span>
+          </div>
         </div>
 
         {/* KPI 3: Total Expenses */}
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-2 relative overflow-hidden">
-          <div className="flex items-center justify-between text-xs text-slate-500 font-bold uppercase tracking-wider">
+        <div className="p-3.5 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1.5 sm:space-y-2 relative overflow-hidden flex flex-col justify-between">
+          <div className="flex items-center justify-between text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wider gap-1">
             <span>Total Expenses</span>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-50 text-rose-700 border border-rose-200">
-              ↑ {globalUsagePercent}% Burn
+            <span className="px-1.5 py-0.2 sm:px-2 sm:py-0.5 rounded-full text-[9px] sm:text-[10px] font-extrabold bg-rose-50 text-rose-700 border border-rose-200 shrink-0">
+              ↑ {globalUsagePercent}%
             </span>
           </div>
-          <strong className="text-xl lg:text-2xl font-extrabold text-rose-600 tracking-tight block font-mono">
-            {money(globalTotalExpenses)}
-          </strong>
-          <span className="text-[11px] text-slate-400 block">Consolidated outflows across all sites</span>
+          <div>
+            <strong className="text-lg sm:text-xl lg:text-2xl font-extrabold text-rose-600 tracking-tight block font-mono truncate">
+              {money(globalTotalExpenses)}
+            </strong>
+            <span className="text-[10px] sm:text-[11px] text-slate-400 block line-clamp-1 mt-0.5">Project outflows</span>
+          </div>
         </div>
 
         {/* KPI 4: Operating Liquidity (Cash in Hand) */}
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-2 relative overflow-hidden">
-          <div className="flex items-center justify-between text-xs text-slate-500 font-bold uppercase tracking-wider">
+        <div className="p-3.5 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1.5 sm:space-y-2 relative overflow-hidden flex flex-col justify-between">
+          <div className="flex items-center justify-between text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wider gap-1">
             <span>Cash in Hand</span>
             <span
-              className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border ${
-                globalCashInHand >= 0
+              className={`px-1.5 py-0.2 sm:px-2 sm:py-0.5 rounded-full text-[9px] sm:text-[10px] font-extrabold border shrink-0 ${globalCashInHand >= 0
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                   : 'bg-rose-50 text-rose-700 border-rose-200'
-              }`}
+                }`}
             >
               {globalCashInHand >= 0 ? 'Surplus' : 'Deficit'}
             </span>
           </div>
-          <strong
-            className={`text-xl lg:text-2xl font-extrabold tracking-tight block font-mono ${
-              globalCashInHand >= 0 ? 'text-purple-700' : 'text-rose-600'
-            }`}
-          >
-            {money(globalCashInHand)}
-          </strong>
-          <span className="text-[11px] text-slate-400 block">Net operating liquidity buffer</span>
+          <div>
+            <strong
+              className={`text-lg sm:text-xl lg:text-2xl font-extrabold tracking-tight block font-mono truncate ${globalCashInHand >= 0 ? 'text-purple-700' : 'text-rose-600'
+                }`}
+            >
+              {money(globalCashInHand)}
+            </strong>
+            <span className="text-[10px] sm:text-[11px] text-slate-400 block line-clamp-1 mt-0.5">Operating buffer</span>
+          </div>
         </div>
 
-        {/* KPI 5: Budget Remaining Cushion */}
-        <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-2 relative overflow-hidden">
-          <div className="flex items-center justify-between text-xs text-slate-500 font-bold uppercase tracking-wider">
+        {/* KPI 5: Budget Remaining Cushion (Spans 2 cols on mobile) */}
+        <div className="col-span-2 sm:col-span-1 p-3.5 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-1.5 sm:space-y-2 relative overflow-hidden flex flex-col justify-between">
+          <div className="flex items-center justify-between text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wider">
             <span>Margin Cushion</span>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200">
+            <span className="px-1.5 py-0.2 sm:px-2 sm:py-0.5 rounded-full text-[9px] sm:text-[10px] font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200">
               Buffer
             </span>
           </div>
-          <strong
-            className={`text-xl lg:text-2xl font-extrabold tracking-tight block font-mono ${
-              globalBudgetRemaining >= 0 ? 'text-slate-900' : 'text-rose-600'
-            }`}
-          >
-            {money(globalBudgetRemaining)}
-          </strong>
-          <span className="text-[11px] text-slate-400 block">Total contract unspent margin</span>
+          <div>
+            <strong
+              className={`text-lg sm:text-xl lg:text-2xl font-extrabold tracking-tight block font-mono truncate ${globalBudgetRemaining >= 0 ? 'text-slate-900' : 'text-rose-600'
+                }`}
+            >
+              {money(globalBudgetRemaining)}
+            </strong>
+            <span className="text-[10px] sm:text-[11px] text-slate-400 block line-clamp-1 mt-0.5">Contract unspent margin</span>
+          </div>
         </div>
       </div>
 
@@ -506,7 +519,7 @@ export default function OrgFinancePage({
       <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs space-y-3">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           {/* Multi-attribute Search Input */}
-          <div className="relative flex-1 max-w-md">
+          <div className="relative flex-1 w-full lg:max-w-md">
             <span className="absolute inset-y-0 left-3 flex items-center text-slate-400 text-xs">⌕</span>
             <input
               type="text"
@@ -530,7 +543,7 @@ export default function OrgFinancePage({
           </div>
 
           {/* Filter Dropdowns, Sort & View Mode Switcher */}
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap w-full lg:w-auto">
             {/* Category Dropdown */}
             <div className="flex items-center gap-1.5">
               <label className="text-xs text-slate-500 font-medium">Type:</label>
@@ -572,11 +585,10 @@ export default function OrgFinancePage({
               <button
                 type="button"
                 onClick={() => setViewMode('table')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  viewMode === 'table'
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${viewMode === 'table'
                     ? 'bg-[#0B3470] text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
-                }`}
+                  }`}
                 title="Desktop Table View"
               >
                 ▦ Table
@@ -584,11 +596,10 @@ export default function OrgFinancePage({
               <button
                 type="button"
                 onClick={() => setViewMode('grid')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  viewMode === 'grid'
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${viewMode === 'grid'
                     ? 'bg-[#0B3470] text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
-                }`}
+                  }`}
                 title="Grid Cards View"
               >
                 ⊞ Cards
@@ -614,7 +625,7 @@ export default function OrgFinancePage({
         </div>
 
         {/* Status Segmented Filter Chips */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pt-2 border-t border-slate-100 pb-1 sm:pb-0">
+        <div className="flex items-center gap-1.5 overflow-x-auto pt-2 border-t border-slate-100 pb-1 sm:pb-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden touch-pan-x -mx-1 px-1">
           {[
             { id: 'All', label: 'All Sites', count: siteFinanceRows.length },
             { id: 'Live', label: 'Live / In Progress', count: liveCount },
@@ -631,17 +642,15 @@ export default function OrgFinancePage({
                   setStatusFilter(tab.id)
                   setPage(1)
                 }}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                  isActive
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer shrink-0 ${isActive
                     ? 'bg-[#0B3470] text-white shadow-2xs font-bold'
                     : 'text-slate-600 hover:text-slate-900 bg-transparent'
-                }`}
+                  }`}
               >
                 {tab.label}
                 <span
-                  className={`ml-1.5 text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                    isActive ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
-                  }`}
+                  className={`ml-1.5 text-[10px] px-1.5 py-0.2 rounded-full font-bold ${isActive ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
+                    }`}
                 >
                   {tab.count}
                 </span>
@@ -652,7 +661,7 @@ export default function OrgFinancePage({
       </div>
 
       {/* 5. Section Header & Results Count */}
-      <div className="flex items-center justify-between text-xs text-slate-500 px-1">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs text-slate-500 px-1">
         <div className="flex items-center gap-2">
           <span className="w-1.5 h-4 rounded-full bg-[#0B3470]" />
           <strong className="text-sm text-slate-900 font-bold">Sites Financial Breakdown</strong>
@@ -666,38 +675,42 @@ export default function OrgFinancePage({
         </span>
       </div>
 
-      {/* 6. Standard Web Data Table View (Desktop-Optimized) */}
+      {/* 6. Standard Web Data Table View (Desktop-Optimized with Mobile Swipe) */}
       {viewMode === 'table' && (
         <div className="bg-white border border-slate-200/90 rounded-2xl shadow-xs overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-slate-700">
-              <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
-                <tr>
-                  <th className="p-3.5">Site & Project</th>
-                  <th className="p-3.5">Category</th>
-                  <th className="p-3.5 text-center">Status</th>
-                  <th className="p-3.5 text-right">Contract Budget</th>
-                  <th className="p-3.5 text-right">Inflow (Received)</th>
-                  <th className="p-3.5 text-right">Expenses (Spent)</th>
-                  <th className="p-3.5 text-right">Cash in Hand</th>
-                  <th className="p-3.5 text-right">Margin Cushion</th>
-                  <th className="p-3.5 text-center">Budget Spent</th>
-                  <th className="p-3.5 text-center">Action</th>
+          <div className="md:hidden flex items-center justify-between px-3 py-1.5 bg-blue-50/70 border-b border-blue-100 text-[10px] text-blue-700 font-medium">
+            <span>← Swipe horizontally to inspect ledger →</span>
+            <span className="font-mono">10 Columns</span>
+          </div>
+          <div className="overflow-x-auto touch-pan-x [&::-webkit-scrollbar-track]:bg-transparent [scrollbar-width:thin]">
+            <table className="w-full min-w-[1020px] text-left text-xs text-slate-700 border-collapse">
+              <thead className="bg-slate-50 text-slate-500 font-semibold">
+                <tr className="border-b border-slate-200">
+                  <th className="p-3.5 whitespace-nowrap">Site & Project</th>
+                  <th className="p-3.5 whitespace-nowrap">Category</th>
+                  <th className="p-3.5 text-center whitespace-nowrap">Status</th>
+                  <th className="p-3.5 text-right whitespace-nowrap">Contract Budget</th>
+                  <th className="p-3.5 text-right whitespace-nowrap">Inflow (Received)</th>
+                  <th className="p-3.5 text-right whitespace-nowrap">Expenses (Spent)</th>
+                  <th className="p-3.5 text-right whitespace-nowrap">Cash in Hand</th>
+                  <th className="p-3.5 text-right whitespace-nowrap">Margin Cushion</th>
+                  <th className="p-3.5 text-center whitespace-nowrap">Budget Spent</th>
+                  <th className="p-3.5 text-center whitespace-nowrap">Action</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody>
                 {paginatedSites.length === 0 ? (
-                  <tr>
-                    <td colSpan={10} className="p-12 text-center text-slate-400 text-xs">
+                  <tr key="empty-sites-row" className="border-none">
+                    <td colSpan={10} className="p-12 text-center text-slate-400 text-xs border-none">
                       No sites found matching your criteria.
                     </td>
                   </tr>
                 ) : (
-                  paginatedSites.map((item) => (
+                  paginatedSites.map((item, idx) => (
                     <tr
-                      key={item.siteId}
+                      key={item.siteId || `site-${idx}`}
                       onClick={() => setSelectedSiteForDetails(item)}
-                      className="hover:bg-blue-50/40 transition-colors cursor-pointer group"
+                      className="border-b border-slate-100 last:border-b-0 hover:bg-blue-50/40 transition-colors cursor-pointer group"
                     >
                       {/* Site & Project */}
                       <td className="p-3.5 max-w-xs">
@@ -746,9 +759,8 @@ export default function OrgFinancePage({
                       {/* Cash in Hand */}
                       <td className="p-3.5 text-right whitespace-nowrap">
                         <span
-                          className={`font-mono font-bold ${
-                            item.cashInHand >= 0 ? 'text-purple-700' : 'text-rose-600'
-                          }`}
+                          className={`font-mono font-bold ${item.cashInHand >= 0 ? 'text-purple-700' : 'text-rose-600'
+                            }`}
                         >
                           {money(item.cashInHand)}
                         </span>
@@ -757,9 +769,8 @@ export default function OrgFinancePage({
                       {/* Margin Cushion */}
                       <td className="p-3.5 text-right whitespace-nowrap">
                         <span
-                          className={`font-mono font-bold ${
-                            item.balance >= 0 ? 'text-slate-700' : 'text-rose-600'
-                          }`}
+                          className={`font-mono font-bold ${item.balance >= 0 ? 'text-slate-700' : 'text-rose-600'
+                            }`}
                         >
                           {money(item.balance)}
                         </span>
@@ -770,9 +781,8 @@ export default function OrgFinancePage({
                         <div className="space-y-1">
                           <div className="flex items-center justify-between text-[11px]">
                             <span
-                              className={`font-bold ${
-                                item.isCritical ? 'text-rose-600' : 'text-slate-700'
-                              }`}
+                              className={`font-bold ${item.isCritical ? 'text-rose-600' : 'text-slate-700'
+                                }`}
                             >
                               {item.usagePercent}%
                             </span>
@@ -784,9 +794,8 @@ export default function OrgFinancePage({
                           </div>
                           <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden border border-slate-200">
                             <div
-                              className={`h-1.5 rounded-full transition-all ${
-                                item.isCritical ? 'bg-rose-500' : 'bg-[#0B3470]'
-                              }`}
+                              className={`h-1.5 rounded-full transition-all ${item.isCritical ? 'bg-rose-500' : 'bg-[#0B3470]'
+                                }`}
                               style={{ width: `${Math.min(100, item.usagePercent)}%` }}
                             />
                           </div>
@@ -815,7 +824,7 @@ export default function OrgFinancePage({
 
           {/* Pagination Controls */}
           {totalPages > 1 && (
-            <div className="flex items-center justify-between px-4 py-3 bg-slate-50 border-t border-slate-100 text-xs text-slate-500">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 px-4 py-3 bg-slate-50 border-t border-slate-100 text-xs text-slate-500">
               <span>
                 Showing {(page - 1) * pageSize + 1} to{' '}
                 {Math.min(page * pageSize, filteredAndSortedSites.length)} of {filteredAndSortedSites.length} sites
@@ -871,7 +880,7 @@ export default function OrgFinancePage({
               <div
                 key={item.siteId}
                 onClick={() => setSelectedSiteForDetails(item)}
-                className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs hover:shadow-md hover:border-blue-400 transition-all cursor-pointer flex flex-col justify-between space-y-4 group"
+                className="bg-white border border-slate-200/90 rounded-2xl p-4 sm:p-5 shadow-xs hover:shadow-md hover:border-blue-400 transition-all cursor-pointer flex flex-col justify-between space-y-4 group"
               >
                 {/* Card Header */}
                 <div className="space-y-2">
@@ -904,8 +913,8 @@ export default function OrgFinancePage({
                   </div>
                 </div>
 
-                {/* 4-Metric Grid */}
-                <div className="grid grid-cols-4 gap-2 pt-3 pb-2 border-t border-slate-100 text-xs">
+                {/* 4-Metric Grid (2 cols on mobile, 4 on sm:) */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-2 pt-3 pb-2 border-t border-slate-100 text-xs">
                   <div>
                     <span className="text-[10px] text-slate-400 block font-semibold">Budget</span>
                     <strong className="text-slate-900 block font-mono text-xs truncate">{money(item.budget)}</strong>
@@ -921,9 +930,8 @@ export default function OrgFinancePage({
                   <div>
                     <span className="text-[10px] text-slate-400 block font-semibold">Balance</span>
                     <strong
-                      className={`block font-mono text-xs truncate ${
-                        item.balance >= 0 ? 'text-purple-700' : 'text-rose-600'
-                      }`}
+                      className={`block font-mono text-xs truncate ${item.balance >= 0 ? 'text-purple-700' : 'text-rose-600'
+                        }`}
                     >
                       {money(item.balance)}
                     </strong>
@@ -940,16 +948,15 @@ export default function OrgFinancePage({
                   </div>
                   <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200">
                     <div
-                      className={`h-2 rounded-full transition-all ${
-                        item.isCritical ? 'bg-rose-500' : 'bg-[#0B3470]'
-                      }`}
+                      className={`h-2 rounded-full transition-all ${item.isCritical ? 'bg-rose-500' : 'bg-[#0B3470]'
+                        }`}
                       style={{ width: `${Math.min(100, item.usagePercent)}%` }}
                     />
                   </div>
                 </div>
 
                 {/* Card Action Button */}
-                <div className="pt-2 flex items-center justify-between text-xs">
+                <div className="pt-2 flex flex-col xs:flex-row items-start xs:items-center justify-between gap-1 text-xs">
                   <span className="text-[11px] text-slate-400">
                     Cash in Hand: <strong className="font-mono text-slate-700">{money(item.cashInHand)}</strong>
                   </span>
