@@ -547,11 +547,7 @@ export default function ManagerDashboard() {
           icon: DollarSign,
           badge: pendingPettyCashCount,
         },
-        {
-          label: 'Notifications',
-          path: '/manager/notifications',
-          icon: Bell,
-        },
+      
         {
           label: 'Manager Support',
           path: '/manager/support',

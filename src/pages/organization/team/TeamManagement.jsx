@@ -562,8 +562,8 @@ export default function TeamManagement({
             err.code === 'SUBSCRIPTION_EXPIRED'
               ? 'Subscription Expired'
               : err.code === 'TRIAL_EXPIRED'
-              ? 'Free Trial Expired'
-              : 'Manager Quota Reached',
+                ? 'Free Trial Expired'
+                : 'Manager Quota Reached',
           message: err.message,
           planName: planLimits?.planName,
           recommendedPlan: err.upgradePlan || 'Gold',
@@ -611,7 +611,7 @@ export default function TeamManagement({
     )
 
     // D. Subscribe to Worker-Site Mapping
-    let unsubWorkerSiteMap = () => {}
+    let unsubWorkerSiteMap = () => { }
     try {
       unsubWorkerSiteMap = onSnapshot(
         collection(db, 'organisation', orgId, 'workerSiteMapping'),
@@ -638,7 +638,7 @@ export default function TeamManagement({
     }
 
     // E. Subscribe to Supervisor-Site Mapping
-    let unsubSupMap = () => {}
+    let unsubSupMap = () => { }
     try {
       unsubSupMap = onSnapshot(
         collection(db, 'organisation', orgId, 'siteSupervisorMap'),
@@ -730,18 +730,18 @@ export default function TeamManagement({
       }
     }
 
-    // A. Ingest Managers (from manager collection, props, and org users)
-    ;(propManagers || []).forEach((m) => register(m, 'manager'))
-    ;(fetchedManagers || []).forEach((m) => register(m, 'manager'))
-    ;(fetchedUsers || []).forEach((u) => register(u, null))
+      // A. Ingest Managers (from manager collection, props, and org users)
+      ; (propManagers || []).forEach((m) => register(m, 'manager'))
+      ; (fetchedManagers || []).forEach((m) => register(m, 'manager'))
+      ; (fetchedUsers || []).forEach((u) => register(u, null))
 
-    // B. Ingest Supervisors
-    ;(propSupervisors || []).forEach((s) => register(s, 'supervisor'))
-    ;(fetchedSupervisors || []).forEach((s) => register(s, 'supervisor'))
+      // B. Ingest Supervisors
+      ; (propSupervisors || []).forEach((s) => register(s, 'supervisor'))
+      ; (fetchedSupervisors || []).forEach((s) => register(s, 'supervisor'))
 
-    // C. Ingest Workers
-    ;(propWorkers || []).forEach((w) => register(w, 'worker'))
-    ;(fetchedWorkers || []).forEach((w) => register(w, 'worker'))
+      // C. Ingest Workers
+      ; (propWorkers || []).forEach((w) => register(w, 'worker'))
+      ; (fetchedWorkers || []).forEach((w) => register(w, 'worker'))
 
     const list = Array.from(dedupeMap.values())
 
@@ -1066,17 +1066,10 @@ export default function TeamManagement({
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white transition-colors shadow-xs cursor-pointer"
           >
             <UserPlus className="w-3.5 h-3.5" />
-            <span>+ Create Manager</span>
+            <span>Create Manager</span>
           </button>
 
-          <button
-            type="button"
-            onClick={handleOpenInviteModal}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
-          >
-            <UserPlus className="w-3.5 h-3.5 text-slate-500" />
-            <span>+ Invite Member</span>
-          </button>
+         
 
           <button
             type="button"
@@ -1184,11 +1177,10 @@ export default function TeamManagement({
         <button
           type="button"
           onClick={() => handleRoleFilterChange('ALL')}
-          className={`p-3.5 sm:p-4 rounded-2xl border text-left transition-all duration-200 ${
-            activeRoleFilter === 'ALL'
+          className={`p-3.5 sm:p-4 rounded-2xl border text-left transition-all duration-200 ${activeRoleFilter === 'ALL'
               ? 'bg-slate-900 text-white border-slate-900 shadow-md ring-2 ring-slate-900/10'
               : 'bg-white text-slate-700 border-slate-200/90 hover:border-slate-300 shadow-xs hover:-translate-y-0.5'
-          }`}
+            }`}
         >
           <div className="flex items-center justify-between mb-2">
             <span className={`text-[10px] font-bold uppercase tracking-wider ${activeRoleFilter === 'ALL' ? 'text-slate-300' : 'text-slate-500'}`}>
@@ -1205,11 +1197,10 @@ export default function TeamManagement({
         <button
           type="button"
           onClick={() => handleRoleFilterChange('MANAGER')}
-          className={`p-3.5 sm:p-4 rounded-2xl border text-left transition-all duration-200 ${
-            activeRoleFilter === 'MANAGER'
+          className={`p-3.5 sm:p-4 rounded-2xl border text-left transition-all duration-200 ${activeRoleFilter === 'MANAGER'
               ? 'bg-[#0B3470] text-white border-[#0B3470] shadow-md ring-2 ring-blue-500/20'
               : 'bg-white text-slate-700 border-slate-200/90 hover:border-blue-200 shadow-xs hover:-translate-y-0.5'
-          }`}
+            }`}
         >
           <div className="flex items-center justify-between mb-2">
             <span className={`text-[10px] font-bold uppercase tracking-wider ${activeRoleFilter === 'MANAGER' ? 'text-blue-200' : 'text-blue-600'}`}>
@@ -1226,11 +1217,10 @@ export default function TeamManagement({
         <button
           type="button"
           onClick={() => handleRoleFilterChange('SUPERVISOR')}
-          className={`p-3.5 sm:p-4 rounded-2xl border text-left transition-all duration-200 ${
-            activeRoleFilter === 'SUPERVISOR'
+          className={`p-3.5 sm:p-4 rounded-2xl border text-left transition-all duration-200 ${activeRoleFilter === 'SUPERVISOR'
               ? 'bg-emerald-700 text-white border-emerald-700 shadow-md ring-2 ring-emerald-500/20'
               : 'bg-white text-slate-700 border-slate-200/90 hover:border-emerald-200 shadow-xs hover:-translate-y-0.5'
-          }`}
+            }`}
         >
           <div className="flex items-center justify-between mb-2">
             <span className={`text-[10px] font-bold uppercase tracking-wider ${activeRoleFilter === 'SUPERVISOR' ? 'text-emerald-100' : 'text-emerald-600'}`}>
@@ -1247,11 +1237,10 @@ export default function TeamManagement({
         <button
           type="button"
           onClick={() => handleRoleFilterChange('WORKER')}
-          className={`p-3.5 sm:p-4 rounded-2xl border text-left transition-all duration-200 ${
-            activeRoleFilter === 'WORKER'
+          className={`p-3.5 sm:p-4 rounded-2xl border text-left transition-all duration-200 ${activeRoleFilter === 'WORKER'
               ? 'bg-amber-600 text-white border-amber-600 shadow-md ring-2 ring-amber-500/20'
               : 'bg-white text-slate-700 border-slate-200/90 hover:border-amber-200 shadow-xs hover:-translate-y-0.5'
-          }`}
+            }`}
         >
           <div className="flex items-center justify-between mb-2">
             <span className={`text-[10px] font-bold uppercase tracking-wider ${activeRoleFilter === 'WORKER' ? 'text-amber-100' : 'text-amber-600'}`}>
@@ -1288,11 +1277,10 @@ export default function TeamManagement({
             <button
               type="button"
               onClick={() => handleRoleFilterChange('ALL')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
-                activeRoleFilter === 'ALL'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${activeRoleFilter === 'ALL'
                   ? 'bg-[#0B3470] text-white shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
-              }`}
+                }`}
             >
               <span>All Workforce</span>
               <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${activeRoleFilter === 'ALL' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'}`}>
@@ -1303,11 +1291,10 @@ export default function TeamManagement({
             <button
               type="button"
               onClick={() => handleRoleFilterChange('MANAGER')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
-                activeRoleFilter === 'MANAGER'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${activeRoleFilter === 'MANAGER'
                   ? 'bg-[#0B3470] text-white shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
-              }`}
+                }`}
             >
               <Shield className="w-3.5 h-3.5" />
               <span>Managers</span>
@@ -1319,11 +1306,10 @@ export default function TeamManagement({
             <button
               type="button"
               onClick={() => handleRoleFilterChange('SUPERVISOR')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
-                activeRoleFilter === 'SUPERVISOR'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${activeRoleFilter === 'SUPERVISOR'
                   ? 'bg-[#0B3470] text-white shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
-              }`}
+                }`}
             >
               <HardHat className="w-3.5 h-3.5" />
               <span>Supervisors</span>
@@ -1335,11 +1321,10 @@ export default function TeamManagement({
             <button
               type="button"
               onClick={() => handleRoleFilterChange('WORKER')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
-                activeRoleFilter === 'WORKER'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${activeRoleFilter === 'WORKER'
                   ? 'bg-[#0B3470] text-white shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
-              }`}
+                }`}
             >
               <Wrench className="w-3.5 h-3.5" />
               <span>Workers</span>
@@ -1799,13 +1784,12 @@ export default function TeamManagement({
                   value={managerFormData.username}
                   onChange={(e) => setManagerFormData({ ...managerFormData, username: e.target.value.replace(/\s+/g, '') })}
                   placeholder="e.g. Sharan123"
-                  className={`w-full bg-slate-50 border rounded-xl p-2.5 pr-8 text-xs text-slate-900 outline-none transition-colors ${
-                    isUsernameValid === false
+                  className={`w-full bg-slate-50 border rounded-xl p-2.5 pr-8 text-xs text-slate-900 outline-none transition-colors ${isUsernameValid === false
                       ? 'border-rose-400 focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20'
                       : isUsernameValid === true
-                      ? 'border-emerald-400 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20'
-                      : 'border-slate-300 focus:bg-white focus:border-blue-600'
-                  }`}
+                        ? 'border-emerald-400 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20'
+                        : 'border-slate-300 focus:bg-white focus:border-blue-600'
+                    }`}
                 />
                 {isCheckingUsername && (
                   <RefreshCw className="w-3.5 h-3.5 text-slate-400 animate-spin absolute right-3 top-1/2 -translate-y-1/2" />
