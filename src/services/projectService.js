@@ -16,6 +16,64 @@ import {
 import { SubscriptionLimitService } from './subscriptionLimitService.js'
 
 /**
+ * Asserts that the caller is NOT an Organization user.
+ * Organization users have view-only access to site and project information.
+ */
+export function verifyNotOrganizationUser(actor) {
+  // 1. Explicit actor role validation
+  if (actor) {
+    const actorRole = String(actor.role || '').toLowerCase().trim()
+    if (
+      actorRole === 'organization' ||
+      actorRole === 'organization admin' ||
+      actorRole === 'admin' ||
+      actorRole === 'org' ||
+      actorRole === 'organisation' ||
+      actorRole === 'enterprise'
+    ) {
+      const err = new Error('Organization users have view-only access to site information.')
+      err.code = 'PERMISSION_DENIED'
+      throw err
+    }
+  }
+
+  // 2. Active stored session role validation (browser environment)
+  let session = null
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      session = JSON.parse(window.localStorage.getItem('constructa_session') || '{}')
+    } catch {
+      session = null
+    }
+  } else if (typeof globalThis !== 'undefined' && globalThis.localStorage) {
+    try {
+      session = JSON.parse(globalThis.localStorage.getItem('constructa_session') || '{}')
+    } catch {
+      session = null
+    }
+  }
+
+  if (session) {
+    const sessionRole = String(session?.role || '').toLowerCase().trim()
+    if (
+      sessionRole === 'organization' ||
+      sessionRole === 'organization admin' ||
+      sessionRole === 'admin' ||
+      sessionRole === 'org' ||
+      sessionRole === 'organisation' ||
+      sessionRole === 'enterprise'
+    ) {
+      const actorRole = String(actor?.role || '').toLowerCase().trim()
+      if (!actorRole.includes('manager')) {
+        const err = new Error('Organization users have view-only access to site information.')
+        err.code = 'PERMISSION_DENIED'
+        throw err
+      }
+    }
+  }
+}
+
+/**
  * Projects Service - Manages /organisation/{orgId}/projects
  * End-to-end implementation of PROJECT_AND_SITE_SETUP_COMPLETE_FLOW.txt
  * and PROJECT_AND_SITE_SETUP_UPDATE_TABBAR_FLOW.txt
@@ -93,6 +151,7 @@ export async function getNextSiteCode(orgId) {
  */
 export async function createProjectAndSiteAtomic(orgId, data, managerActor) {
   if (!orgId) throw new Error('orgId is required')
+  verifyNotOrganizationUser(managerActor)
   if (!data.siteName?.trim()) throw new Error('Site Name is required')
 
   // Enforce Subscription Plan Limit (Section 5.1 of SUBSCRIPTION_PLAN_LIMITATIONS.txt)
@@ -293,6 +352,7 @@ export async function createProjectAndSiteAtomic(orgId, data, managerActor) {
  */
 export async function updateProjectAndSiteDoc(orgId, payload, managerActor) {
   if (!orgId) throw new Error('orgId is required')
+  verifyNotOrganizationUser(managerActor)
   if (!payload.selectedSiteDocId) throw new Error('selectedSiteDocId is required')
 
   const batch = writeBatch(db)
@@ -443,21 +503,26 @@ export async function fetchSitePaymentHistory(orgId, siteId) {
 
 // Backward compatibility wrappers
 export async function updateProjectAndSite(orgId, docId, updates, managerActor) {
+  verifyNotOrganizationUser(managerActor)
   return updateProjectAndSiteDoc(orgId, { selectedSiteDocId: docId, ...updates }, managerActor)
 }
 
 export async function createCompleteProjectSetup(orgId, setupData, managerActor) {
+  verifyNotOrganizationUser(managerActor)
   return createProjectAndSiteAtomic(orgId, setupData, managerActor)
 }
 
-export async function createProject(orgId, projectData) {
-  return createProjectAndSiteAtomic(orgId, projectData, { name: projectData.managerName })
+export async function createProject(orgId, projectData, actor) {
+  verifyNotOrganizationUser(actor || { role: 'Organization' })
+  return createProjectAndSiteAtomic(orgId, projectData, actor || { name: projectData.managerName })
 }
 
-export async function updateProject(orgId, projectId, updates) {
-  return updateProjectAndSite(orgId, projectId, updates)
+export async function updateProject(orgId, projectId, updates, actor) {
+  verifyNotOrganizationUser(actor || { role: 'Organization' })
+  return updateProjectAndSite(orgId, projectId, updates, actor)
 }
 
-export async function deleteProject(orgId, projectId) {
+export async function deleteProject(orgId, projectId, actor) {
+  verifyNotOrganizationUser(actor || { role: 'Organization' })
   return deleteStandardDoc(orgId, 'projects', projectId)
 }

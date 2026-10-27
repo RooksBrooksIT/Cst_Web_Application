@@ -365,6 +365,23 @@ export default function Login({ initialView = 'login' }) {
                 </button>
               </form>
 
+              {/* Register Organization Callout for Admin Portal */}
+              {loginType === 'Organization' && (
+                <div className="p-3.5 rounded-2xl bg-blue-50/80 border border-blue-100 flex items-center justify-between gap-3 text-xs">
+                  <div>
+                    <span className="font-bold text-slate-900 block">Set Up Your Organization</span>
+                    <span className="text-slate-500 text-[11px]">Create company account & brand workspace</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/register')}
+                    className="py-2 px-3 rounded-xl bg-[#0B3470] hover:bg-[#082654] text-white font-bold text-xs shadow-xs hover:shadow-md transition-all shrink-0 cursor-pointer"
+                  >
+                    Register Organization →
+                  </button>
+                </div>
+              )}
+
               {/* Role Notice */}
               <div className="pt-2 border-t border-slate-100 text-center">
                 <p className="text-[11px] text-slate-500 leading-relaxed">

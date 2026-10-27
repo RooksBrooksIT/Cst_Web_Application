@@ -76,5 +76,16 @@ export function AuthProvider({ children }) {
     return profile
   }
 
-  return <AuthContext.Provider value={{ ...session, login, logout, refreshUserProfile }}>{children}</AuthContext.Provider>
+  function setDirectSession(nextSession) {
+    if (!nextSession) return
+    setSession({
+      user: auth.currentUser || { uid: nextSession.uid, email: nextSession.email, displayName: nextSession.userData?.fullName },
+      role: nextSession.role || 'Organization',
+      orgId: nextSession.orgId,
+      userData: nextSession.userData,
+      loading: false,
+    })
+  }
+
+  return <AuthContext.Provider value={{ ...session, login, logout, refreshUserProfile, setDirectSession }}>{children}</AuthContext.Provider>
 }

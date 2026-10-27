@@ -1,6 +1,6 @@
 import { doc, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp, Timestamp } from 'firebase/firestore'
-import { db } from './firebase'
-import { generateTxnId } from './payuService'
+import { db } from './firebase.js'
+import { generateTxnId } from './payuService.js'
 
 /**
  * Subscription Plans, Quotas, Pricing & Quota Enforcement Service
@@ -12,23 +12,25 @@ export const SUBSCRIPTION_PLANS = {
     id: 'free_trial',
     name: 'Free Trial',
     badge: '14-Day Free Access',
+    targetAudience: 'Evaluation tier for new contractors and construction teams',
     durationDays: 14,
     priceMonthly: 0,
     price6Months: 0,
     priceYearly: 0,
     maxProjects: 1,
-    maxUsers: 2,
+    maxUsers: 3,
     maxManagers: 1,
     maxSupervisors: 1,
     drawingPolicy: {
       maxActiveDocsPerSite: 1,
       allowDelete: false,
       allowReupload: false,
-      description: '1 active doc per site (No delete/re-upload)',
+      description: '1 active doc per site (View Only)',
     },
     features: [
-      '1 Active Construction Site',
-      '2 Total Team User Seats',
+      '1 Active Construction Site / Project',
+      '3 Total Eligible Users (1 Admin, 1 Manager, 1 Supervisor)',
+      'Unlimited Field Workers (Excluded from quota)',
       'Basic Muster Roll & Daily Diaries',
       '1 Layout Drawing per site (View Only)',
       '14-Day Unrestricted Evaluation',
@@ -37,7 +39,8 @@ export const SUBSCRIPTION_PLANS = {
   SILVER: {
     id: 'silver',
     name: 'Silver',
-    badge: 'Standard Starter',
+    badge: 'Starter Tier',
+    targetAudience: 'Starter tier for small contractors & independent builders',
     priceMonthly: 99,
     price6Months: 594,
     priceYearly: 1188,
@@ -46,7 +49,7 @@ export const SUBSCRIPTION_PLANS = {
     maxProjects: 5,
     maxUsers: 5,
     maxManagers: 2,
-    maxSupervisors: 3,
+    maxSupervisors: 2,
     drawingPolicy: {
       maxActiveDocsPerSite: 1,
       allowDelete: false,
@@ -54,19 +57,21 @@ export const SUBSCRIPTION_PLANS = {
       description: '1 active doc per site (View Only)',
     },
     features: [
-      'Up to 5 Active Construction Sites',
-      '5 Total Team User Seats',
+      'Up to 5 Active Construction Sites / Projects',
+      '5 Total Team Users (Admin + Managers + Supervisors)',
+      'Up to 2 Dedicated Project Managers',
+      'Up to 2 On-Site Supervisors',
+      'Unlimited Field Workers (Excluded from quota)',
       'Petty Cash Float & Expense Tracking',
       'Daily Site Progress Diaries & Photos',
       'Multi-Tier Approvals Center & Workflows',
-      '1 Layout Drawing per site (View Only)',
-      'Standard Audit & CSV Exports',
     ],
   },
   GOLD: {
     id: 'gold',
     name: 'Gold',
     badge: 'Most Popular',
+    targetAudience: 'Standard tier for growing construction teams & multi-site contractors',
     popular: true,
     priceMonthly: 199,
     price6Months: 1194,
@@ -86,22 +91,27 @@ export const SUBSCRIPTION_PLANS = {
       description: '1 active doc per site (1 Delete & 1 Re-upload permitted)',
     },
     features: [
-      'Up to 10 Active Construction Sites',
-      '15 Team Seats (5 Managers, 10 Supervisors)',
+      'Up to 10 Active Construction Sites / Projects',
+      '15 Total Team Users (Admin + Managers + Supervisors)',
+      'Up to 5 Dedicated Project Managers',
+      'Up to 10 On-Site Supervisors',
+      'Unlimited Field Workers (Excluded from quota)',
       '3-Tier Payment Approval Workflow Engine',
       'Material Indents & PO Procurement',
       'Subcontractor MB Sheets & Retention Deductions',
-      '1 Drawing per site with Replace/Delete Support',
-      'Priority Email Support',
     ],
   },
   PLATINUM: {
     id: 'platinum',
     name: 'Platinum',
     badge: 'Dynamic Scale',
+    targetAudience: 'Dynamic scale tier for enterprise developers & large contractors',
     isDynamic: true,
     defaultProjects: 10,
     projectPresets: [5, 10, 15, 20, 25, 30, 40, 50],
+    ratePerSiteMonthly: 39.9,
+    ratePerSite6Months: 239.4,
+    ratePerSiteYearly: 478.8,
     drawingPolicy: {
       maxActiveDocsPerSite: 2,
       allowDelete: true,
@@ -111,19 +121,20 @@ export const SUBSCRIPTION_PLANS = {
       description: '2 active docs per site (Multi-delete & Multi-reupload)',
     },
     features: [
-      'Dynamic Site Capacity ({N} Sites)',
-      '{maxUsers} Total Team Seats ({maxManagers} Managers, {maxSupervisors} Supervisors)',
-      '2 Concurrent Architectural Layouts & Drawings per site',
-      'Multi-Delete & Multi-Reupload for Drawings',
+      'Dynamic Site Allocation ({N} Sites: 5, 10, 15, 20, 25, 30, 40, or 50)',
+      '{maxUsers} Total Team Users (Admin + Managers + Supervisors)',
+      '{maxManagers} Dedicated Managers (clamp(round(N / 2), 2, 25))',
+      '{maxSupervisors} On-Site Supervisors (N Sites = N Supervisors)',
+      'Unlimited Field Workers (Excluded from quota)',
       'QA/QC Checklist Inspection & Safety Logging',
       'Customer Milestone Tax Invoicing & Realization',
-      'Dedicated Account Support',
     ],
   },
   ENTERPRISE: {
     id: 'enterprise',
     name: 'Enterprise',
     badge: 'Custom Deployment',
+    targetAudience: 'Dedicated infrastructure & custom SLA for large firms',
     isCustom: true,
     maxProjects: 999999,
     maxUsers: 999999,
@@ -139,10 +150,10 @@ export const SUBSCRIPTION_PLANS = {
     },
     features: [
       'Unlimited Construction Sites & Projects',
-      'Unlimited Team User Seats',
+      'Unlimited Team User Seats (Managers & Supervisors)',
+      'Unlimited Field Workers',
       'Custom White Label Branding & Subdomain',
       'Dedicated Cloud Deployment & Guaranteed SLA',
-      'Automated Daily Enterprise Backups',
       '24/7 Priority Phone & Live Chat Support',
     ],
   },
@@ -150,8 +161,8 @@ export const SUBSCRIPTION_PLANS = {
 
 export const BILLING_CYCLES = [
   { id: 'Monthly', label: 'Monthly', days: 30, discount: null },
-  { id: '6 Months', label: '6 Months', days: 180, discount: 'Save 10%' },
-  { id: 'Yearly', label: 'Yearly (Best Value)', days: 365, discount: 'Save 20%' },
+  { id: '6 Months', label: '6 Months', days: 180, discount: null },
+  { id: 'Yearly', label: 'Yearly', days: 365, discount: null },
 ]
 
 /**
@@ -188,6 +199,8 @@ export function calculatePlanPrice(planId, cycle = 'Monthly', platinumProjects =
 }
 
 /**
+ * Plan Feature Permissions Matrix
+ */
 export const PLAN_FEATURE_PERMISSIONS = {
   // Free Trial features
   basic_project_management: ['Free Trial', 'Silver', 'Gold', 'Platinum', 'Enterprise'],
@@ -215,8 +228,61 @@ export const PLAN_FEATURE_PERMISSIONS = {
   advanced_workforce_payroll: ['Platinum', 'Enterprise'],
 }
 
-export function isFeatureAllowedForPlan(featureKey, planName = 'Free Trial') {
+export function isSubscriptionExpired(subscription) {
+  if (!subscription) return false
+  if (subscription.isSubscriptionActive === false || subscription.status === 'EXPIRED') {
+    return true
+  }
+  const endDateRaw = subscription.subscriptionEndDate || subscription.endDate
+  if (endDateRaw) {
+    const endDate = endDateRaw?.toDate ? endDateRaw.toDate() : new Date(endDateRaw)
+    if (!Number.isNaN(endDate.getTime()) && endDate < new Date()) {
+      return true
+    }
+  }
+  return false
+}
+
+export function calculateDaysRemaining(endDateRaw) {
+  if (!endDateRaw) return 0
+  const endDate = endDateRaw?.toDate ? endDateRaw.toDate() : new Date(endDateRaw)
+  if (!endDate || Number.isNaN(endDate.getTime())) return 0
+  const diffMs = endDate.getTime() - Date.now()
+  if (diffMs <= 0) return 0
+  return Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)))
+}
+
+export function isFeatureAllowedForPlan(featureKey, planOrSubscription = 'Free Trial', explicitSubscription = null) {
+  let planName = 'Free Trial'
+  let subscription = explicitSubscription
+
+  if (typeof planOrSubscription === 'object' && planOrSubscription !== null) {
+    subscription = planOrSubscription
+    planName = subscription.subscriptionPlan || subscription.planName || 'Free Trial'
+  } else if (typeof planOrSubscription === 'string') {
+    planName = planOrSubscription
+  }
+
   const normPlan = String(planName || 'Free Trial').trim()
+  const isTrial = normPlan.toLowerCase().includes('trial') || normPlan.toLowerCase().includes('free')
+
+  // Check trial status: Active 14-day Free Trial grants full unrestricted access to all features & modules
+  if (isTrial) {
+    const isExpired = subscription ? isSubscriptionExpired(subscription) : false
+    if (!isExpired) {
+      return true
+    }
+    // Expired Free Trial restricts to baseline Free Trial tier permissions
+    const allowedTiers = PLAN_FEATURE_PERMISSIONS[featureKey]
+    if (!allowedTiers) return true
+    return allowedTiers.some((tier) => normPlan.toLowerCase().includes(tier.toLowerCase()))
+  }
+
+  // Paid plans: Silver, Gold, Platinum, Enterprise
+  if (subscription && isSubscriptionExpired(subscription)) {
+    return false
+  }
+
   const allowedTiers = PLAN_FEATURE_PERMISSIONS[featureKey]
   if (!allowedTiers) return true
   return allowedTiers.some((tier) => normPlan.toLowerCase().includes(tier.toLowerCase()))
@@ -231,7 +297,7 @@ export function calculatePlanQuotas(planName, platinumProjects = 10) {
     return {
       planName: 'Free Trial',
       maxProjects: 1,
-      maxUsers: 2,
+      maxUsers: 3,
       maxManagers: 1,
       maxSupervisors: 1,
       drawingPolicy: SUBSCRIPTION_PLANS.FREE_TRIAL.drawingPolicy,
@@ -243,7 +309,7 @@ export function calculatePlanQuotas(planName, platinumProjects = 10) {
       maxProjects: 5,
       maxUsers: 5,
       maxManagers: 2,
-      maxSupervisors: 3,
+      maxSupervisors: 2,
       drawingPolicy: SUBSCRIPTION_PLANS.SILVER.drawingPolicy,
     }
   }
@@ -281,7 +347,7 @@ export function calculatePlanQuotas(planName, platinumProjects = 10) {
   return {
     planName: 'Free Trial',
     maxProjects: 1,
-    maxUsers: 2,
+    maxUsers: 3,
     maxManagers: 1,
     maxSupervisors: 1,
     drawingPolicy: SUBSCRIPTION_PLANS.FREE_TRIAL.drawingPolicy,
@@ -531,20 +597,30 @@ export function checkQuotaLimits({
   currentUsers = 0,
 }) {
   const plan = subscription?.subscriptionPlan || 'Free Trial'
-  const isExpired = subscription?.isSubscriptionActive === false ||
-    (subscription?.subscriptionEndDate && (subscription.subscriptionEndDate.toDate ? subscription.subscriptionEndDate.toDate() : new Date(subscription.subscriptionEndDate)) < new Date())
+  const isExpired = isSubscriptionExpired(subscription)
+  const isTrial = plan.toLowerCase().includes('trial') || plan.toLowerCase().includes('free')
+  const isTrialActive = isTrial && !isExpired
 
-  const maxSites = subscription?.maxProjects || (plan === 'Gold' ? 10 : plan === 'Silver' ? 5 : 1)
-  const maxManagers = subscription?.maxManagers || (plan === 'Gold' ? 5 : plan === 'Silver' ? 2 : 1)
-  const maxSupervisors = subscription?.maxSupervisors || (plan === 'Gold' ? 10 : plan === 'Silver' ? 3 : 1)
-  const maxUsers = subscription?.maxUsers || (plan === 'Gold' ? 15 : plan === 'Silver' ? 5 : 2)
+  // Eligible subscription users: 1 Admin + Managers + Supervisors. Workers are strictly excluded!
+  const eligibleUsers = 1 + currentManagers + currentSupervisors
+
+  const canAddTrialManager = !isExpired && currentManagers < 1 && eligibleUsers < 3
+  const canAddTrialSupervisor = !isExpired && currentSupervisors < 1 && eligibleUsers < 3
+
+  const quotas = calculatePlanQuotas(plan, subscription?.platinumProjects || 10)
+  const maxSites = isTrialActive ? 999999 : (subscription?.maxProjects || quotas.maxProjects)
+  const maxManagers = isTrialActive ? 1 : (subscription?.maxManagers || quotas.maxManagers)
+  const maxSupervisors = isTrialActive ? 1 : (subscription?.maxSupervisors || quotas.maxSupervisors)
+  const maxUsers = isTrialActive ? 3 : (subscription?.maxUsers || quotas.maxUsers)
 
   return {
     isExpired,
+    isTrial,
+    isTrialActive,
     canCreateSite: !isExpired && currentSites < maxSites,
-    canAddManager: !isExpired && currentManagers < maxManagers && currentUsers < maxUsers,
-    canAddSupervisor: !isExpired && currentSupervisors < maxSupervisors && currentUsers < maxUsers,
-    canAddUser: !isExpired && currentUsers < maxUsers,
+    canAddManager: isTrialActive ? canAddTrialManager : (!isExpired && currentManagers < maxManagers && eligibleUsers < maxUsers),
+    canAddSupervisor: isTrialActive ? canAddTrialSupervisor : (!isExpired && currentSupervisors < maxSupervisors && eligibleUsers < maxUsers),
+    canAddUser: isTrialActive ? eligibleUsers < 3 : (!isExpired && eligibleUsers < maxUsers),
     maxSites,
     maxManagers,
     maxSupervisors,
@@ -552,6 +628,6 @@ export function checkQuotaLimits({
     currentSites,
     currentManagers,
     currentSupervisors,
-    currentUsers,
+    currentUsers: eligibleUsers,
   }
 }

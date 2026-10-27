@@ -27,9 +27,9 @@ import OrganizationInventoryHub from './inventory/OrganizationInventoryHub'
 import BlueprintsDrawings from '../manager/projects/BlueprintsDrawings'
 import ConstructionDocuments from '../common/ConstructionDocuments'
 import IncentiveCalculation from './incentives/IncentiveCalculation'
-import { SubscriptionLimitService, isFeatureAllowedForPlan } from '../../services/subscriptionLimitService'
+import { SubscriptionLimitService, isFeatureAllowedForPlan, isSubscriptionExpired } from '../../services/subscriptionLimitService'
 import SubscriptionLimitModal from '../../components/common/SubscriptionLimitModal'
-import { ShieldAlert, ArrowUpRight } from 'lucide-react'
+import { ShieldAlert, ArrowUpRight, Eye } from 'lucide-react'
 
 export { OrgFinancePage, SiteFinancialDetailsPage, OrganizationExpenses, PettyCashGovernance, OrganizationApprovalsCenter, TeamManagement, BlueprintsDrawings, ConstructionDocuments, IncentiveCalculation }
 
@@ -137,12 +137,14 @@ function statusBadgeColor(status) {
 // 3. PROJECT & SITES MASTER MODULE
 // ------------------------------------------------------------------------------------------------
 export function SiteManagement({ sites = [], managers = [], subscription, loading, error }) {
-  const { orgId } = useAuth()
+  const { orgId, role } = useAuth()
+  const isOrgUser = !role || String(role).toLowerCase().includes('org') || String(role).toLowerCase() === 'admin'
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [limitModalData, setLimitModalData] = useState(null)
   const [editingSite, setEditingSite] = useState(null)
+  const [viewingSite, setViewingSite] = useState(null)
   const [saving, setSaving] = useState(false)
 
   const planName = subscription?.subscriptionPlan || 'Free Trial'
@@ -163,6 +165,10 @@ export function SiteManagement({ sites = [], managers = [], subscription, loadin
   })
 
   async function handleOpenCreate() {
+    if (isOrgUser) {
+      alert('Organization users have view-only access to site information.')
+      return
+    }
     const check = await SubscriptionLimitService.canCreateSite({
       orgId,
       currentSitesCount: sites.length,
@@ -197,7 +203,15 @@ export function SiteManagement({ sites = [], managers = [], subscription, loadin
     setIsModalOpen(true)
   }
 
+  function handleOpenView(site) {
+    setViewingSite(site)
+  }
+
   function handleOpenEdit(site) {
+    if (isOrgUser) {
+      handleOpenView(site)
+      return
+    }
     setEditingSite(site)
     setFormData({
       name: site.name || site.projectName || '',
@@ -216,6 +230,10 @@ export function SiteManagement({ sites = [], managers = [], subscription, loadin
 
   async function handleSubmit(e) {
     e.preventDefault()
+    if (isOrgUser) {
+      alert('Organization users have view-only access to site information.')
+      return
+    }
     if (!orgId) return
     setSaving(true)
     try {
@@ -294,16 +312,30 @@ export function SiteManagement({ sites = [], managers = [], subscription, loadin
       header: 'Actions',
       align: 'center',
       render: (row) => (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            handleOpenEdit(row)
-          }}
-          className="text-xs font-semibold text-blue-600 hover:text-blue-800"
-        >
-          Edit
-        </button>
+        isOrgUser ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleOpenView(row)
+            }}
+            className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-800 cursor-pointer"
+          >
+            <Eye className="w-3.5 h-3.5" />
+            <span>View</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleOpenEdit(row)
+            }}
+            className="text-xs font-semibold text-blue-600 hover:text-blue-800 cursor-pointer"
+          >
+            Edit
+          </button>
+        )
       ),
     },
   ]
@@ -334,13 +366,15 @@ export function SiteManagement({ sites = [], managers = [], subscription, loadin
           <p className="text-xs text-slate-500 mt-1">Multi-site milestone tracking, financial budgets, and spatial management.</p>
         </div>
         <div className="flex items-center gap-2 w-full sm:w-auto">
-          <button
-            type="button"
-            onClick={handleOpenCreate}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-[#0B3470] hover:bg-blue-900 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer"
-          >
-            <span>+ Create Project</span>
-          </button>
+          {!isOrgUser && (
+            <button
+              type="button"
+              onClick={handleOpenCreate}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-[#0B3470] hover:bg-blue-900 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer"
+            >
+              <span>+ Create Project</span>
+            </button>
+          )}
           <ExportButton
             filename="ebricks_projects"
             headers={['Project Code', 'Project Name', 'Client', 'Budget (INR)', 'Stage', 'Status']}
@@ -401,13 +435,130 @@ export function SiteManagement({ sites = [], managers = [], subscription, loadin
       <DataTable
         columns={columns}
         data={filteredSites}
+        onRowClick={(row) => (isOrgUser ? handleOpenView(row) : handleOpenEdit(row))}
         searchQuery={search}
         searchFields={['name', 'projectName', 'code', 'siteCode', 'clientName', 'siteLocation']}
         emptyMessage="No construction projects registered."
       />
 
-      {/* Project Modal */}
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingSite ? 'Edit Project Master' : 'Create New Construction Project'}>
+      {/* View-Only Site Details Modal for Organization Users */}
+      {viewingSite && (
+        <Modal
+          isOpen={Boolean(viewingSite)}
+          onClose={() => setViewingSite(null)}
+          title={viewingSite.name || viewingSite.projectName || 'Site Details'}
+          subtitle={`Project Code: ${viewingSite.code || viewingSite.siteCode || viewingSite.projectCode || viewingSite.id || 'N/A'}`}
+        >
+          <div className="space-y-4 text-xs">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <StatusBadge status={viewingSite.status || viewingSite.currentStatus || 'Active'} />
+                <span className="font-semibold text-slate-700">
+                  {viewingSite.currentStage || viewingSite.projectStage || 'Foundation'}
+                </span>
+              </div>
+              <span className="text-[11px] text-slate-400 font-mono">
+                ID: {viewingSite.id || viewingSite.siteId || viewingSite.projectId || 'N/A'}
+              </span>
+            </div>
+
+            {/* Client & Personnel Info */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+              <div>
+                <span className="text-slate-400 block text-[10px] uppercase font-bold">Client Name</span>
+                <strong className="text-slate-800 text-xs">{viewingSite.clientName || viewingSite.ownerName || 'Standard Client'}</strong>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px] uppercase font-bold">Client Contact</span>
+                <span className="text-slate-700 text-xs">
+                  {viewingSite.clientPhone || viewingSite.ownerPhoneNumber || viewingSite.clientEmail
+                    ? `${viewingSite.clientPhone || viewingSite.ownerPhoneNumber || ''} ${viewingSite.clientEmail ? `(${viewingSite.clientEmail})` : ''}`
+                    : 'No contact provided'}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px] uppercase font-bold">Assigned Manager</span>
+                <span className="text-slate-700 text-xs">{viewingSite.managerName || 'Unassigned'}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px] uppercase font-bold">Assigned Supervisor</span>
+                <span className="text-slate-700 text-xs">{viewingSite.supervisorName || 'Unassigned'}</span>
+              </div>
+            </div>
+
+            {/* Financial Overview */}
+            <div className="grid grid-cols-3 gap-3 p-3.5 rounded-xl bg-blue-50/60 border border-blue-100">
+              <div>
+                <span className="text-blue-700 block text-[10px] uppercase font-bold">Sanctioned Budget</span>
+                <strong className="text-sm font-black text-slate-900">
+                  {money(amountValue(viewingSite, ['totalBudget', 'budget', 'projectBudget', 'estimatedBudget']))}
+                </strong>
+              </div>
+              <div>
+                <span className="text-blue-700 block text-[10px] uppercase font-bold">Amount Paid / Advance</span>
+                <strong className="text-sm font-black text-blue-800">
+                  {money(amountValue(viewingSite, ['amountPaid', 'advancePaid', 'amountReceived']))}
+                </strong>
+              </div>
+              <div>
+                <span className="text-blue-700 block text-[10px] uppercase font-bold">Balance</span>
+                <strong className="text-sm font-black text-emerald-700">
+                  {money(amountValue(viewingSite, ['amountBalance', 'balance', 'balanceAmount']))}
+                </strong>
+              </div>
+            </div>
+
+            {/* Location & Dates */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+              <div className="sm:col-span-2">
+                <span className="text-slate-400 block text-[10px] uppercase font-bold">Site Location / Address</span>
+                <span className="text-slate-700 text-xs">
+                  {viewingSite.location?.address || viewingSite.siteLocation || viewingSite.location || 'Location registered'}
+                </span>
+                {Number(viewingSite.latitude) !== 0 && viewingSite.latitude && (
+                  <span className="block font-mono text-[11px] text-slate-500 mt-0.5">
+                    GPS: {viewingSite.latitude}, {viewingSite.longitude}
+                  </span>
+                )}
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px] uppercase font-bold">Start Date</span>
+                <span className="text-slate-700 text-xs font-mono">
+                  {viewingSite.startDate?.split?.('T')?.[0] || viewingSite.plannedStartDate?.split?.('T')?.[0] || 'N/A'}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px] uppercase font-bold">Target Completion Date</span>
+                <span className="text-slate-700 text-xs font-mono">
+                  {viewingSite.estimatedEndDate?.split?.('T')?.[0] || viewingSite.plannedEndDate?.split?.('T')?.[0] || 'N/A'}
+                </span>
+              </div>
+            </div>
+
+            {/* Contract Info if applicable */}
+            {viewingSite.isContractWork && (
+              <div className="p-3 rounded-xl bg-amber-50/60 border border-amber-200 text-amber-900">
+                <span className="text-[10px] uppercase font-bold block">Subcontract Work</span>
+                <span>Contractor: <strong>{viewingSite.contractorName || 'N/A'}</strong> · Budget: <strong>{money(viewingSite.contractorBudget)}</strong></span>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setViewingSite(null)}
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-[#0B3470] text-white hover:bg-blue-800 transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Project Modal (restricted to non-organization roles) */}
+      {!isOrgUser && (
+        <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingSite ? 'Edit Project Master' : 'Create New Construction Project'}>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block text-xs font-medium text-slate-700">
@@ -523,6 +674,7 @@ export function SiteManagement({ sites = [], managers = [], subscription, loadin
           </div>
         </form>
       </Modal>
+      )}
     </div>
   )
 }
@@ -860,19 +1012,34 @@ export function ReportsEngine(rawData) {
 // ------------------------------------------------------------------------------------------------
 // Plan Feature Gate Component
 // ------------------------------------------------------------------------------------------------
-function PlanFeatureGate({ featureName, requiredTier = 'Gold', planName = 'Free Trial', description }) {
+function PlanFeatureGate({ featureName, requiredTier = 'Gold', planName = 'Free Trial', subscription = null, description }) {
+  const isExpired = subscription ? isSubscriptionExpired(subscription) : false
+  const isTrial = planName.toLowerCase().includes('trial') || planName.toLowerCase().includes('free')
+
+  const title = isTrial && isExpired
+    ? '14-Day Free Trial Expired'
+    : isExpired
+    ? 'Subscription Plan Expired'
+    : `${requiredTier} Plan Feature`
+
+  const subtext = isTrial && isExpired
+    ? `Your 14-day Free Trial period has ended. Select a subscription plan to regain access to ${featureName} and continue full platform operations.`
+    : isExpired
+    ? `Your subscription (${planName}) has expired. Please renew or upgrade to regain access to ${featureName}.`
+    : (description || `This module requires the ${requiredTier} plan or above. Your organization is currently on the ${planName} plan.`)
+
   return (
     <div className="bg-white rounded-3xl p-8 md:p-12 border border-slate-200 text-center max-w-2xl mx-auto shadow-xs my-8 space-y-5 animate-fade-in">
-      <div className="w-16 h-16 rounded-2xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center mx-auto shadow-xs">
+      <div className={`w-16 h-16 rounded-2xl ${isExpired ? 'bg-rose-50 border border-rose-200 text-rose-600' : 'bg-amber-50 border border-amber-200 text-amber-600'} flex items-center justify-center mx-auto shadow-xs`}>
         <ShieldAlert className="w-8 h-8" />
       </div>
       <div>
-        <span className="text-[10px] font-extrabold uppercase tracking-widest text-blue-600 bg-blue-50 border border-blue-200 px-3 py-1 rounded-full">
-          {requiredTier} Plan Feature
+        <span className={`text-[10px] font-extrabold uppercase tracking-widest ${isExpired ? 'text-rose-700 bg-rose-50 border border-rose-200' : 'text-blue-600 bg-blue-50 border border-blue-200'} px-3 py-1 rounded-full`}>
+          {isTrial && isExpired ? 'Trial Ended' : isExpired ? 'Expired' : `${requiredTier} Plan Feature`}
         </span>
-        <h2 className="text-2xl font-black text-slate-900 mt-3">{featureName}</h2>
+        <h2 className="text-2xl font-black text-slate-900 mt-3">{title}</h2>
         <p className="text-sm text-slate-600 mt-2 leading-relaxed">
-          {description || `This module requires the ${requiredTier} plan or above. Your organization is currently on the ${planName} plan.`}
+          {subtext}
         </p>
       </div>
 
@@ -882,8 +1049,14 @@ function PlanFeatureGate({ featureName, requiredTier = 'Gold', planName = 'Free 
           <span className="font-bold text-slate-800 px-2 py-0.5 bg-slate-200/70 rounded-md text-[11px]">{planName}</span>
         </div>
         <div className="flex justify-between items-center">
+          <span className="text-slate-500">Status:</span>
+          <span className={`font-bold px-2 py-0.5 rounded-md text-[11px] ${isExpired ? 'text-rose-700 bg-rose-100' : 'text-emerald-700 bg-emerald-100'}`}>
+            {isExpired ? 'Expired' : 'Active'}
+          </span>
+        </div>
+        <div className="flex justify-between items-center">
           <span className="text-slate-500">Required Plan:</span>
-          <strong className="text-blue-700">{requiredTier}</strong>
+          <strong className="text-blue-700">{requiredTier}+</strong>
         </div>
       </div>
 
@@ -892,7 +1065,7 @@ function PlanFeatureGate({ featureName, requiredTier = 'Gold', planName = 'Free 
           to="/organization/subscription"
           className="inline-flex items-center gap-2 px-6 py-3 bg-[#0B3470] hover:bg-blue-900 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer"
         >
-          <span>Upgrade to {requiredTier}</span>
+          <span>{isExpired ? 'Select a Plan' : `Upgrade to ${requiredTier}`}</span>
           <ArrowUpRight className="w-4 h-4" />
         </Link>
       </div>
@@ -911,7 +1084,7 @@ export default function OrganizationModule(props) {
   switch (activeModule) {
     case 'finance':
     case 'financials':
-      if (!isFeatureAllowedForPlan('petty_cash_expenses', planName)) {
+      if (!isFeatureAllowedForPlan('petty_cash_expenses', planName, props.subscription)) {
         return (
           <PlanFeatureGate
             featureName="Finance & Expense Management"
@@ -963,7 +1136,7 @@ export default function OrganizationModule(props) {
     case 'tools':
     case 'assets':
     case 'equipment':
-      if (!isFeatureAllowedForPlan('materials_inventory', planName)) {
+      if (!isFeatureAllowedForPlan('materials_inventory', planName, props.subscription)) {
         return (
           <PlanFeatureGate
             featureName="Inventory & Supply Chain"
@@ -990,7 +1163,7 @@ export default function OrganizationModule(props) {
     case 'approvals':
     case 'approval':
     case 'authorizations':
-      if (!isFeatureAllowedForPlan('approvals_workflow', planName)) {
+      if (!isFeatureAllowedForPlan('approvals_workflow', planName, props.subscription)) {
         return (
           <PlanFeatureGate
             featureName="Multi-Tier Approvals Center"
@@ -1002,7 +1175,7 @@ export default function OrganizationModule(props) {
       }
       return <OrganizationApprovalsCenter {...props} />
     case 'petty-cash':
-      if (!isFeatureAllowedForPlan('petty_cash_expenses', planName)) {
+      if (!isFeatureAllowedForPlan('petty_cash_expenses', planName, props.subscription)) {
         return (
           <PlanFeatureGate
             featureName="Petty Cash Governance"

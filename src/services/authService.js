@@ -66,7 +66,7 @@ function ensureSubscription(organization) {
   }
 }
 
-function createSession(uid, email, orgId, role, profile) {
+export function createSession(uid, email, orgId, role, profile) {
   const fullName =
     extractFieldValue(profile, ['FullName', 'fullName', 'UserName', 'userName', 'name', 'Name']) ||
     email ||

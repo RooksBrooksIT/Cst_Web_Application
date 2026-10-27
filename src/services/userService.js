@@ -12,6 +12,7 @@ import {
 } from 'firebase/firestore'
 import { db } from './firebase'
 import { saveStandardDoc, updateStandardDoc, fetchWithFallback } from './firestoreService'
+import { canCreateManager, canCreateSupervisor } from './subscriptionLimitService'
 
 /**
  * Team & User Governance Service
@@ -45,6 +46,29 @@ export async function fetchOrgUsers(orgId) {
 
 export async function createInvitationCode(orgId, inviteData) {
   if (!orgId) throw new Error('orgId is required')
+
+  // Prevent limit bypass through invitation codes (Section 2 of User-Limit Enforcement)
+  const targetRole = String(inviteData.role || 'manager').toLowerCase()
+  if (targetRole.includes('manager')) {
+    const check = await canCreateManager({ orgId })
+    if (!check.isAllowed) {
+      const err = new Error(check.message || 'Manager user limit reached for organization subscription.')
+      err.code = check.reason
+      err.limitCheck = check
+      err.details = check
+      throw err
+    }
+  } else if (targetRole.includes('supervisor')) {
+    const check = await canCreateSupervisor({ orgId })
+    if (!check.isAllowed) {
+      const err = new Error(check.message || 'Supervisor user limit reached for organization subscription.')
+      err.code = check.reason
+      err.limitCheck = check
+      err.details = check
+      throw err
+    }
+  }
+
   const code = inviteData.code || Math.random().toString(36).substring(2, 10).toUpperCase()
   const payload = {
     code,

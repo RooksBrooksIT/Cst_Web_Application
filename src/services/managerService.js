@@ -91,6 +91,7 @@ export async function createManager(orgId, managerData) {
     error.code = validation.reason
     error.upgradePlan = validation.upgradePlan
     error.limits = validation.limits
+    error.details = validation
     throw error
   }
 

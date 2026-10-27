@@ -34,6 +34,7 @@ import { collection, onSnapshot } from 'firebase/firestore'
 import { db } from '../../../services/firebase'
 import { SubscriptionLimitService } from '../../../services/subscriptionLimitService'
 import SubscriptionLimitModal from '../../../components/common/SubscriptionLimitModal'
+import FreeTrialUserLimitModal from '../../../components/common/FreeTrialUserLimitModal'
 
 /**
  * Normalizes any workforce member (Manager, Supervisor, Worker)
@@ -368,6 +369,7 @@ export default function TeamManagement({
   // Plan Limits & Quotas State
   const [planLimits, setPlanLimits] = useState(null)
   const [limitModalData, setLimitModalData] = useState(null)
+  const [trialLimitModalData, setTrialLimitModalData] = useState(null)
 
   // Manager Creation Modal State
   const [isManagerModalOpen, setIsManagerModalOpen] = useState(false)
@@ -463,19 +465,38 @@ export default function TeamManagement({
     const check = await SubscriptionLimitService.canCreateManager({
       orgId,
       currentManagersCount: metrics.managersCount,
-      currentTotalUsersCount: metrics.total + 1,
+      currentSupervisorsCount: metrics.supervisorsCount,
+      currentWorkersCount: metrics.workersCount,
+      currentTotalUsersCount: 1 + metrics.managersCount + metrics.supervisorsCount,
       currentPlanName: planLimits?.planName,
     })
     if (!check.isAllowed) {
-      setLimitModalData({
-        title: check.title || 'Manager Quota Reached',
-        message: check.message,
-        planName: check.planName || planLimits?.planName,
-        currentCount: check.currentCount,
-        maxLimit: check.maxLimit,
-        recommendedPlan: check.upgradePlan || 'Gold',
-        resourceType: check.reason?.includes('TOTAL') ? 'Team User' : 'Manager',
-      })
+      if (
+        check.isTrialLimit ||
+        check.reason === 'FREE_TRIAL_USER_LIMIT_REACHED' ||
+        (planLimits?.isTrial && check.reason !== 'SUBSCRIPTION_EXPIRED' && check.reason !== 'TRIAL_EXPIRED')
+      ) {
+        setTrialLimitModalData({
+          title: check.title || 'Free Trial User Limit Reached',
+          message: check.message,
+          adminCount: check.adminCount ?? 1,
+          managersCount: check.managersCount ?? metrics.managersCount,
+          supervisorsCount: check.supervisorsCount ?? metrics.supervisorsCount,
+          workersCount: check.workersCount ?? metrics.workersCount,
+          totalEligible: check.totalEligible ?? (1 + metrics.managersCount + metrics.supervisorsCount),
+          maxEligible: check.maxEligible ?? 3,
+        })
+      } else {
+        setLimitModalData({
+          title: check.title || 'Manager Quota Reached',
+          message: check.message,
+          planName: check.planName || planLimits?.planName,
+          currentCount: check.currentCount,
+          maxLimit: check.maxLimit,
+          recommendedPlan: check.upgradePlan || 'Gold',
+          resourceType: check.reason?.includes('TOTAL') ? 'Team User' : 'Manager',
+        })
+      }
       return
     }
     setIsManagerModalOpen(true)
@@ -514,10 +535,35 @@ export default function TeamManagement({
         setManagerSuccess('')
       }, 1500)
     } catch (err) {
-      if (err.code === 'TOTAL_USERS_LIMIT_REACHED' || err.code === 'MANAGER_LIMIT_REACHED' || err.code === 'SUBSCRIPTION_EXPIRED') {
+      if (
+        err.code === 'FREE_TRIAL_USER_LIMIT_REACHED' ||
+        (planLimits?.isTrial && err.code === 'MANAGER_LIMIT_REACHED')
+      ) {
+        setIsManagerModalOpen(false)
+        setTrialLimitModalData({
+          title: 'Free Trial User Limit Reached',
+          message: err.message,
+          adminCount: 1,
+          managersCount: metrics.managersCount,
+          supervisorsCount: metrics.supervisorsCount,
+          workersCount: metrics.workersCount,
+          totalEligible: 1 + metrics.managersCount + metrics.supervisorsCount,
+          maxEligible: 3,
+        })
+      } else if (
+        err.code === 'TOTAL_USERS_LIMIT_REACHED' ||
+        err.code === 'MANAGER_LIMIT_REACHED' ||
+        err.code === 'SUBSCRIPTION_EXPIRED' ||
+        err.code === 'TRIAL_EXPIRED'
+      ) {
         setIsManagerModalOpen(false)
         setLimitModalData({
-          title: err.code === 'SUBSCRIPTION_EXPIRED' ? 'Subscription Expired' : 'Manager Quota Reached',
+          title:
+            err.code === 'SUBSCRIPTION_EXPIRED'
+              ? 'Subscription Expired'
+              : err.code === 'TRIAL_EXPIRED'
+              ? 'Free Trial Expired'
+              : 'Manager Quota Reached',
           message: err.message,
           planName: planLimits?.planName,
           recommendedPlan: err.upgradePlan || 'Gold',
@@ -832,16 +878,141 @@ export default function TeamManagement({
     return filteredWorkforce.slice(start, start + pageSize)
   }, [filteredWorkforce, safeCurrentPage, pageSize])
 
+  function handleOpenInviteModal() {
+    setInviteResult(null)
+    setFormData({
+      name: '',
+      email: '',
+      phone: '',
+      role: 'manager',
+      assignedProjects: [],
+    })
+    setIsInviteOpen(true)
+  }
+
   // 7. Invite Submission
   async function handleInvite(e) {
     e.preventDefault()
     if (!orgId) return
+
+    const selectedRole = String(formData.role || 'manager').toLowerCase()
+    if (selectedRole.includes('manager')) {
+      const check = await SubscriptionLimitService.canCreateManager({
+        orgId,
+        currentManagersCount: metrics.managersCount,
+        currentSupervisorsCount: metrics.supervisorsCount,
+        currentWorkersCount: metrics.workersCount,
+        currentTotalUsersCount: 1 + metrics.managersCount + metrics.supervisorsCount,
+        currentPlanName: planLimits?.planName,
+      })
+      if (!check.isAllowed) {
+        setIsInviteOpen(false)
+        if (
+          check.isTrialLimit ||
+          check.reason === 'FREE_TRIAL_USER_LIMIT_REACHED' ||
+          (planLimits?.isTrial && check.reason !== 'SUBSCRIPTION_EXPIRED' && check.reason !== 'TRIAL_EXPIRED')
+        ) {
+          setTrialLimitModalData({
+            title: check.title || 'Free Trial User Limit Reached',
+            message: check.message,
+            adminCount: check.adminCount ?? 1,
+            managersCount: check.managersCount ?? metrics.managersCount,
+            supervisorsCount: check.supervisorsCount ?? metrics.supervisorsCount,
+            workersCount: check.workersCount ?? metrics.workersCount,
+            totalEligible: check.totalEligible ?? (1 + metrics.managersCount + metrics.supervisorsCount),
+            maxEligible: check.maxEligible ?? 3,
+          })
+        } else {
+          setLimitModalData({
+            title: check.title || 'Manager Quota Reached',
+            message: check.message,
+            planName: check.planName || planLimits?.planName,
+            currentCount: check.currentCount,
+            maxLimit: check.maxLimit,
+            recommendedPlan: check.upgradePlan || 'Gold',
+            resourceType: check.reason?.includes('TOTAL') ? 'Team User' : 'Manager',
+          })
+        }
+        return
+      }
+    } else if (selectedRole.includes('supervisor')) {
+      const check = await SubscriptionLimitService.canCreateSupervisor({
+        orgId,
+        currentManagersCount: metrics.managersCount,
+        currentSupervisorsCount: metrics.supervisorsCount,
+        currentWorkersCount: metrics.workersCount,
+        currentTotalUsersCount: 1 + metrics.managersCount + metrics.supervisorsCount,
+        currentPlanName: planLimits?.planName,
+      })
+      if (!check.isAllowed) {
+        setIsInviteOpen(false)
+        if (
+          check.isTrialLimit ||
+          check.reason === 'FREE_TRIAL_USER_LIMIT_REACHED' ||
+          (planLimits?.isTrial && check.reason !== 'SUBSCRIPTION_EXPIRED' && check.reason !== 'TRIAL_EXPIRED')
+        ) {
+          setTrialLimitModalData({
+            title: check.title || 'Free Trial User Limit Reached',
+            message: check.message,
+            adminCount: check.adminCount ?? 1,
+            managersCount: check.managersCount ?? metrics.managersCount,
+            supervisorsCount: check.supervisorsCount ?? metrics.supervisorsCount,
+            workersCount: check.workersCount ?? metrics.workersCount,
+            totalEligible: check.totalEligible ?? (1 + metrics.managersCount + metrics.supervisorsCount),
+            maxEligible: check.maxEligible ?? 3,
+          })
+        } else {
+          setLimitModalData({
+            title: check.title || 'Supervisor Quota Reached',
+            message: check.message,
+            planName: check.planName || planLimits?.planName,
+            currentCount: check.currentCount,
+            maxLimit: check.maxLimit,
+            recommendedPlan: check.upgradePlan || 'Silver',
+            resourceType: check.reason?.includes('TOTAL') ? 'Team User' : 'Supervisor',
+          })
+        }
+        return
+      }
+    }
+
     setSavingInvite(true)
     try {
       const res = await createInvitationCode(orgId, formData)
       setInviteResult(res)
     } catch (err) {
-      alert('Error creating invite: ' + err.message)
+      if (err.limitCheck || err.details) {
+        setIsInviteOpen(false)
+        const check = err.limitCheck || err.details
+        if (
+          check.isTrialLimit ||
+          check.reason === 'FREE_TRIAL_USER_LIMIT_REACHED' ||
+          (planLimits?.isTrial && check.reason !== 'SUBSCRIPTION_EXPIRED' && check.reason !== 'TRIAL_EXPIRED')
+        ) {
+          setTrialLimitModalData({
+            title: check.title || 'Free Trial User Limit Reached',
+            message: check.message,
+            adminCount: check.adminCount ?? 1,
+            managersCount: check.managersCount ?? metrics.managersCount,
+            supervisorsCount: check.supervisorsCount ?? metrics.supervisorsCount,
+            workersCount: check.workersCount ?? metrics.workersCount,
+            totalEligible: check.totalEligible ?? (1 + metrics.managersCount + metrics.supervisorsCount),
+            maxEligible: check.maxEligible ?? 3,
+          })
+        } else {
+          setLimitModalData({
+            title: check.title || 'User Quota Reached',
+            message: check.message,
+            planName: check.planName || planLimits?.planName,
+            currentCount: check.currentCount,
+            maxLimit: check.maxLimit,
+            recommendedPlan: check.upgradePlan || 'Gold',
+            resourceType: 'User',
+          })
+        }
+      } else {
+        alert('Error creating invite: ' + err.message)
+      }
     } finally {
       setSavingInvite(false)
     }
@@ -900,6 +1071,15 @@ export default function TeamManagement({
 
           <button
             type="button"
+            onClick={handleOpenInviteModal}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
+          >
+            <UserPlus className="w-3.5 h-3.5 text-slate-500" />
+            <span>+ Invite Member</span>
+          </button>
+
+          <button
+            type="button"
             onClick={handleRefresh}
             disabled={isRefreshing}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100 transition-colors shadow-2xs"
@@ -927,29 +1107,72 @@ export default function TeamManagement({
               {planLimits.planName} Plan
             </span>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-            <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-              <span className="text-slate-500">Total Team Users:</span>
-              <span className={`font-mono font-bold ${metrics.total + 1 >= (planLimits.maxUsers || 2) ? 'text-rose-600' : 'text-slate-800'}`}>
-                {metrics.total + 1} / {planLimits.maxUsers === 999999 ? 'Unlimited' : planLimits.maxUsers}
-              </span>
+          {planLimits.isTrial ? (
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-slate-500">Org Admin:</span>
+                <span className="font-mono font-bold text-slate-800">
+                  1 / 1
+                </span>
+              </div>
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-slate-500">Manager:</span>
+                <span className={`font-mono font-bold ${metrics.managersCount >= 1 ? 'text-amber-600' : 'text-slate-800'}`}>
+                  {metrics.managersCount} / 1
+                </span>
+              </div>
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-slate-500">Site Supervisor:</span>
+                <span className={`font-mono font-bold ${metrics.supervisorsCount >= 1 ? 'text-amber-600' : 'text-slate-800'}`}>
+                  {metrics.supervisorsCount} / 1
+                </span>
+              </div>
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-emerald-50/60 border border-emerald-100">
+                <span className="text-emerald-700 font-medium">Workers:</span>
+                <span className="font-mono font-bold text-emerald-800">
+                  {metrics.workersCount} (Unlimited)
+                </span>
+              </div>
             </div>
-            <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-              <span className="text-slate-500">Dedicated Managers:</span>
-              <span className={`font-mono font-bold ${metrics.managersCount >= (planLimits.maxManagers || 1) ? 'text-rose-600' : 'text-slate-800'}`}>
-                {metrics.managersCount} / {planLimits.maxManagers === 999999 ? 'Unlimited' : planLimits.maxManagers}
-              </span>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-slate-500">Subscription Users:</span>
+                <span className={`font-mono font-bold ${1 + metrics.managersCount + metrics.supervisorsCount >= (planLimits.maxUsers || 2) ? 'text-rose-600' : 'text-slate-800'}`}>
+                  {1 + metrics.managersCount + metrics.supervisorsCount} / {planLimits.maxUsers === 999999 ? 'Unlimited' : planLimits.maxUsers}
+                </span>
+              </div>
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-slate-500">Dedicated Managers:</span>
+                <span className={`font-mono font-bold ${metrics.managersCount >= (planLimits.maxManagers || 1) ? 'text-rose-600' : 'text-slate-800'}`}>
+                  {metrics.managersCount} / {planLimits.maxManagers === 999999 ? 'Unlimited' : planLimits.maxManagers}
+                </span>
+              </div>
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-slate-500">Site Supervisors:</span>
+                <span className={`font-mono font-bold ${metrics.supervisorsCount >= (planLimits.maxSupervisors || 1) ? 'text-rose-600' : 'text-slate-800'}`}>
+                  {metrics.supervisorsCount} / {planLimits.maxSupervisors === 999999 ? 'Unlimited' : planLimits.maxSupervisors}
+                </span>
+              </div>
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-slate-500">Field Workers:</span>
+                <span className="font-mono font-bold text-slate-800">
+                  {metrics.workersCount} (Excluded from Limit)
+                </span>
+              </div>
             </div>
-            <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-              <span className="text-slate-500">Site Supervisors:</span>
-              <span className={`font-mono font-bold ${metrics.supervisorsCount >= (planLimits.maxSupervisors || 1) ? 'text-rose-600' : 'text-slate-800'}`}>
-                {metrics.supervisorsCount} / {planLimits.maxSupervisors === 999999 ? 'Unlimited' : planLimits.maxSupervisors}
-              </span>
-            </div>
-          </div>
+          )}
         </div>
       )}
 
+      {/* Free Trial User Limit Modal */}
+      <FreeTrialUserLimitModal
+        isOpen={Boolean(trialLimitModalData)}
+        onClose={() => setTrialLimitModalData(null)}
+        {...trialLimitModalData}
+      />
+
+      {/* Paid Subscription Limit Modal */}
       <SubscriptionLimitModal
         isOpen={Boolean(limitModalData)}
         onClose={() => setLimitModalData(null)}

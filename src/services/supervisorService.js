@@ -9,6 +9,7 @@ import {
   query,
   where,
   serverTimestamp,
+  onSnapshot,
 } from 'firebase/firestore'
 import { db } from './firebase.js'
 import {
@@ -55,54 +56,44 @@ export async function getNextSupervisorId(orgId) {
   if (!orgId) return 'SUP001'
 
   const existingNumbers = new Set()
-  const collectionsToCheck = ['supervisor', 'siteSupervisor', 'supervisors']
 
-  for (const colName of collectionsToCheck) {
-    try {
-      const colRef = collection(db, 'organisation', orgId, colName)
-      const snap = await getDocs(colRef)
-      snap.docs.forEach((d) => {
-        const data = d.data() || {}
-        // Check SupervisorId (source of truth), supervisorId, 'Supervisor ID', and doc ID
-        const candidates = [
-          data.SupervisorId,
-          data.supervisorId,
-          data['Supervisor ID'],
-          d.id,
-        ]
+  try {
+    const colRef = collection(db, 'organisation', orgId, 'supervisor')
+    const snap = await getDocs(colRef)
+    snap.docs.forEach((d) => {
+      const data = d.data() || {}
+      const candidates = [
+        data.SupervisorId,
+        data.supervisorId,
+        data['Supervisor ID'],
+        d.id,
+      ]
 
-        candidates.forEach((val) => {
-          if (!val) return
-          const match = String(val).trim().match(/^SUP(\d+)$/i)
-          if (match && match[1]) {
-            const num = parseInt(match[1], 10)
-            if (!isNaN(num) && num > 0) {
-              existingNumbers.add(num)
-            }
+      candidates.forEach((val) => {
+        if (!val) return
+        const match = String(val).trim().match(/^SUP(\d+)$/i)
+        if (match && match[1]) {
+          const num = parseInt(match[1], 10)
+          if (!isNaN(num) && num > 0) {
+            existingNumbers.add(num)
           }
-        })
+        }
       })
-    } catch (err) {
-      // Continue checking next collection alias
-    }
+    })
+  } catch (err) {
+    console.warn('Error reading existing supervisor IDs:', err)
   }
 
   // Find max sequential number
   const maxNum = existingNumbers.size > 0 ? Math.max(...existingNumbers) : 0
   let nextNum = maxNum + 1
 
-  // Guarantee candidate does not collide with any existing document in Firestore
+  // Guarantee candidate does not collide with any existing document in supervisor collection
   while (true) {
     const candidateId = `SUP${String(nextNum).padStart(3, '0')}`
     try {
       const supDoc = await getDoc(doc(db, 'organisation', orgId, 'supervisor', candidateId))
-      let siteSupExists = false
-      try {
-        const siteDoc = await getDoc(doc(db, 'organisation', orgId, 'siteSupervisor', candidateId))
-        siteSupExists = siteDoc.exists()
-      } catch (e) {}
-
-      if (!supDoc.exists() && !siteSupExists) {
+      if (!supDoc.exists()) {
         return candidateId
       }
     } catch (e) {
@@ -120,56 +111,87 @@ export async function getNextSupervisorId(orgId) {
  */
 export async function fetchSupervisors(orgId) {
   if (!orgId) return []
-  const collectionsToCheck = ['supervisor', 'siteSupervisor', 'supervisors']
-  const map = new Map()
 
-  for (const colName of collectionsToCheck) {
-    try {
-      const snap = await getDocs(collection(db, 'organisation', orgId, colName))
-      snap.docs.forEach((d) => {
-        const data = d.data() || {}
-        const primaryId = data.SupervisorId || data.supervisorId || d.id
-        if (!map.has(primaryId)) {
-          map.set(primaryId, {
-            id: primaryId,
-            SupervisorId: data.SupervisorId || data.supervisorId || primaryId,
-            supervisorId: data.supervisorId || data.SupervisorId || primaryId,
-            FullName: data.FullName || data.fullName || data.name || '',
-            fullName: data.fullName || data.FullName || data.name || '',
-            UserName: data.UserName || data.username || '',
-            username: data.username || data.UserName || '',
-            ContactNo: data.ContactNo || data.phone || '',
-            phone: data.phone || data.ContactNo || '',
-            Email: data.Email || data.email || '',
-            email: data.email || data.Email || '',
-            Designation: data.Designation || data.designation || 'Site Supervisor',
-            designation: data.designation || data.Designation || 'Site Supervisor',
-            Photo: data.Photo || data.photo || data.PhotoUrl || data.photoUrl || '',
-            PhotoUrl: data.PhotoUrl || data.photoUrl || data.Photo || '',
-            photoUrl: data.photoUrl || data.PhotoUrl || data.Photo || '',
-            Password: data.Password || data.password || '',
-            password: data.password || data.Password || '',
-            isActive: data.isActive !== false && data.status !== 'Inactive',
-            status: data.status || (data.isActive === false ? 'Inactive' : 'Active'),
-            assignedSites: Array.isArray(data.assignedSites) ? data.assignedSites : [],
-            createdAt: data.createdAt,
-            updatedAt: data.updatedAt,
-            ...data,
-          })
-        }
-      })
-    } catch (e) {}
+  try {
+    const snap = await getDocs(collection(db, 'organisation', orgId, 'supervisor'))
+    return snap.docs.map((d) => {
+      const data = d.data() || {}
+      const primaryId = data.SupervisorId || data.supervisorId || d.id
+      return {
+        id: primaryId,
+        SupervisorId: data.SupervisorId || data.supervisorId || primaryId,
+        supervisorId: data.supervisorId || data.SupervisorId || primaryId,
+        FullName: data.FullName || data.fullName || data.name || '',
+        fullName: data.fullName || data.FullName || data.name || '',
+        UserName: data.UserName || data.username || '',
+        username: data.username || data.UserName || '',
+        ContactNo: data.ContactNo || data.phone || '',
+        phone: data.phone || data.ContactNo || '',
+        Email: data.Email || data.email || '',
+        email: data.email || data.Email || '',
+        Designation: data.Designation || data.designation || 'Site Supervisor',
+        designation: data.designation || data.Designation || 'Site Supervisor',
+        Photo: data.Photo || data.photo || data.PhotoUrl || data.photoUrl || '',
+        PhotoUrl: data.PhotoUrl || data.photoUrl || data.Photo || '',
+        photoUrl: data.photoUrl || data.PhotoUrl || data.Photo || '',
+        Password: data.Password || data.password || '',
+        password: data.password || data.Password || '',
+        isActive: data.isActive !== false && data.status !== 'Inactive',
+        status: data.status || (data.isActive === false ? 'Inactive' : 'Active'),
+        assignedSites: Array.isArray(data.assignedSites) ? data.assignedSites : [],
+        createdAt: data.createdAt,
+        updatedAt: data.updatedAt,
+        ...data,
+      }
+    })
+  } catch (err) {
+    console.warn('Error fetching supervisors from supervisor collection:', err)
+    return []
   }
-
-  if (map.size > 0) {
-    return Array.from(map.values())
-  }
-  return fetchWithFallback(orgId, 'supervisors')
 }
 
 export function subscribeSupervisors(orgId, onData, onError) {
   if (!orgId) return () => {}
-  return subscribeWithFallback(orgId, 'supervisors', onData, onError)
+  const colRef = collection(db, 'organisation', orgId, 'supervisor')
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const supervisors = snapshot.docs.map((d) => {
+        const data = d.data() || {}
+        const primaryId = data.SupervisorId || data.supervisorId || d.id
+        return {
+          id: primaryId,
+          SupervisorId: data.SupervisorId || data.supervisorId || primaryId,
+          supervisorId: data.supervisorId || data.SupervisorId || primaryId,
+          FullName: data.FullName || data.fullName || data.name || '',
+          fullName: data.fullName || data.FullName || data.name || '',
+          UserName: data.UserName || data.username || '',
+          username: data.username || data.UserName || '',
+          ContactNo: data.ContactNo || data.phone || '',
+          phone: data.phone || data.ContactNo || '',
+          Email: data.Email || data.email || '',
+          email: data.email || data.Email || '',
+          Designation: data.Designation || data.designation || 'Site Supervisor',
+          designation: data.designation || data.Designation || 'Site Supervisor',
+          Photo: data.Photo || data.photo || data.PhotoUrl || data.photoUrl || '',
+          PhotoUrl: data.PhotoUrl || data.photoUrl || data.Photo || '',
+          photoUrl: data.photoUrl || data.PhotoUrl || data.Photo || '',
+          Password: data.Password || data.password || '',
+          password: data.password || data.Password || '',
+          isActive: data.isActive !== false && data.status !== 'Inactive',
+          status: data.status || (data.isActive === false ? 'Inactive' : 'Active'),
+          assignedSites: Array.isArray(data.assignedSites) ? data.assignedSites : [],
+          createdAt: data.createdAt,
+          updatedAt: data.updatedAt,
+          ...data,
+        }
+      })
+      onData(supervisors)
+    },
+    (err) => {
+      if (onError) onError(err)
+    }
+  )
 }
 
 /**
@@ -186,36 +208,28 @@ export async function checkSupervisorUniqueness(orgId, { username, phone, email,
     }
   }
 
-  // 2. Phone and Email Uniqueness Check within Organization
-  const checked = new Set()
-  const collectionsToCheck = ['supervisor', 'siteSupervisor', 'supervisors']
+  // 2. Phone and Email Uniqueness Check within Organization supervisor collection
+  try {
+    const snap = await getDocs(collection(db, 'organisation', orgId, 'supervisor'))
+    for (const d of snap.docs) {
+      const data = d.data() || {}
+      const docSupervisorId = data.SupervisorId || data.supervisorId || d.id
 
-  for (const colName of collectionsToCheck) {
-    try {
-      const snap = await getDocs(collection(db, 'organisation', orgId, colName))
-      for (const d of snap.docs) {
-        if (checked.has(d.id)) continue
-        checked.add(d.id)
-
-        const data = d.data() || {}
-        const docSupervisorId = data.SupervisorId || data.supervisorId || d.id
-
-        if (currentId && (d.id === currentId || docSupervisorId === currentId)) {
-          continue
-        }
-
-        if (phone && String(data.ContactNo || data.phone || '').trim() === String(phone).trim()) {
-          return { isUnique: false, field: 'phone', message: `Contact Number "${phone}" is already registered.` }
-        }
-        if (
-          email &&
-          String(data.Email || data.email || '').toLowerCase() === String(email).toLowerCase().trim()
-        ) {
-          return { isUnique: false, field: 'email', message: `Email "${email}" is already registered.` }
-        }
+      if (currentId && (d.id === currentId || docSupervisorId === currentId)) {
+        continue
       }
-    } catch (e) {}
-  }
+
+      if (phone && String(data.ContactNo || data.phone || '').trim() === String(phone).trim()) {
+        return { isUnique: false, field: 'phone', message: `Contact Number "${phone}" is already registered.` }
+      }
+      if (
+        email &&
+        String(data.Email || data.email || '').toLowerCase() === String(email).toLowerCase().trim()
+      ) {
+        return { isUnique: false, field: 'email', message: `Email "${email}" is already registered.` }
+      }
+    }
+  } catch (e) {}
 
   return { isUnique: true, message: 'Username is available ✓' }
 }
@@ -242,6 +256,7 @@ export async function createSupervisor(orgId, supervisorData, managerActor) {
     error.code = validation.reason
     error.upgradePlan = validation.upgradePlan
     error.limits = validation.limits
+    error.details = validation
     throw error
   }
 
@@ -379,15 +394,8 @@ export async function updateSupervisor(orgId, supervisorId, updates) {
     payload.status = updates.isActive ? 'Active' : 'Inactive'
   }
 
-  const collections = ['supervisor', 'siteSupervisor']
-  for (const col of collections) {
-    try {
-      const supRef = doc(db, 'organisation', orgId, col, supervisorId)
-      await updateDoc(supRef, payload)
-    } catch (err) {
-      // Document might not exist in secondary alias collection
-    }
-  }
+  const supRef = doc(db, 'organisation', orgId, 'supervisor', supervisorId)
+  await updateDoc(supRef, payload)
 }
 
 /**
@@ -398,17 +406,12 @@ export async function toggleSupervisorStatus(orgId, supervisorId, isActive) {
 }
 
 /**
- * Deletes a supervisor profile across collections
+ * Deletes a supervisor profile from the supervisor collection
  */
 export async function deleteSupervisor(orgId, supervisorId) {
   if (!orgId || !supervisorId) throw new Error('orgId and supervisorId are required')
-  const collections = ['supervisor', 'siteSupervisor']
-  for (const col of collections) {
-    try {
-      const supRef = doc(db, 'organisation', orgId, col, supervisorId)
-      await deleteDoc(supRef)
-    } catch (err) {}
-  }
+  const supRef = doc(db, 'organisation', orgId, 'supervisor', supervisorId)
+  await deleteDoc(supRef)
 }
 
 // ------------------------------------------------------------------------------------------------

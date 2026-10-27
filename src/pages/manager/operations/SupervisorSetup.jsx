@@ -122,7 +122,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
           currentPlanName: planLimits?.planName,
           currentSupervisorsCount: supervisors.length,
         })
-        if (!check.allowed) {
+        if (!check.isAllowed && !check.allowed) {
           setLimitModalData(check)
           setLimitModalOpen(true)
           return
@@ -398,11 +398,11 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
 
         {/* Action Toggle & Quota */}
         <div className="flex flex-wrap items-center gap-3">
-          {planLimits?.quotas && (
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+          {planLimits && (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs shadow-2xs">
               <span className="text-slate-500 font-medium">Supervisor Quota:</span>
-              <span className="font-bold text-slate-800">
-                {supervisors.length} / {planLimits.quotas.maxSupervisors >= 999999 ? '∞' : planLimits.quotas.maxSupervisors}
+              <span className="font-bold text-slate-800 font-mono">
+                {supervisors.length} / {(planLimits.quotas?.maxSupervisors ?? planLimits.maxSupervisors) >= 999999 ? '∞' : (planLimits.quotas?.maxSupervisors ?? planLimits.maxSupervisors)}
               </span>
               <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
                 {planLimits.planName}

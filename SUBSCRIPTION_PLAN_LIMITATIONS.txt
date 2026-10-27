@@ -26,7 +26,7 @@ SubscriptionLimitService and Firestore security rules.
 --------------------------------------------------------------------------------
 RESOURCE LIMIT DEFINITIONS:
   - Active Sites / Projects : Total count of non-archived construction sites.
-  - Total Team Users        : Cumulative limit of (Managers + Supervisors + Staff).
+  - Total Team Users        : Cumulative limit of (Admin + Managers + Supervisors). Workers are strictly excluded.
   - Managers                : Dedicated project manager accounts.
   - Supervisors             : On-site supervisor accounts.
   - Layout & Drawings       : PDF / image blueprints and technical drawings per site.
@@ -40,8 +40,8 @@ RESOURCE LIMIT DEFINITIONS:
 +----------------------+------------+----------+----------+--------------------+-------------+
 | Active Sites         | 1          | 5        | 10       | 5 - 50+ (Custom)   | Unlimited   |
 | Max Managers         | 1          | 2        | 5        | round(N / 2) [2-25]| Unlimited   |
-| Max Supervisors      | 1          | 3        | 10       | N (Equal to sites) | Unlimited   |
-| Total Team Users     | 2          | 5        | 15       | round(N * 1.5)     | Unlimited   |
+| Max Supervisors      | 1          | 2        | 10       | N (Equal to sites) | Unlimited   |
+| Total Team Users     | 3          | 5        | 15       | round(N * 1.5)     | Unlimited   |
 +----------------------+------------+----------+----------+--------------------+-------------+
 | Layout & Drawings:   |            |          |          |                    |             |
 | - Max Active Docs    | 1 doc/site | 1 doc/site| 1 doc/site| 2 docs/site        | 2 docs/site |
@@ -98,7 +98,7 @@ RESOURCE QUOTAS:
   * Maximum Active Sites / Projects : 5 Sites
   * Maximum Total Team Users        : 5 Users
   * Maximum Managers                : Up to 2 Managers
-  * Maximum Supervisors             : Up to 3 Supervisors
+  * Maximum Supervisors             : Up to 2 Supervisors
 
 LAYOUT & DRAWINGS RESTRICTIONS:
   * Maximum Active Documents : 1 document per site

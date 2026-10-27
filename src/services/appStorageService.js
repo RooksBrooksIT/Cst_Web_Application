@@ -67,8 +67,13 @@ export async function ensureStorageAuthenticated(orgId) {
       const password = orgData?.password
 
       if (email && password) {
-        const creds = await signInWithEmailAndPassword(auth, email, password)
-        return creds.user
+        try {
+          const creds = await signInWithEmailAndPassword(auth, email, password)
+          return creds.user
+        } catch (_storageAuthErr) {
+          // If Firestore password doesn't match Firebase Auth password, don't crash
+          return null
+        }
       }
     } catch (err) {
       console.warn('ensureStorageAuthenticated note:', err?.message)

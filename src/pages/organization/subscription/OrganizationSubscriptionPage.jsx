@@ -1,9 +1,13 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useAuth } from '../../../hooks/useAuth'
+import { SubscriptionLimitService } from '../../../services/subscriptionLimitService'
 import {
   SUBSCRIPTION_PLANS,
   calculatePlanQuotas,
   activateSubscription,
+  subscribeSubscription,
+  isSubscriptionExpired,
+  calculateDaysRemaining,
 } from '../../../services/subscriptionService'
 import { PricingScreen } from './PricingScreen'
 import { PayUCheckoutModal } from './PayUCheckoutModal'
@@ -37,31 +41,52 @@ export function OrganizationSubscriptionPage({
   const [isContactOpen, setIsContactOpen] = useState(false)
   const [isTermsOpen, setIsTermsOpen] = useState(false)
   const [activating, setActivating] = useState(false)
+  const [liveSubscription, setLiveSubscription] = useState(null)
+  const [teamCounts, setTeamCounts] = useState({ managers: 0, supervisors: 0, workers: 0, totalUsers: 1 })
 
-  // Resolve active subscription from userData / prop / default fallback
+  useEffect(() => {
+    if (!orgId) return
+    SubscriptionLimitService.getTeamCounts(orgId)
+      .then((res) => {
+        if (res) setTeamCounts(res)
+      })
+      .catch((err) => console.warn('Could not fetch team counts:', err))
+  }, [orgId])
+
+  useEffect(() => {
+    if (propSubscription || !orgId) return
+    const unsub = subscribeSubscription(orgId, (sub) => {
+      if (sub) setLiveSubscription(sub)
+    })
+    return () => unsub?.()
+  }, [orgId, propSubscription])
+
+  // Resolve active subscription from propSubscription / liveSubscription / userData
   const subscription = useMemo(() => {
     return (
       propSubscription ||
+      liveSubscription ||
       userData?.subscription ||
       userData?.data?.subscription || {
         subscriptionPlan: 'Free Trial',
         subscriptionType: 'Free Trial',
         isSubscriptionActive: true,
-        subscriptionStartDate: new Date(),
-        subscriptionEndDate: new Date(Date.now() + 14 * 86400000),
-        maxProjects: 1,
-        maxUsers: 2,
-        maxManagers: 1,
-        maxSupervisors: 1,
+        subscriptionStartDate: userData?.created_at || new Date(),
+        subscriptionEndDate: null,
+        maxProjects: 999999,
+        maxUsers: 999999,
+        maxManagers: 999999,
+        maxSupervisors: 999999,
       }
     )
-  }, [propSubscription, userData])
+  }, [propSubscription, liveSubscription, userData])
 
   const planName = subscription.subscriptionPlan || 'Free Trial'
-  const billingCycle = subscription.subscriptionType || 'Monthly'
-  const isActive = subscription.isSubscriptionActive !== false
-  const daysLeft = daysRemainingFrom(subscription.subscriptionEndDate)
-  const isExpired = !isActive || daysLeft === 0
+  const isTrial = planName.toLowerCase().includes('trial') || planName.toLowerCase().includes('free')
+  const billingCycle = subscription.subscriptionType || (isTrial ? 'Free Trial' : 'Monthly')
+  const daysLeft = calculateDaysRemaining(subscription.subscriptionEndDate)
+  const isExpired = isSubscriptionExpired(subscription) || (subscription.subscriptionEndDate && daysLeft === 0)
+  const isTrialActive = isTrial && !isExpired
 
   // Count active staff and projects
   const currentSitesCount = sites.length
@@ -74,10 +99,11 @@ export function OrganizationSubscriptionPage({
     return calculatePlanQuotas(planName, subscription.platinumProjects || 10)
   }, [planName, subscription.platinumProjects])
 
-  const maxSites = subscription.maxProjects || quotas.maxProjects
-  const maxManagers = subscription.maxManagers || quotas.maxManagers
-  const maxSupervisors = subscription.maxSupervisors || quotas.maxSupervisors
-  const maxUsers = subscription.maxUsers || quotas.maxUsers
+  const isCustomEnterprise = planName.toLowerCase().includes('enterprise') || planName.toLowerCase().includes('custom')
+  const maxSites = isCustomEnterprise && subscription.maxProjects ? subscription.maxProjects : quotas.maxProjects
+  const maxManagers = isCustomEnterprise && subscription.maxManagers ? subscription.maxManagers : quotas.maxManagers
+  const maxSupervisors = isCustomEnterprise && subscription.maxSupervisors ? subscription.maxSupervisors : quotas.maxSupervisors
+  const maxUsers = isCustomEnterprise && subscription.maxUsers ? subscription.maxUsers : quotas.maxUsers
 
   // Handlers
   function handleSelectPlanForCheckout(planSelection) {
@@ -227,7 +253,7 @@ export function OrganizationSubscriptionPage({
                   isExpired ? 'bg-rose-400' : 'bg-emerald-400 animate-pulse'
                 }`}
               />
-              {isExpired ? 'Subscription Expired' : 'Active Subscription'}
+              {isTrial && isExpired ? 'Trial Expired' : isExpired ? 'Subscription Expired' : isTrialActive ? 'Active Free Trial' : 'Active Subscription'}
             </span>
           </div>
         </div>
@@ -370,7 +396,7 @@ export function OrganizationSubscriptionPage({
               />
             </div>
             <small className="text-[10px] text-slate-400 block">
-              Sum of Admin, Project Managers, and Site Supervisors.
+              Sum of Admin, Project Managers, and Site Supervisors. Workers are excluded from this limit.
             </small>
           </div>
         </div>

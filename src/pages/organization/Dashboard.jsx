@@ -433,7 +433,8 @@ export default function OrganizationDashboard() {
 
   const subscriptionExpiryInfo = useMemo(() => {
     if (!subscription) return null
-    const isEnterprise = String(subscription.planName || '').toLowerCase() === 'enterprise'
+    const planName = subscription.subscriptionPlan || subscription.planName || 'Free Trial'
+    const isEnterprise = String(planName).toLowerCase() === 'enterprise'
     if (isEnterprise) return null
 
     const endDateRaw = subscription.subscriptionEndDate || subscription.endDate
@@ -448,6 +449,8 @@ export default function OrganizationDashboard() {
       daysRemaining = Math.max(0, Math.ceil((endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
     }
 
+    const isTrial = planName.toLowerCase().includes('trial') || planName.toLowerCase().includes('free')
+
     const isExpired =
       subscription.isSubscriptionActive === false ||
       (daysRemaining !== undefined && daysRemaining <= 0) ||
@@ -456,7 +459,8 @@ export default function OrganizationDashboard() {
     const isExpiringSoon = !isExpired && daysRemaining !== undefined && daysRemaining <= 5
 
     return {
-      planName: subscription.planName || 'Free Trial',
+      planName,
+      isTrial,
       daysRemaining: daysRemaining ?? 0,
       isExpired,
       isExpiringSoon,

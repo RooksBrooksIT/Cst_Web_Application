@@ -3,22 +3,24 @@
  * Complies with SUBSCRIPTION_PLANS_AND_PAYMENT_FLOW_SPECIFICATION.txt
  */
 
+const env = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : {}
+
 export const PAYU_CONFIG = {
   environment:
-    import.meta.env.VITE_PAYU_ENV ||
-    import.meta.env.VITE_PAYU_ENVIRONMENT ||
-    import.meta.env.PAYU_ENVIRONMENT ||
+    env.VITE_PAYU_ENV ||
+    env.VITE_PAYU_ENVIRONMENT ||
+    env.PAYU_ENVIRONMENT ||
     'production',
-  testPayUrl: import.meta.env.VITE_PAYU_TEST_PAY_URL || import.meta.env.PAYU_TEST_PAY_URL || 'https://test.payu.in/_payment',
-  prodPayUrl: import.meta.env.VITE_PAYU_PROD_PAY_URL || import.meta.env.VITE_PAYU_PAY_URL || import.meta.env.PAYU_PROD_PAY_URL || 'https://secure.payu.in/_payment',
-  testMerchantId: import.meta.env.VITE_PAYU_TEST_MERCHANT_ID || import.meta.env.PAYU_TEST_MERCHANT_ID || '9193759',
-  testKey: import.meta.env.VITE_PAYU_TEST_KEY || import.meta.env.PAYU_TEST_KEY || 'GZrAha',
-  testSalt: import.meta.env.VITE_PAYU_TEST_SALT || import.meta.env.PAYU_TEST_SALT || 'xpfwrDGBXY4sR5Y8O4xU8OB0seurgJMi',
-  prodMerchantId: import.meta.env.VITE_PAYU_PROD_MERCHANT_ID || import.meta.env.VITE_PAYU_MERCHANT_ID || import.meta.env.PAYU_PROD_MERCHANT_ID || import.meta.env.PAYU_MERCHANT_ID || '13573851',
-  prodKey: import.meta.env.VITE_PAYU_PROD_KEY || import.meta.env.VITE_PAYU_KEY || import.meta.env.PAYU_PROD_KEY || import.meta.env.PAYU_KEY || 'a912BZ',
-  prodSalt: import.meta.env.VITE_PAYU_PROD_SALT || import.meta.env.VITE_PAYU_SALT || import.meta.env.PAYU_PROD_SALT || import.meta.env.PAYU_SALT || 'jgo9fpvFX8DO2QtQDaWJHvz4JByS8ytC',
-  surl: import.meta.env.VITE_PAYU_SURL || import.meta.env.PAYU_SURL || 'https://us-central1-cst-whitelabel-app.cloudfunctions.net/payuWebhook',
-  furl: import.meta.env.VITE_PAYU_FURL || import.meta.env.PAYU_FURL || 'https://us-central1-cst-whitelabel-app.cloudfunctions.net/payuWebhook',
+  testPayUrl: env.VITE_PAYU_TEST_PAY_URL || env.PAYU_TEST_PAY_URL || 'https://test.payu.in/_payment',
+  prodPayUrl: env.VITE_PAYU_PROD_PAY_URL || env.VITE_PAYU_PAY_URL || env.PAYU_PROD_PAY_URL || 'https://secure.payu.in/_payment',
+  testMerchantId: env.VITE_PAYU_TEST_MERCHANT_ID || env.PAYU_TEST_MERCHANT_ID || '9193759',
+  testKey: env.VITE_PAYU_TEST_KEY || env.PAYU_TEST_KEY || 'GZrAha',
+  testSalt: env.VITE_PAYU_TEST_SALT || env.PAYU_TEST_SALT || 'xpfwrDGBXY4sR5Y8O4xU8OB0seurgJMi',
+  prodMerchantId: env.VITE_PAYU_PROD_MERCHANT_ID || env.VITE_PAYU_MERCHANT_ID || env.PAYU_PROD_MERCHANT_ID || env.PAYU_MERCHANT_ID || '13573851',
+  prodKey: env.VITE_PAYU_PROD_KEY || env.VITE_PAYU_KEY || env.PAYU_PROD_KEY || env.PAYU_KEY || 'a912BZ',
+  prodSalt: env.VITE_PAYU_PROD_SALT || env.VITE_PAYU_SALT || env.PAYU_PROD_SALT || env.PAYU_SALT || 'jgo9fpvFX8DO2QtQDaWJHvz4JByS8ytC',
+  surl: env.VITE_PAYU_SURL || env.PAYU_SURL || 'https://us-central1-cst-whitelabel-app.cloudfunctions.net/payuWebhook',
+  furl: env.VITE_PAYU_FURL || env.PAYU_FURL || 'https://us-central1-cst-whitelabel-app.cloudfunctions.net/payuWebhook',
 }
 
 /**

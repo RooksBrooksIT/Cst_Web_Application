@@ -163,6 +163,9 @@ export function PricingScreen({
                 <div>
                   <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 block">{plan.badge}</span>
                   <h3 className="text-xl font-extrabold text-slate-900 mt-0.5">{plan.name}</h3>
+                  {plan.targetAudience && (
+                    <p className="text-[11px] text-slate-500 mt-1 leading-snug">{plan.targetAudience}</p>
+                  )}
                 </div>
 
                 {/* Pricing Box */}
@@ -218,13 +221,25 @@ export function PricingScreen({
                 <div className="space-y-1.5 text-xs text-slate-600 bg-slate-50/70 p-3 rounded-2xl border border-slate-100">
                   <div className="flex justify-between">
                     <span>Active Sites:</span>
-                    <strong className="text-slate-900">{quotas.maxProjects === 999999 ? 'Unlimited' : quotas.maxProjects}</strong>
+                    <strong className="text-slate-900">{quotas.maxProjects === 999999 ? 'Unlimited' : `${quotas.maxProjects} Sites`}</strong>
                   </div>
                   <div className="flex justify-between">
-                    <span>Total Team Seats:</span>
-                    <strong className="text-slate-900">{quotas.maxUsers === 999999 ? 'Unlimited' : quotas.maxUsers}</strong>
+                    <span>Total Team Users:</span>
+                    <strong className="text-slate-900">{quotas.maxUsers === 999999 ? 'Unlimited' : `${quotas.maxUsers} Users`}</strong>
                   </div>
-                  <div className="flex justify-between">
+                  <div className="flex justify-between text-[11px] text-slate-500 pl-2">
+                    <span>└ Managers:</span>
+                    <strong className="text-slate-800">{quotas.maxManagers === 999999 ? 'Unlimited' : quotas.maxManagers}</strong>
+                  </div>
+                  <div className="flex justify-between text-[11px] text-slate-500 pl-2">
+                    <span>└ Supervisors:</span>
+                    <strong className="text-slate-800">{quotas.maxSupervisors === 999999 ? 'Unlimited' : quotas.maxSupervisors}</strong>
+                  </div>
+                  <div className="flex justify-between text-[11px] text-emerald-700 pl-2">
+                    <span>└ Field Workers:</span>
+                    <strong className="text-emerald-700 font-semibold">Unlimited (Excluded)</strong>
+                  </div>
+                  <div className="flex justify-between pt-1 border-t border-slate-200/60">
                     <span>Drawing Uploads:</span>
                     <strong className="text-slate-900">{quotas.drawingPolicy.maxActiveDocsPerSite} / site</strong>
                   </div>

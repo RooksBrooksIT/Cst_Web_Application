@@ -1,0 +1,1563 @@
+====================================================================================================
+eBricks MOBILE APPLICATION - COMPREHENSIVE TECHNICAL DOCUMENTATION
+COMPLETE WORKFLOW: ORGANIZATION ACCOUNT CREATION -> BRAND COLOR SELECTION -> CHOOSE YOUR PLAN
+====================================================================================================
+Document Version : 2.0.0
+Application Name : eBricks (CST White-Label Construction ERP)
+Target Audience  : Mobile Engineers, Backend Engineers, DevOps, System Architects, QA Automation
+Platform         : Flutter (Android & iOS) + Google Firebase + PayU Payment Gateway
+Repository Base  : d:\office\cst_white_label_app
+====================================================================================================
+
+TABLE OF CONTENTS
+----------------------------------------------------------------------------------------------------
+1. EXECUTIVE OVERVIEW & ARCHITECTURAL FOUNDATION
+   1.1 Business Context & Purpose
+   1.2 Architectural Principles & Tenant Isolation Model
+   1.3 Namespace Strategy & Identification Standards
+
+2. TECHNOLOGY STACK & CORE DEPENDENCIES
+   2.1 Mobile Application (Frontend)
+   2.2 Cloud Infrastructure & Serverless (Backend)
+   2.3 Third-Party Integrations & Gateways
+
+3. ORGANIZATION ACCOUNT CREATION (STEP 1: DETAILS)
+   3.1 Screen Navigation & User Flow
+   3.2 Registration Form Specifications & UI Fields
+   3.3 Real-Time Debounced Field Validations
+   3.4 Simultaneous Multi-Field Atomic Validation
+   3.5 Pending Registration Detection & Seamless Resume Mechanism
+   3.6 Client-Side Form Controllers & State Management
+
+4. BRAND COLOR SELECTION & DYNAMIC THEMING (STEP 2: BRANDING)
+   4.1 Screen UI/UX & Dynamic Live Theme Preview
+   4.2 Workspace Name Customization
+   4.3 Color Options Palette & Custom Color Picker Implementation
+   4.4 Theme Color System & Mathematical Shade Generation
+   4.5 Local & Remote Theme Synchronization Architecture
+   4.6 Pending Registration Persistence at Step 2
+
+5. CHOOSE YOUR PLAN & PRICING (STEP 3: PRICING)
+   5.1 Subscription Plans, Tiers & Feature Matrix
+   5.2 Pricing Calculation & Billing Cadence Logic
+   5.3 Dynamic Project Scaling (Platinum Tier Algorithm)
+   5.4 Plan Selection UI & Swipeable PageView Implementation
+   5.5 Existing Subscription Management vs. New Onboarding
+
+6. PAYMENT GATEWAY INTEGRATION (PAYU HOSTED CHECKOUT)
+   6.1 PayU Architecture & Security Model
+   6.2 Request Hash Generation (SHA-512)
+   6.3 Hosted Checkout Flow (WebView & PayUBridge)
+   6.4 Response Verification & Cryptographic Signature Check
+   6.5 Transaction Confirmation Screen (TransactionCompletedScreen)
+
+7. COMPLETE FRONTEND IMPLEMENTATION FLOW
+   7.1 Screen-by-Screen Navigation Hierarchy
+   7.2 Route Table & Deep Linking
+   7.3 Loading States, Indicators & Dialog Workflows
+   7.4 Toast Notifications & User Feedback
+   7.5 State Lifecycle & Session Initialization
+
+8. COMPLETE BACKEND IMPLEMENTATION FLOW (CLOUD FUNCTIONS & WEBHOOKS)
+   8.1 Cloud Function: generatePayUHash
+   8.2 Cloud Function: verifySubscription
+   8.3 Cloud Function: payuWebhook (Server-to-Server IPN)
+   8.4 Cloud Function: sendNewSubscriptionInvoice
+   8.5 Cloud Function: checkSubscriptionExpiryReminders
+   8.6 Transaction Idempotency & Concurrency Safeguards
+
+9. DATABASE SCHEMA, COLLECTIONS & SECURITY RULES
+   9.1 Cloud Firestore Collection Hierarchy
+   9.2 Document Specifications & Data Dictionaries
+   9.3 Cross-Application Isolation & Security Rules (firestore.rules)
+   9.4 Local Persistence (SharedPreferences Keys Dictionary)
+
+10. END-TO-END DATA FLOW & LIFECYCLE TRACING
+    10.1 Scenario A: Free Trial Onboarding (Complete Walkthrough)
+    10.2 Scenario B: Paid Plan Onboarding (PayU Success Walkthrough)
+    10.3 Sequence Diagram Representation (Textual)
+
+11. EDGE CASES, ERROR RECOVERY & APP CLOSURE BEHAVIOR
+    11.1 App Killed / Closed During Registration
+    11.2 Payment Cancellation, Gateway Dropouts & Failed Transactions
+    11.3 Network Dropouts & Offline Cache Behavior
+    11.4 Duplicate Registration Prevention & Race Condition Handling
+    11.5 Cryptographic Signature Mismatch Handling
+
+12. COMPREHENSIVE TESTING SCENARIOS & ACCEPTANCE CRITERIA
+    12.1 Unit & Validation Test Cases
+    12.2 Integration Test Cases
+    12.3 Payment & Gateway Test Vectors
+    12.4 Edge Case & Recovery Verification Cases
+    12.5 Production Go-Live Checklist
+
+
+====================================================================================================
+1. EXECUTIVE OVERVIEW & ARCHITECTURAL FOUNDATION
+====================================================================================================
+
+1.1 Business Context & Purpose
+------------------------------
+eBricks is a multi-tenant enterprise resource planning (ERP) and construction management mobile 
+application built on Flutter and Google Firebase. The application caters to construction developers, 
+general contractors, site engineers, supervisors, and material managers.
+
+The onboarding funnel represents the primary gateway for acquiring new organizations:
+   [OrganisationLandingPage]
+              |
+              v
+   [Step 1: Details - OrganisationRegistrationPage]
+              |
+              v
+   [Step 2: Branding - BrandingScreen]
+              |
+              v
+   [Step 3: Pricing - PricingScreen]
+              |
+              +---> [Free Trial (₹0)] --------> Direct Activation -> [OrganizationDashboard]
+              |
+              +---> [Paid Plan (PayU)] -------> [PayUCheckoutScreen] -> [TransactionCompletedScreen] -> [OrganizationDashboard]
+
+This technical documentation provides an exhaustive, production-grade guide detailing every 
+component, database document, API payload, encryption algorithm, UI controller, and validation 
+mechanism across both the Flutter mobile client and the Node.js Firebase Cloud Functions backend.
+
+
+1.2 Architectural Principles & Tenant Isolation Model
+-----------------------------------------------------
+1. Multi-Tenant Single-Project Architecture:
+   The application shares a centralized Firebase project across multiple client organizations while 
+   enforcing strict logical tenant isolation. Every organization operates within its own dedicated 
+   sub-tree under the top-level collection `/organisation/{orgId}`.
+
+2. Application Identifier Tagging (White-Label Guard):
+   Because the underlying Firebase database may host companion applications (e.g., educational, 
+   commercial, or partner suites), every document created by eBricks is strictly tagged with:
+      - `app_id: "cst_white_label"`
+      - `app_type: "cst_white_label"`
+      - `is_cst_app: true`
+   Queries performing global uniqueness checks (collection groups) or admin lookups filter out any 
+   foreign document lacking this application signature.
+
+3. Reactive Dynamic Theming:
+   The user interface implements a reactive theme architecture via Flutter's `ValueNotifier<Color>` 
+   and `ValueNotifier<String>`. Selecting a brand color or workspace name propagates instantly to the 
+   root `MaterialApp` widget without requiring an application restart.
+
+4. Resilient Staged Onboarding (Zero-Loss Funnel):
+   Data entered in Steps 1 and 2 is persistently committed to Firestore as a pending record with 
+   status `onboardingStep: "PAYMENT_PENDING"` and mirrored locally in `SharedPreferences`. If the user 
+   kills the app, loses internet connectivity, or experiences battery exhaustion during payment, the 
+   account is neither orphaned nor duplicated; upon restart, the system detects the pending registration 
+   and prompts the user to resume payment seamlessly.
+
+
+1.3 Namespace Strategy & Identification Standards
+-------------------------------------------------
+1. Organization Document ID (`orgId`):
+   - Standard Namespace Prefix: `cst_` (defined in `FirestoreService.cstNamespacePrefix`)
+   - Cleaning Rule: Remove all whitespace from the organization name.
+   - Date Stamp: Formatted as `dd-MM-yyyy` matching the date of account initiation.
+   - Formula:
+     `orgId = "cst_" + cleanOrgName + "_" + dateStr`
+   - Example:
+     Organization Name: "Apex Builders Private Limited"
+     Date Str: "27-10-2026"
+     Generated `orgId`: `cst_ApexBuildersPrivateLimited_27-10-2026`
+
+2. CST Namespace Helper Validation:
+   - Evaluated via `FirestoreService.isCstOrgId(orgId)`:
+     Returns true if `orgId.startsWith("cst_")` or `orgId.contains("cst")`.
+
+3. Referral Code Generation:
+   - 6-character alphanumeric uppercase string (A-Z, 0-9), verified globally unique across all 
+     organizations prior to persistence via `FirestoreService.generateUniqueReferralCode()`.
+
+
+====================================================================================================
+2. TECHNOLOGY STACK & CORE DEPENDENCIES
+====================================================================================================
+
+2.1 Mobile Application (Frontend)
+---------------------------------
+- Framework: Flutter 3.x (Dart 3.x)
+- Design System: Material Design 3 (`useMaterial3: true`)
+- State Management:
+  * ValueNotifier / ValueListenableBuilder for global branding and theming
+  * StatefulWidget with TickerProviderStateMixin and AnimationController for local form states
+  * Singleton Services pattern (`FirestoreService`, `AuthService`, `PayUService`)
+- Key Packages:
+  * `cloud_firestore: ^5.6.5` - Database document storage and real-time streaming
+  * `firebase_auth: ^5.5.1` - Managed authentication credentials
+  * `firebase_core: ^3.12.1` - Firebase app initialization
+  * `firebase_messaging: ^15.2.4` - Push notification registration and token exchange
+  * `shared_preferences: ^2.5.2` - Local offline state, session tokens, and recovery drafts
+  * `flutter_colorpicker: ^1.1.0` - Custom HSV/RGB brand color selection
+  * `webview_flutter: ^4.10.0` - PayU payment gateway hosted checkout container
+  * `flutter_dotenv: ^5.2.1` - Secure environment variable loading (.env)
+  * `crypto: ^3.0.6` - SHA-512 client cryptographic hash generation and verification
+  * `intl: ^0.20.2` - Currency, date, and timestamp formatting
+  * `url_launcher: ^6.3.1` - Native browser, dialer, and UPI intent handling
+
+2.2 Cloud Infrastructure & Serverless (Backend)
+-----------------------------------------------
+- Runtime: Node.js 18 / 20
+- Cloud Provider: Google Cloud Platform (GCP) / Firebase Cloud Functions v1
+- Region: `us-central1`
+- Cloud SDKs:
+  * `firebase-admin: ^12.0.0` - Server-side Firestore and Authentication management
+  * `firebase-functions: ^4.6.0` - Cloud HTTPS onCall and onRequest endpoints
+  * `nodemailer: ^6.9.13` - SMTP transactional email engine
+  * `crypto` (native Node.js) - HMAC / SHA-512 cryptographic verification
+  * `cors: ^2.8.5` - Cross-Origin Resource Sharing handling
+
+2.3 Third-Party Integrations & Gateways
+---------------------------------------
+- Payment Gateway: PayU India Hosted Checkout API
+  * Production Endpoint: `https://secure.payu.in/_payment`
+  * Sandbox Endpoint   : `https://test.payu.in/_payment`
+  * Security Protocol  : SHA-512 Pre-hash & Response Reverse-hash
+- Email Delivery: SMTP via Nodemailer (eBricks Notifications & Subscription Billing Invoices)
+
+
+====================================================================================================
+3. ORGANIZATION ACCOUNT CREATION (STEP 1: DETAILS)
+====================================================================================================
+
+3.1 Screen Navigation & User Flow
+---------------------------------
+1. App Launch:
+   - Root route `/` renders `SplashScreen` (`lib/screens/common/splash_screen.dart`).
+   - `SplashScreen` calls `AuthService.isLoggedIn`:
+     * If user has active session -> checks subscription -> routes to `OrganizationDashboard` or `PortalLoadingScreen`.
+     * If unauthenticated -> routes to `/landing` (`LandingPage`) or `/orgRegistration` (`OrganisationLandingPage`).
+
+2. Organisation Landing Page (`lib/screens/organization/organisation_landing_page.dart`):
+   - Features a rectangular header with back navigation and a sharp 2-tab switcher: `[LOGIN]` and `[REGISTER]`.
+   - Tab 0 (`LOGIN`): Displays "Welcome Back" info card and "LOGIN TO DASHBOARD" button (routes to `/orgLogin`).
+   - Tab 1 (`REGISTER`): Displays "Set Up Your Organization" card and "REGISTER ORGANIZATION" button.
+   - Action: User taps "REGISTER ORGANIZATION", triggering `Navigator.pushNamed(context, '/orgRegistrationForm')`.
+
+3. Step Indicator Visualization:
+   - Renders 3 horizontal steps: `[1: Details]` -> `[2: Branding]` -> `[3: Pricing]`.
+   - On Step 1, circle 1 is highlighted in Dark Navy (`#0B1942`), while circles 2 and 3 remain inactive (`#CBD5E1`).
+
+
+3.2 Registration Form Specifications & UI Fields
+------------------------------------------------
+The form is managed inside `OrganisationRegistrationPage` (`lib/screens/organization/organisation_registration_page.dart`).
+
+Field 1: Organization Name
+- Controller      : `_orgNameController` (TextEditingController)
+- Input Type      : Standard text
+- Leading Icon    : `Icons.business_rounded`
+- Placeholder     : "Enter organization name"
+- Character Limit : Min 2 characters
+- Debounce Period : 200 milliseconds
+
+Field 2: Corporate Email
+- Controller      : `_emailController` (TextEditingController)
+- Input Type      : `TextInputType.emailAddress`
+- Leading Icon    : `Icons.email_rounded`
+- Placeholder     : "e.g. contact@org.com"
+- Formatting Rule : Cleaned to lower-case, whitespace trimmed
+- Format Regex    : `^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$`
+- Debounce Period : 250 milliseconds
+
+Field 3: Contact Number
+- Controller      : `_phoneController` (TextEditingController)
+- Input Type      : `TextInputType.phone`
+- Leading Icon    : `Icons.phone_rounded`
+- Placeholder     : "Enter 10-digit mobile number"
+- Input Formatters: `FilteringTextInputFormatter.digitsOnly`, `LengthLimitingTextInputFormatter(10)`
+- Validation Rule : Exactly 10 digits (`clean.length == 10`)
+- Debounce Period : 250 milliseconds
+
+Field 4: Admin Username
+- Controller      : `_usernameController` (TextEditingController)
+- Input Type      : Standard alphanumeric, strictly lower-case
+- Leading Icon    : `Icons.person_rounded`
+- Placeholder     : "Choose a unique admin username"
+- Character Limit : Min 3 characters
+- Validation Rule : Case-insensitive global uniqueness across all roles
+- Debounce Period : 200 milliseconds
+
+Field 5: Password
+- Controller      : `_passwordController` (TextEditingController)
+- Input Type      : Obscured text with dynamic toggle visibility button
+- Leading Icon    : `Icons.lock_rounded`
+- Placeholder     : "Min. 8 characters"
+- Validation Rule : Minimum 8 characters. Evaluates live entropy score:
+  * Length >= 8 (+1 point)
+  * Uppercase letter `[A-Z]` (+1 point)
+  * Lowercase letter `[a-z]` (+1 point)
+  * Digit `[0-9]` (+1 point)
+  * Special character `[!@#$%^&*(),.?":{}|<>]` (+1 point)
+  * Scoring Indicator:
+    - Score <= 2: "Weak" (Red Accent, 33% bar width)
+    - Score 3-4: "Moderate" (Orange Accent, 66% bar width)
+    - Score 5  : "Strong" (Green Accent, 100% bar width)
+
+Field 6: Confirm Password
+- Controller      : `_confirmPasswordController` (TextEditingController)
+- Input Type      : Obscured text with visibility toggle
+- Leading Icon    : `Icons.lock_outline_rounded`
+- Placeholder     : "Re-enter your password"
+- Validation Rule : String value must strictly match `_passwordController.text`
+
+
+3.3 Real-Time Debounced Field Validations
+-----------------------------------------
+Each field triggers real-time asynchronous background checks as the user types:
+
+1. Organization Name Debounce (`_onOrgNameChanged`):
+   - Cancels previous timer `_orgNameDebounce?.cancel()`.
+   - Triggers `FirestoreService.isOrgNameUnique(clean)` after 200ms.
+   - Evaluates:
+     * Does any root `/organisation/{id}` document have `org_name` matching `clean` (case-insensitive)?
+     * Does any document have `org_name` matching without spaces?
+     * Does any document ID match `cst_${cleanNoSpace}_*`?
+   - Displays inline status: "Organization name is available ✓" (Green) or "Organization name already exists. Please use a different name." (Red).
+
+2. Corporate Email Debounce (`_onEmailChanged`):
+   - Validates regex format locally first.
+   - Triggers `FirestoreService.isGlobalEmailUnique(clean)` after 250ms.
+   - Executes parallel lookups across:
+     * Root `/organisation` documents
+     * CollectionGroup queries: `manager`, `supervisor`, `supervisors`, `organizationUser`, `configUsers`
+   - Displays inline status: "Email address is available ✓" or "Email address already registered."
+
+3. Contact Phone Debounce (`_onPhoneChanged`):
+   - Checks if length is 10 digits.
+   - Triggers `FirestoreService.isGlobalPhoneUnique(clean)` after 250ms.
+   - Executes parallel lookups across:
+     * Root `/organisation` documents (keys: `phone`, `phoneNumber`, `mobile`, `contactNo`, `ContactNo`)
+     * CollectionGroup queries: `manager`, `supervisor`, `supervisors`, `organizationUser`, `configUsers`, `customers`
+   - Displays inline status: "Phone number is available ✓" or "Phone number already registered."
+
+4. Admin Username Debounce (`_onUsernameChanged`):
+   - Step A: Instant 0ms In-Memory Cache Check via `FirestoreService.isUsernameCachedAsTaken(clean)`. If found in cache, immediately marks invalid without any network round-trip.
+   - Step B: Sequence Counter Guard (`_usernameValidationSeq`). Discards responses from out-of-order asynchronous keystroke responses.
+   - Step C: Triggers `FirestoreService.isGlobalUsernameUnique(clean)` after 200ms.
+     * Evaluates Tier 1 indexed `.limit(1)` queries with early termination (completer short-circuiting).
+     * If not found, checks direct document IDs across collections.
+     * Tier 2 fallback collectionGroup scan if cache is not yet warmed.
+   - Displays inline status: "Username is available ✓" or "Username already exists".
+
+
+3.4 Simultaneous Multi-Field Atomic Validation
+----------------------------------------------
+When the user taps "CONTINUE" (`_goToNextStep`):
+1. Verifies form validation state (`_formKey.currentState!.validate()`).
+2. Checks password equality.
+3. Checks if any real-time validation indicator is flagged false.
+4. Executes atomic parallel validation across all 4 parameters:
+   ```dart
+   final validation = await FirestoreService.validateOrganizationRegistration(
+     orgName: orgName,
+     email: email,
+     phone: phone,
+     username: username,
+   );
+   ```
+5. Returns `OrganizationValidationResult`:
+   - `isValid`: boolean
+   - `errorMessage`: Specific diagnostic text if invalid
+   - `isOrgNameDuplicate`, `isEmailDuplicate`, `isPhoneDuplicate`, `isUsernameDuplicate`
+
+
+3.5 Pending Registration Detection & Seamless Resume Mechanism
+--------------------------------------------------------------
+If `validation.isValid` returns `false` due to an existing username or organization, the system does 
+not simply reject the user. Instead, it inspects whether this belongs to an incomplete onboarding 
+funnel:
+
+1. Pending Inspection Query:
+   ```dart
+   final pendingQuery = await FirebaseFirestore.instance
+       .collectionGroup('data')
+       .where('username', isEqualTo: username)
+       .get();
+   ```
+2. Detection Conditions:
+   An account is classified as "Pending Registration" if:
+   - `data['isSubscriptionActive'] != true`, AND
+   - One of the following holds true:
+     * `data['onboardingStep'] == 'PAYMENT_PENDING'`
+     * `data['subscriptionPlan'] == 'Pending Selection'`
+     * `data['subscriptionPlan'].isEmpty && data['paymentStatus'] == 'PENDING'`
+
+3. User Resolution Dialog:
+   If a pending registration matches, an AlertDialog is shown:
+   - Title: "Pending Registration" (Blue Icon)
+   - Message: "An account for '[Org Name / Username]' was already registered and is awaiting subscription payment."
+   - Action Buttons: `[CANCEL]` and `[RESUME PAYMENT]`.
+
+4. Resume Execution:
+   If the user selects "RESUME PAYMENT":
+   - The system retrieves `pendingData['org_name']`, `pendingData['app_name']`, and `pendingData['theme_color']`.
+   - Parses the organization ID date stamp suffix.
+   - Bypasses Step 2 (Branding) and routes directly to `PricingScreen` pre-populated with the saved credentials and theme color.
+
+
+3.6 Client-Side Form Controllers & State Management
+---------------------------------------------------
+- Animated Transition: Managed via `AnimationController` (600ms duration) with `CurvedAnimation` 
+  providing slide-up translation (`Tween<double>(begin: 30, end: 0)`) and fade opacity (`Tween<double>(begin: 0, end: 1)`).
+- Memory Management: Every TextEditingController and Timer is cleanly disposed in `dispose()` to 
+  prevent memory leaks.
+
+
+====================================================================================================
+4. BRAND COLOR SELECTION & DYNAMIC THEMING (STEP 2: BRANDING)
+====================================================================================================
+
+4.1 Screen UI/UX & Dynamic Live Theme Preview
+---------------------------------------------
+File: `lib/screens/branding/branding_screen.dart`
+Arguments received from Step 1:
+- `orgName` (String)
+- `email` (String)
+- `phone` (String)
+- `username` (String)
+- `password` (String)
+- `dateStr` (String)
+
+UI Structure:
+1. Dynamic Screen Theming:
+   The entire scaffold is wrapped in:
+   `Theme(data: AppTheme.getTheme(_selectedColor), child: GlassScaffold(...))`
+   As the user taps different color chips, the entire screen's buttons, accents, icons, and borders 
+   update dynamically and smoothly in real-time.
+
+2. Step Indicator:
+   - Step 1: Details (Done ✓, Dark Navy `#0B1942`)
+   - Step 2: Branding (Active, highlighted)
+   - Step 3: Pricing (Inactive)
+
+
+4.2 Workspace Name Customization
+--------------------------------
+Card 1: "App Information"
+- Label: "App Name"
+- Controller: `_appNameController`
+- Default Value: Defaults to `widget.orgName` if left blank by user.
+- Feature: Allows white-label tenants to give their mobile workspace a tailored internal brand name 
+  (e.g., "Apex BuildCon") while retaining their registered legal corporate name (e.g., "Apex Infrastructure Ltd").
+
+
+4.3 Color Options Palette & Custom Color Picker Implementation
+--------------------------------------------------------------
+Card 2: "Brand Color Theme"
+The screen presents 14 curated high-contrast enterprise color chips plus 1 custom color wheel:
+
+Palette Specifications:
+1.  Green         : `#00A86B` (Default Emerald Theme)
+2.  Ocean Blue    : `#017FDF` (Vibrant Corporate Blue)
+3.  Teal Forest   : `#008080` (Deep Teal)
+4.  Royal Purple  : `#7C3AED` (Modern Violet)
+5.  Vibrant Orange: `#EA580C` (Safety/Construction Orange)
+6.  Cyan Wave     : `#06B6D4` (High-contrast Cyan)
+7.  Crimson Red   : `#DC2626` (Bold Brick Red)
+8.  Indigo        : `#4F46E5` (Enterprise Indigo)
+9.  Amber Gold    : `#F59E0B` (Architectural Gold)
+10. Lime Fresh    : `#84CC16` (Energetic Lime)
+11. Rose Pink     : `#F43F5E` (Modern Rose)
+12. Deep Violet   : `#9333EA` (Electric Purple)
+13. Midnight Dark : `#0F172A` (Slate/Midnight Architecture)
+14. Custom Picker : Multi-color Sweep Gradient swatch (`SweepGradient`)
+
+Custom Color Dialog Workflow (`_showColorPicker`):
+- Clicking "Custom" launches an `AlertDialog` containing `flutter_colorpicker.ColorPicker`.
+- Properties:
+  * `pickerColor`: `_customColor`
+  * `enableAlpha`: `false` (Strict 24-bit RGB)
+  * `pickerAreaHeightPercent`: `0.8`
+- Actions:
+  * `[CANCEL]`: Discards changes.
+  * `[APPLY COLOR]`: Sets `_selectedColor = _customColor`, triggering instant live re-theming.
+
+
+4.4 Theme Color System & Mathematical Shade Generation
+------------------------------------------------------
+File: `lib/utils/app_theme.dart`
+The color chosen in Step 2 is processed mathematically through HSL (Hue, Saturation, Lightness) 
+transformations to generate harmonic system shades:
+
+1. Dynamic Background Gradients (`getBackgroundGradientColors`):
+   Transforms brand color into a 4-stop light background gradient:
+   - Stop 1: `Lightness = 0.95`, `Saturation = Saturation * 0.40`
+   - Stop 2: `Lightness = 0.88`, `Saturation = Saturation * 0.48`
+   - Stop 3: `Lightness = 0.80`, `Saturation = Saturation * 0.55`
+   - Stop 4: `Lightness = 0.74`, `Saturation = Saturation * 0.60`
+
+2. Dark Navy Accent Generation (`getDarkAccent`):
+   - Formula: `HSLColor.fromColor(brandColor).withLightness(0.12).withSaturation(saturation * 0.7)`
+   - Used for app bars, navigation headers, step indicators, and dark elevated buttons.
+
+3. Card Accent Generation (`getCardAccent`):
+   - Formula: Ensures contrast on dark surfaces by clamping lightness between `0.65` and `0.85`.
+
+4. Contrast Foreground Resolution (`getForegroundFor`):
+   - Evaluates luminance: `color.computeLuminance() > 0.5 ? Colors.black : Colors.white`.
+
+
+4.5 Local & Remote Theme Synchronization Architecture
+-----------------------------------------------------
+1. ValueNotifier Reactivity:
+   `AppTheme.primaryColor = ValueNotifier<Color>(defaultColor)`
+   `AppTheme.appName = ValueNotifier<String>("eBricks")`
+   When updated:
+   - `AppTheme.updateTheme(newColor)` updates notifier and writes `newColor.toARGB32()` to 
+     `SharedPreferences` key `brand_color_value`.
+   - `AppTheme.updateAppName(newName)` writes to key `app_name`.
+
+2. Remote Firestore Synchronization (`AppTheme.syncWithFirestore(orgId)`):
+   Reads `/organisation/{orgId}/data/branding` and `/organisation/{orgId}` in parallel:
+   - Resolves `appName` / `app_name`
+   - Resolves `org_name` / `orgName`
+   - Resolves `primaryColor` / `theme_color` (hex parsed via `AppTheme.hexToColor`)
+   - Resolves `logoUrl` / `logo_url`
+
+
+4.6 Pending Registration Persistence at Step 2
+----------------------------------------------
+When the user taps "SAVE CHANGES" (`_goToNextStep`):
+1. Calculates target document ID:
+   `cleanOrgName = widget.orgName.replaceAll(' ', '')`
+   `expectedOrgId = "cst_" + cleanOrgName + "_" + widget.dateStr`
+
+2. Re-validates registration uniqueness with an exception for self-owned pending documents.
+
+3. Immediate Multi-Document Batch Persistence:
+   Calls `FirestoreService.createPendingOrganizationRegistration(...)`:
+   - Writes batch to Firestore:
+     * Doc 1: `/organisation/{orgId}` (Root doc)
+       `app_id`: "cst_white_label"
+       `is_cst_app`: true
+       `org_name`: widget.orgName
+       `app_name`: appName
+       `theme_color`: themeHex
+       `email`: widget.email
+       `phone`: widget.phone
+       `username`: widget.username
+       `password`: widget.password
+       `role`: "Organization"
+       `registrationStatus`: "COMPLETED"
+       `onboardingStep`: "PAYMENT_PENDING"
+       `isSubscriptionActive`: false
+       `paymentStatus`: "PENDING"
+       `referralCode`: referralCode
+     * Doc 2: `/organisation/{orgId}/data/admin` (Admin credentials metadata)
+     * Doc 3: `/organisation/{orgId}/data/branding` (`appName`, `primaryColor`, `theme_color`)
+     * Doc 4: `/organisation/{orgId}/data/referralCode` (`referralCode`, `orgReferralCode`)
+     * Doc 5: `/organisation/{orgId}/data/subscription` (`isSubscriptionActive: false`, `subscriptionPlan: "Pending Selection"`)
+     * Doc 6: `/organisation/{orgId}/organizationUser/{username}` (User login entry)
+
+4. Firebase Auth Sync:
+   Calls `AuthService().registerWithEmail(widget.email, widget.password)`. Creates the managed 
+   Firebase Auth user record.
+
+5. Local Recovery Draft Backup:
+   Writes to `SharedPreferences`:
+   - `pending_org_id`
+   - `pending_org_name`
+   - `pending_email`
+   - `pending_phone`
+   - `pending_username`
+   - `pending_password`
+   - `pending_app_name`
+   - `pending_date_str`
+   - `pending_theme_color`
+
+6. Navigation:
+   Pushes `PricingScreen` with all gathered credentials.
+
+
+====================================================================================================
+5. CHOOSE YOUR PLAN & PRICING (STEP 3: PRICING)
+====================================================================================================
+
+5.1 Subscription Plans, Tiers & Feature Matrix
+----------------------------------------------
+File: `lib/screens/organization/pricing_screen.dart`
+
+Plan Tiers:
++----------------+----------------+--------------------+---------------------+----------------------+
+| Plan Name      | Max Projects   | Max Total Users    | Max Managers        | Max Supervisors      |
++----------------+----------------+--------------------+---------------------+----------------------+
+| Free Trial     | 1 Project      | 2 Users            | 1 Manager           | 1 Supervisor         |
+| Silver         | 5 Projects     | 5 Users            | 2 Managers          | 3 Supervisors        |
+| Gold           | 10 Projects    | 15 Users           | 5 Managers          | 10 Supervisors       |
+| Platinum       | N Projects     | round(N * 1.5)     | clamp(round(N/2))   | N Supervisors        |
+| Enterprise     | Unlimited      | Unlimited          | Unlimited           | Unlimited            |
++----------------+----------------+--------------------+---------------------+----------------------+
+
+Drawing & Blueprint Capabilities:
+- Free Trial: 1 document per site (View only)
+- Silver    : 1 document per site (View only)
+- Gold      : 1 document per site (Allows 1 delete & re-upload)
+- Platinum  : Up to 2 active docs per site (Multi-delete & re-upload enabled)
+- Enterprise: Up to 2 active docs per site (Full versioning, multi-delete & re-upload)
+
+
+5.2 Pricing Calculation & Billing Cadence Logic
+-----------------------------------------------
+The pricing model supports three distinct billing cadences:
+1. Monthly (Standard 30-day billing cycle)
+2. 6 Months (180-day cycle)
+3. Yearly (365-day cycle, includes 33% discount)
+
+Pricing Table:
++------------+--------------------+-------------------------+-------------------------+
+| Plan       | Monthly            | 6 Months                | Yearly (33% Discount)   |
++------------+--------------------+-------------------------+-------------------------+
+| Free Trial | ₹0 (14 days)       | N/A                     | N/A                     |
+| Silver     | ₹99 / mo           | ₹594 (was ₹894)         | ₹1,188 (was ₹1,788)     |
+| Gold       | ₹199 / mo          | ₹1,194 (was ₹1,794)     | ₹2,388 (was ₹3,588)     |
+| Platinum   | N * ₹39.90 / mo    | N * ₹239.40 (6 mos)     | N * ₹478.80 (12 mos)    |
+| Enterprise | Custom Contract    | Custom Contract         | Custom Contract         |
++------------+--------------------+-------------------------+-------------------------+
+
+
+5.3 Dynamic Project Scaling (Platinum Tier Algorithm)
+-----------------------------------------------------
+For growing enterprises, the Platinum tier provides customizable capacity:
+- Project Count Selector (`_platinumProjectsCount`): Defaults to 10.
+- Quick Presets: 10, 15, 20, 25, 30, 40, 50 projects.
+- Mathematical Calculation:
+  * Amount Monthly  : `roundToDouble(platinumCount * 39.90)`
+  * Amount 6-Month  : `roundToDouble(platinumCount * 239.40)`
+  * Amount Yearly   : `roundToDouble(platinumCount * 478.80)`
+- User Limit Formula:
+  * `maxProjects`   : `platinumCount`
+  * `maxUsers`      : `(platinumCount * 1.5).round()`
+  * `maxManagers`   : `(platinumCount / 2).round().clamp(2, 25)`
+  * `maxSupervisors`: `platinumCount`
+
+
+5.4 Plan Selection UI & Swipeable PageView Implementation
+---------------------------------------------------------
+- Dual-Level Selector:
+  * Level 1 (Top Tabs): Horizontal scrollable tabs (`Free Trial`, `Silver`, `Gold`, `Platinum`, `Enterprise`) 
+    with visual badge highlights (`★ Expert` on Gold, `⚡ Scale` on Platinum, `🏢 Team` on Enterprise).
+  * Level 2 (Cadence Chips): Segmented buttons for Monthly, 6 Months, and Yearly.
+- PageView Synchronizer:
+  * `PageView.builder` linked to `_planPageController`.
+  * Tapping a top tab animates the PageView:
+    `_planPageController.animateToPage(targetIndex, duration: Duration(milliseconds: 280), curve: Curves.easeInOut)`
+  * Swiping the card updates `_selectedPlan` and synchronizes the top tab selection.
+- Action Buttons:
+  * Free Trial: "START 14-DAY FREE TRIAL"
+  * Paid Plans: "PROCEED TO PAY ₹[Calculated Amount]"
+  * Enterprise: "CONTACT US" (opens `ContactSupportScreen`)
+
+
+5.5 Existing Subscription Management vs. New Onboarding
+-------------------------------------------------------
+The `PricingScreen` supports two distinct operational modes determined by `widget.isManagingExisting`:
+- Mode A (`isManagingExisting == false`):
+  New account onboarding. Shows the 3-step indicator (`Details` -> `Branding` -> `Pricing`). Free Trial 
+  is accessible. Upon payment/activation, registers credentials and boots into `OrganizationDashboard`.
+- Mode B (`isManagingExisting == true`):
+  Subscription upgrade/management from inside an active organization. Free Trial tab is hidden. Supports 
+  queueing upgrades (`_queueUpgrade`) to take effect when the current billing cycle expires, or immediate 
+  upgrades.
+
+
+====================================================================================================
+6. PAYMENT GATEWAY INTEGRATION (PAYU HOSTED CHECKOUT)
+====================================================================================================
+
+6.1 PayU Architecture & Security Model
+--------------------------------------
+File: `lib/services/payu_service.dart`
+File: `lib/screens/organization/payu_checkout_screen.dart`
+
+To ensure banking-grade security and compliance with Indian payment regulations:
+1. Zero Sensitive Data Storage: No credit card numbers, CVVs, or net banking passwords pass through or 
+   are stored in the eBricks mobile application or database.
+2. Server-Authoritative Cryptographic Signatures: Payment request parameters are signed via SHA-512 hashes. 
+   Payment responses are verified against a reverse SHA-512 signature hash using the secret merchant salt.
+3. Dual Verification (Client + Cloud Function): The mobile app validates the response hash locally, while 
+   simultaneously triggering a Cloud Function (`verifySubscription`) that verifies the transaction server-to-server 
+   and records verified payment status.
+
+
+6.2 Request Hash Generation (SHA-512)
+-------------------------------------
+Formula:
+`sha512(key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||salt)`
+
+Parameters:
+- `key`         : PayU Merchant Key (`PAYU_PROD_KEY` or `PAYU_TEST_KEY`)
+- `txnid`       : Generated unique transaction ID, format: `PAYU_${DateTime.now().millisecondsSinceEpoch}`
+- `amount`      : Formatted strictly as 2 decimal places (e.g. `"99.00"`, `"2388.00"`)
+- `productinfo` : Sanitized string, e.g. `"ApexBuilders Silver Plan (Monthly)"`
+- `firstname`   : Customer/Organization name (alphanumeric only)
+- `email`       : Customer email address
+- `udf1`        : Organization name / identifier
+- `udf4`        : `"ebricks"` (application tag)
+- `udf5`        : `"ebricks_subscription"` (purpose tag)
+- `salt`        : PayU Merchant Salt (`PAYU_PROD_SALT` or `PAYU_TEST_SALT`)
+
+Implementation in `PayUService.buildPostDataAsync(params)`:
+- Invokes backend Cloud Function `generatePayUHash` via HTTP POST.
+- If the Cloud Function is temporarily unreachable, executes local cryptographic fallback `buildPostData(params)` 
+  using Dart's `crypto` library.
+
+
+6.3 Hosted Checkout Flow (WebView & PayUBridge)
+-----------------------------------------------
+1. HTML Form Injection:
+   `PayUCheckoutScreen` creates a self-submitting HTML document in a headless string:
+   ```html
+   <form id="payu_form" action="https://secure.payu.in/_payment" method="post">
+     <input type="hidden" name="key" value="..." />
+     <input type="hidden" name="txnid" value="..." />
+     <input type="hidden" name="amount" value="..." />
+     <input type="hidden" name="productinfo" value="..." />
+     <input type="hidden" name="firstname" value="..." />
+     <input type="hidden" name="email" value="..." />
+     <input type="hidden" name="phone" value="..." />
+     <input type="hidden" name="surl" value="https://.../payuWebhook" />
+     <input type="hidden" name="furl" value="https://.../payuWebhook" />
+     <input type="hidden" name="hash" value="..." />
+     <input type="hidden" name="service_provider" value="payu_paisa" />
+     <input type="hidden" name="udf1" value="..." />
+     <input type="hidden" name="udf4" value="ebricks" />
+     <input type="hidden" name="udf5" value="ebricks_subscription" />
+   </form>
+   <script>document.getElementById('payu_form').submit();</script>
+   ```
+
+2. WebView Container:
+   - Utilizes `webview_flutter.WebViewController` with `JavaScriptMode.unrestricted`.
+   - Injects a JavaScript channel: `PayUBridge`.
+   - Intercepts navigation requests in `onNavigationRequest`:
+     * If URL matches `surl` or `furl` or deep link schemes, extracts payload and returns control to Flutter.
+     * Deep-links for native UPI apps (`upi://pay`, `phonepe://`, `tez://`, `paytmmp://`) launch native payment apps.
+
+3. Result Parsing:
+   When PayU redirects to the callback endpoint, the WebView extracts the post data and constructs:
+   `PayUResult(isSuccess: true/false, txnid: txnid, payuMoneyId: mihpayid, rawData: postDataMap)`.
+
+
+6.4 Response Verification & Cryptographic Signature Check
+---------------------------------------------------------
+Formula:
+`sha512(salt|status||||||udf5|udf4|udf3|udf2|udf1|email|firstname|productinfo|amount|txnid|key)`
+(If `additionalCharges` are present: `sha512(additionalCharges|salt|status|||||...)`)
+
+Verification Steps:
+1. Read `rawData['hash']` from response.
+2. Re-compute hash using active merchant salt, payment status (`"success"`), amount, and credentials.
+3. Compare `computedHash.toLowerCase() == rawData['hash'].toLowerCase()`.
+4. If hashes do not match, payment is rejected with an error toast: "Payment signature verification failed. Please contact support."
+
+
+6.5 Transaction Confirmation Screen (TransactionCompletedScreen)
+----------------------------------------------------------------
+File: `lib/screens/organization/transaction_completed_screen.dart`
+Upon successful payment:
+- Screen Background: Dark Navy/Space Cadet (`#0D1B2A`).
+- Animated Checkmark with radiant green glow (`#10B981`).
+- Card Details:
+  * Plan Name & Cadence (e.g., "Gold Plan (Yearly)")
+  * Amount Paid (e.g., "₹2,388.00")
+  * Transaction ID (`txnid`) with copy-to-clipboard action
+  * PayU Reference Number (`payuMoneyId`) with copy action
+  * Date & Time Stamp formatted via `DateFormat('dd MMM yyyy, hh:mm a')`
+  * Organization Name & Admin Username
+- Primary Button: "GO TO DASHBOARD" -> executes `Navigator.pushAndRemoveUntil` to `OrganizationDashboard`.
+- Back Button Interception: `PopScope(canPop: false)` prevents accidental pop back into checkout; redirects 
+  smoothly to dashboard.
+
+
+====================================================================================================
+7. COMPLETE FRONTEND IMPLEMENTATION FLOW
+====================================================================================================
+
+7.1 Screen-by-Screen Navigation Hierarchy
+-----------------------------------------
+The complete onboarding route tree is structured as follows:
+
+```
+[SplashScreen] (Route: '/')
+       |
+       |---> [Session Found & Active] ───────────────────────────> [OrganizationDashboard]
+       |
+       |---> [No Session] ───────────────────────────────────────> [OrganisationLandingPage]
+                                                                             |
+                                                                             +---> [Tab 0: LOGIN] ────> [OrganisationLoginPage]
+                                                                             |
+                                                                             +---> [Tab 1: REGISTER] ─> [OrganisationRegistrationPage]
+                                                                                                                |
+                                                                                                                | (Submit: Validate 4 fields)
+                                                                                                                v
+                                                                                                    [BrandingScreen]
+                                                                                                                |
+                                                                                                                | (Save: Persist pending doc + Auth)
+                                                                                                                v
+                                                                                                    [PricingScreen]
+                                                                                                    /             \
+                                                                                  [Free Trial: ₹0]                 [Paid Plan: ₹99+]
+                                                                                         |                                 |
+                                                                                (Direct Activation)                        v
+                                                                                         |                       [PayUCheckoutScreen]
+                                                                                         |                                 |
+                                                                                         |                        (Verify Response Hash)
+                                                                                         |                                 |
+                                                                                         v                                 v
+                                                                             [OrganizationDashboard] <── [TransactionCompletedScreen]
+```
+
+
+7.2 Route Table & Deep Linking
+------------------------------
+Configured inside `lib/main.dart`:
+```dart
+routes: {
+  '/': (context) => const SplashScreen(),
+  '/landing': (context) => const LandingPage(),
+  '/login': (context) => const Organisation_LoginPage(),
+  '/authSelection': (context) => const MainDashboard(),
+  '/orgLogin': (context) => const Organisation_LoginPage(),
+  '/managerLogin': (context) => const ConfigLoginPage(),
+  '/supervisorLogin': (context) => const SupervisorLoginPage(),
+  '/customerLogin': (context) => const CustomerLoginPage(),
+  '/resetPassword': (context) => const ResetPasswordScreen(),
+  '/orgDashboard': (context) => const OrganizationDashboard(),
+  '/orgRegistration': (context) => const OrganisationLandingPage(),
+  '/orgRegistrationForm': (context) => const OrganisationRegistrationPage(),
+  '/joinByReferral': (context) => const JoinByReferralPage(),
+  '/orgMenu': (context) => const OrgMenuScreen(),
+  '/branding': (context) => const BrandingEditScreen(),
+  '/contactSupport': (context) => const ContactSupportScreen(),
+}
+```
+
+
+7.3 Loading States, Indicators & Dialog Workflows
+-------------------------------------------------
+1. Button Loading States:
+   Every submit button (`CONTINUE` in Step 1, `SAVE CHANGES` in Step 2, `PROCEED TO PAY` in Step 3) 
+   replaces its text label with a centered `CircularProgressIndicator(strokeWidth: 2, color: Colors.white)` 
+   when `_isLoading == true`. User interaction is disabled during asynchronous operations.
+
+2. Full-Screen Gateway Overlay:
+   During PayU web initialization, a dedicated spinner animation displays: "Connecting securely to PayU 
+   Gateway... Please do not refresh or press back".
+
+3. Resumption Dialog:
+   Rendered with custom rounded borders (`borderRadius: BorderRadius.circular(20)`), prominent action 
+   buttons, and explanatory text.
+
+
+7.4 Toast Notifications & User Feedback
+---------------------------------------
+Implemented in `lib/utils/app_theme.dart`:
+- `AppTheme.showErrorToast(BuildContext context, String message)`:
+  * Floating SnackBar (`SnackBarBehavior.floating`)
+  * Background: Dark Navy (`#0B1942`)
+  * Border: Red Accent (`#EF4444`, width: 1.5)
+  * Leading Icon: `Icons.error_outline_rounded`
+  * Duration: 4 seconds
+- `AppTheme.showSuccessToast(BuildContext context, String message)`:
+  * Floating SnackBar
+  * Background: Dark Navy (`#0B1942`)
+  * Border: Emerald Green (`#10B981`, width: 1.5)
+  * Leading Icon: `Icons.check_circle_outline_rounded`
+  * Duration: 4 seconds
+
+
+7.5 State Lifecycle & Session Initialization
+--------------------------------------------
+Upon successful account activation (Step 3):
+1. `FirestoreService.setOrgPath(orgId)`: Caches organization document path in memory and writes 
+   `org_dynamic_path` to `SharedPreferences`.
+2. `AuthService().login(UserRole.organization, {...})`:
+   - Writes `auth_is_logged_in: true`
+   - Writes `auth_user_role: "UserRole.organization"`
+   - Writes user credentials JSON payload
+   - Syncs legacy keys (`org_isLoggedIn`, `org_username`, `org_dynamic_path`, `org_name`, `referral_code`)
+   - Registers FCM push notification device token via `NotificationService.saveToken(...)`
+3. Cleans up pending recovery draft keys from `SharedPreferences`.
+
+
+====================================================================================================
+8. COMPLETE BACKEND IMPLEMENTATION FLOW (CLOUD FUNCTIONS & WEBHOOKS)
+====================================================================================================
+
+File: `functions/index.js`
+All Cloud Functions are deployed in region `us-central1`.
+
+
+8.1 Cloud Function: generatePayUHash
+------------------------------------
+- Type: HTTPS Callable Function (`functions.region("us-central1").https.onCall`)
+- Purpose: Computes cryptographic request signature for PayU checkout without exposing the merchant salt.
+
+Request Payload:
+```json
+{
+  "data": {
+    "txnid": "PAYU_1719483020000",
+    "amount": 1188.00,
+    "productInfo": "ApexBuilders Silver Plan (Yearly)",
+    "firstName": "ApexBuilders",
+    "email": "admin@apexbuilders.com",
+    "phone": "9876543210",
+    "merchantKey": "a912BZ",
+    "environment": "production",
+    "udf1": "ApexBuilders",
+    "udf4": "ebricks",
+    "udf5": "ebricks_subscription"
+  }
+}
+```
+
+Backend Logic:
+1. Sanitizes inputs (strips invalid characters from names, validates email regex, formats amount to 2 decimals).
+2. Reads environment configuration via `getPayUConfig(payload)`.
+3. Concatenates hash string:
+   `${params.merchantKey}|${params.txnid}|${amountStr}|${productInfo}|${firstName}|${email}|${udf1}|${udf2}|${udf3}|${udf4}|${udf5}||||||${salt}`
+4. Calculates SHA-512 digest: `crypto.createHash("sha512").update(hashSequence).digest("hex").toLowerCase()`.
+5. Prepares `postData` dictionary including service provider, surl, furl, and hash.
+
+Response Payload:
+```json
+{
+  "result": {
+    "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855...",
+    "postData": {
+      "key": "a912BZ",
+      "txnid": "PAYU_1719483020000",
+      "amount": "1188.00",
+      "productinfo": "ApexBuilders Silver Plan Yearly",
+      "firstname": "ApexBuilders",
+      "email": "admin@apexbuilders.com",
+      "phone": "9876543210",
+      "surl": "https://us-central1-cst-whitelabel-app.cloudfunctions.net/payuWebhook",
+      "furl": "https://us-central1-cst-whitelabel-app.cloudfunctions.net/payuWebhook",
+      "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855...",
+      "service_provider": "payu_paisa",
+      "udf1": "ApexBuilders",
+      "udf4": "ebricks",
+      "udf5": "ebricks_subscription"
+    }
+  }
+}
+```
+
+
+8.2 Cloud Function: verifySubscription
+--------------------------------------
+- Type: HTTPS Callable Function (`functions.region("us-central1").https.onCall`)
+- Purpose: Server-side verification of payment results, Firestore subscription document activation, and invoice email dispatch.
+
+Request Payload:
+```json
+{
+  "data": {
+    "orgId": "cst_ApexBuilders_27-10-2026",
+    "txnid": "PAYU_1719483020000",
+    "payuMoneyId": "403993715530123456",
+    "rawData": {
+      "key": "a912BZ",
+      "txnid": "PAYU_1719483020000",
+      "amount": "1188.00",
+      "productinfo": "ApexBuilders Silver Plan Yearly",
+      "firstname": "ApexBuilders",
+      "email": "admin@apexbuilders.com",
+      "status": "success",
+      "mihpayid": "403993715530123456",
+      "hash": "9f83c07e05...",
+      "bank_ref_no": "20261027111222"
+    },
+    "planDetails": {
+      "planName": "Silver",
+      "planType": "Yearly",
+      "amount": 1188.00,
+      "payerName": "Apex Builders",
+      "payerEmail": "admin@apexbuilders.com",
+      "payerPhone": "9876543210",
+      "username": "apexadmin"
+    }
+  }
+}
+```
+
+Backend Logic:
+1. Idempotency Check:
+   Inspects `/organisation/{orgId}/data/subscription`. If `paymentTxnId == txnid` and `isSubscriptionActive == true`, 
+   returns immediately with `alreadyVerified: true`.
+2. Signature Verification:
+   Validates `rawData.hash` against `computeResponseHash(rawData, salt, key)`.
+3. Quota Resolution:
+   Calculates start timestamp (`now`), end timestamp (`now + 365 days`), project/user quotas.
+4. Database Updates (Atomic):
+   - Updates `/organisation/{orgId}/data/subscription`:
+     * `isSubscriptionActive`: `true`
+     * `paymentStatus`: `"SUCCESS"`
+     * `verifiedByBackend`: `true`
+     * `subscriptionPlan`: `"silver"`
+     * `subscriptionType`: `"Yearly"`
+     * `subscriptionStartDate`: Timestamp
+     * `subscriptionEndDate`: Timestamp
+     * `paymentGateway`: `"PayU"`
+     * `paymentTxnId`: txnid
+     * `payuMoneyId`: mihpayid
+     * `bankRefNo`: bank_ref_no
+     * `paymentAmount`: 1188.00
+     * `paymentMethod`: "UPI" / "Credit Card"
+   - Updates `/organisation/{orgId}` root document:
+     * Sets `isSubscriptionActive: true`
+     * Sets `onboardingStep: "COMPLETED"`
+     * Sets `registrationStatus: "COMPLETED"`
+5. Invoice Dispatch:
+   Invokes `emailService.sendSubscriptionInvoice({...})`. Formats professional HTML invoice and sends 
+   via SMTP. Failure of email dispatch does NOT roll back the active subscription.
+
+Response Payload:
+```json
+{
+  "result": {
+    "success": true,
+    "txnid": "PAYU_1719483020000",
+    "orgId": "cst_ApexBuilders_27-10-2026",
+    "status": "SUCCESS",
+    "isSubscriptionActive": true,
+    "payerName": "Apex Builders",
+    "payerEmail": "admin@apexbuilders.com",
+    "emailSent": true
+  }
+}
+```
+
+
+8.3 Cloud Function: payuWebhook (Server-to-Server IPN)
+------------------------------------------------------
+- Type: HTTPS onRequest (`functions.region("us-central1").https.onRequest`)
+- Endpoint URL: `https://us-central1-cst-whitelabel-app.cloudfunctions.net/payuWebhook`
+- Purpose: Direct webhook handler invoked asynchronously by PayU servers when payment completes.
+
+Processing Workflow:
+1. Parses URL-encoded or JSON POST body received from PayU.
+2. Extracts `txnid`, `status`, `amount`, `hash`, `mihpayid`, and user-defined fields (`udf1` contains `orgName`).
+3. Re-computes SHA-512 response hash.
+4. Resolves the target organization document ID by scanning `organisation` root collection where 
+   `org_name == udf1` or querying `data/subscription` for matching pending `txnid`.
+5. Updates `/organisation/{orgId}/data/subscription` and `/organisation/{orgId}` with `paymentStatus: "SUCCESS"` 
+   and `isSubscriptionActive: true`.
+6. Dispatches subscription invoice email.
+7. Responds to PayU with HTTP `200 OK` and renders mobile-friendly HTML bridge status.
+
+
+8.4 Cloud Function: sendNewSubscriptionInvoice
+----------------------------------------------
+- Type: HTTPS Callable Function (`functions.region("us-central1").https.onCall`)
+- Purpose: Triggered specifically for Free Trial activations (where amount is ₹0 and PayU is bypassed) 
+  or manual invoice generation.
+- Logic:
+  * Verifies caller parameters.
+  * Formats Welcome / Free Trial Activation HTML email template with organization name, login username, 
+    trial duration (14 days), expiry date, and plan limit specifications.
+  * Dispatches email via Nodemailer.
+
+
+8.5 Cloud Function: checkSubscriptionExpiryReminders
+----------------------------------------------------
+- Type: Scheduled Function (Cloud Scheduler cron: `"0 4 * * *"`, runs daily at 4:00 AM UTC).
+- Logic:
+  1. Scans all `/organisation/{id}/data/subscription` documents where `isSubscriptionActive == true`.
+  2. Compares `subscriptionEndDate` against current timestamp.
+  3. Notification Thresholds:
+     - 7 Days Remaining: Sends early renewal notice.
+     - 3 Days Remaining: Sends urgent renewal reminder.
+     - 1 Day Remaining : Sends final expiry warning.
+     - Expired (< 0): Updates `isSubscriptionActive: false` and sends grace period notice.
+  4. Triggers both FCM push notification and email reminder.
+
+
+8.6 Transaction Idempotency & Concurrency Safeguards
+----------------------------------------------------
+1. PayU Transaction Keying:
+   Every transaction generates a millisecond-unique transaction ID (`PAYU_${timestamp}`).
+2. Deduplication Check:
+   `verifySubscription` checks if the transaction ID has already been marked as `SUCCESS`. If so, it returns 
+   status `ACTIVE` immediately without re-executing writes or sending duplicate invoices.
+3. Firestore Set Options Merge:
+   All updates use `SetOptions(merge: true)` ensuring that concurrent updates do not overwrite concurrent 
+   changes to unrelated subcollections or fields.
+
+
+====================================================================================================
+9. DATABASE SCHEMA, COLLECTIONS & SECURITY RULES
+====================================================================================================
+
+9.1 Cloud Firestore Collection Hierarchy
+----------------------------------------
+```
+/organisation/                                                 [Root Collection]
+   └── {orgId}/                                                [e.g., cst_ApexBuilders_27-10-2026]
+         │
+         ├── data/                                             [Core Configuration Subcollection]
+         │     ├── admin                                       [Admin Account Metadata]
+         │     ├── branding                                    [Visual Identity Configuration]
+         │     ├── referralCode                                [Unique Referral Code Document]
+         │     └── subscription                                [Active Plan Quotas & Billing Data]
+         │
+         ├── organizationUser/                                 [Subcollection for Org User Accounts]
+         │     └── {username}                                  [Individual User Credentials]
+         │
+         ├── projects/                                         [Construction Projects & Active Sites]
+         ├── manager/                                          [Manager Accounts Subcollection]
+         ├── supervisor/                                       [Supervisor Accounts Subcollection]
+         └── siteDrawings/                                     [Drawings, Blueprints & Layout Docs]
+```
+
+
+9.2 Document Specifications & Data Dictionaries
+-----------------------------------------------
+
+Document 1: `/organisation/{orgId}` (Root Document)
+| Field Name               | Type      | Example Value                                  | Description                                   |
+|--------------------------|-----------|------------------------------------------------|-----------------------------------------------|
+| `app_id`                 | String    | `"cst_white_label"`                            | Application isolation tag                     |
+| `is_cst_app`             | Boolean   | `true`                                         | CST application flag                          |
+| `org_name`               | String    | `"Apex Builders"`                              | Legal organization name                       |
+| `app_name`               | String    | `"Apex Workspace"`                             | Display brand name                            |
+| `theme_color`            | String    | `"#00A86B"`                                    | Selected brand hex color                      |
+| `email`                  | String    | `"admin@apexbuilders.com"`                     | Corporate contact email                       |
+| `phone`                  | String    | `"9876543210"`                                 | Contact telephone number                      |
+| `username`               | String    | `"apexadmin"`                                  | Primary admin username                        |
+| `password`               | String    | `"Secret123!"`                                 | Admin password                                |
+| `role`                   | String    | `"Organization"`                               | System user role                              |
+| `registrationStatus`     | String    | `"COMPLETED"`                                  | Account status (`COMPLETED`)                  |
+| `onboardingStep`         | String    | `"COMPLETED"`                                  | Funnel step (`PAYMENT_PENDING` / `COMPLETED`) |
+| `isSubscriptionActive`   | Boolean   | `true`                                         | Active subscription flag                      |
+| `subscriptionPlan`       | String    | `"Silver"`                                     | Active plan name                              |
+| `subscriptionType`       | String    | `"Yearly"`                                     | Billing cadence                               |
+| `subscriptionStartDate`  | Timestamp | `2026-10-27 12:00:00 UTC`                      | Start timestamp                               |
+| `subscriptionEndDate`    | Timestamp | `2027-10-27 12:00:00 UTC`                      | Expiration timestamp                          |
+| `maxProjects`            | Number    | `5`                                            | Maximum allowed active projects               |
+| `maxUsers`               | Number    | `5`                                            | Maximum total platform users                  |
+| `maxManagers`            | Number    | `2`                                            | Maximum manager seats                         |
+| `maxSupervisors`         | Number    | `3`                                            | Maximum supervisor seats                      |
+| `paymentGateway`         | String    | `"PayU"`                                       | `"PayU"`, `"None"` (Trial), `"Direct"`        |
+| `paymentTxnId`           | String    | `"PAYU_1719483020000"`                         | Transaction reference ID                      |
+| `payuMoneyId`            | String    | `"403993715530123456"`                         | PayU reference identifier                     |
+| `paymentStatus`          | String    | `"SUCCESS"`                                    | `"PENDING"`, `"SUCCESS"`, `"FAILED"`         |
+| `paymentAmount`          | Number    | `1188.00`                                      | Gross payment amount in INR                   |
+| `referralCode`           | String    | `"APX892"`                                     | 6-digit unique referral code                  |
+| `created_at`             | Timestamp | ServerTimestamp                                | Creation time                                 |
+| `updated_at`             | Timestamp | ServerTimestamp                                | Last modification time                        |
+
+Document 2: `/organisation/{orgId}/data/branding`
+| Field Name               | Type      | Example Value          | Description                                   |
+|--------------------------|-----------|------------------------|-----------------------------------------------|
+| `appName` / `app_name`   | String    | `"Apex Workspace"`     | White-label mobile app display title          |
+| `primaryColor`           | String    | `"#00A86B"`            | Primary theme color hex                       |
+| `theme_color`            | String    | `"#00A86B"`            | Mirrored theme hex for backward compatibility |
+| `updated_at`             | Timestamp | ServerTimestamp        | Timestamp of branding save                    |
+
+Document 3: `/organisation/{orgId}/data/subscription`
+| Field Name               | Type      | Example Value          | Description                                   |
+|--------------------------|-----------|------------------------|-----------------------------------------------|
+| `subscriptionPlan`       | String    | `"silver"`             | Active tier: free trial, silver, gold, etc.   |
+| `subscriptionType`       | String    | `"Yearly"`             | Monthly, 6 Months, Yearly, Free Trial         |
+| `subscriptionStartDate`  | Timestamp | `2026-10-27 12:00:00`  | Subscription start timestamp                  |
+| `subscriptionEndDate`    | Timestamp | `2027-10-27 12:00:00`  | Subscription termination timestamp            |
+| `isSubscriptionActive`   | Boolean   | `true`                 | Entitlement authorization flag                |
+| `onboardingStep`         | String    | `"COMPLETED"`          | Final funnel status                           |
+| `maxProjects`            | Number    | `5`                    | Maximum projects quota                        |
+| `maxUsers`               | Number    | `5`                    | Maximum users quota                           |
+| `maxManagers`            | Number    | `2`                    | Maximum managers quota                        |
+| `maxSupervisors`         | Number    | `3`                    | Maximum supervisors quota                     |
+| `paymentGateway`         | String    | `"PayU"`               | Payment provider                              |
+| `paymentTxnId`           | String    | `"PAYU_1719483020000"` | Transaction ID                                |
+| `payuMoneyId`            | String    | `"403993715530123456"` | Gateway internal ID                           |
+| `paymentStatus`          | String    | `"SUCCESS"`            | Payment verification status                   |
+| `paymentAmount`          | Number    | `1188.00`              | Net amount paid                               |
+| `payerName`              | String    | `"Apex Builders"`      | Name of purchaser                             |
+| `payerEmail`             | String    | `"admin@apex.com"`     | Billing email address                         |
+| `payerPhone`             | String    | `"9876543210"`         | Billing phone number                          |
+| `verifiedByBackend`      | Boolean   | `true`                 | Cloud Function verification flag              |
+| `updatedAt`              | Timestamp | ServerTimestamp        | Last update timestamp                         |
+
+Document 4: `/organisation/{orgId}/data/referralCode`
+| Field Name               | Type      | Example Value          | Description                                   |
+|--------------------------|-----------|------------------------|-----------------------------------------------|
+| `referralCode`           | String    | `"APX892"`             | 6-digit alphanumeric referral code            |
+| `orgReferralCode`        | String    | `"APX892"`             | Duplicate key for query compatibility         |
+| `created_at`             | Timestamp | ServerTimestamp        | Code generation timestamp                     |
+
+Document 5: `/organisation/{orgId}/organizationUser/{username}`
+| Field Name               | Type      | Example Value          | Description                                   |
+|--------------------------|-----------|------------------------|-----------------------------------------------|
+| `username`               | String    | `"apexadmin"`          | User login identifier                         |
+| `password`               | String    | `"Secret123!"`         | User password                                 |
+| `email`                  | String    | `"admin@apex.com"`     | User contact email                            |
+| `phone`                  | String    | `"9876543210"`         | User mobile phone number                      |
+| `role`                   | String    | `"Organization"`       | Role entitlement (`Organization`)             |
+| `org_name`               | String    | `"Apex Builders"`      | Organization reference                        |
+| `created_at`             | Timestamp | ServerTimestamp        | Registration timestamp                        |
+
+
+9.3 Cross-Application Isolation & Security Rules (firestore.rules)
+------------------------------------------------------------------
+File: `firestore.rules`
+```javascript
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isCstDoc(data) {
+      return data.app_id == 'cst_white_label' || data.appType == 'cst_white_label' || data.is_cst_app == true;
+    }
+
+    function isCstOrg(orgId) {
+      return orgId.matches('cst_.*') || orgId.matches('.*cst.*');
+    }
+
+    match /organisation/{orgId} {
+      allow read: if isCstOrg(orgId) || isCstDoc(resource.data) || resource == null;
+      allow create: if isCstOrg(orgId) || isCstDoc(request.resource.data);
+      allow update, delete: if isCstOrg(orgId) || isCstDoc(resource.data);
+
+      match /{collectionName}/{docId} {
+        allow read, write: if collectionName != 'vehicleMovements' && (isCstOrg(orgId) || request.auth != null);
+
+        match /{nestedSub=**} {
+          allow read, write: if collectionName != 'vehicleMovements' && (isCstOrg(orgId) || request.auth != null);
+        }
+      }
+    }
+
+    match /{path=**}/data/{docId} {
+      allow read: if resource.data.app_id == 'cst_white_label' || resource == null;
+      allow write: if request.resource.data.app_id == 'cst_white_label';
+    }
+
+    match /{path=**}/manager/{docId} {
+      allow read: if true;
+    }
+
+    match /{path=**}/supervisor/{docId} {
+      allow read: if true;
+    }
+  }
+}
+```
+
+
+9.4 Local Persistence (SharedPreferences Keys Dictionary)
+---------------------------------------------------------
+| Storage Key               | Type    | Example Value                     | Lifecycle / Description                       |
+|---------------------------|---------|-----------------------------------|-----------------------------------------------|
+| `auth_is_logged_in`       | bool    | `true`                            | Active session indicator                      |
+| `auth_user_role`          | String  | `"UserRole.organization"`         | Active role identifier                        |
+| `auth_user_data`          | String  | `"{ \"username\": \"...\" }"`     | Serialized user session JSON                  |
+| `org_dynamic_path`        | String  | `"cst_ApexBuilders_27-10-2026"`   | Active organization path                      |
+| `org_name`                | String  | `"Apex Builders"`                 | Active organization name                      |
+| `app_name`                | String  | `"Apex Workspace"`                | Active white-label app display name           |
+| `brand_color_value`       | int     | `4278233195` (`0xFF00A86B`)       | 32-bit ARGB brand color integer               |
+| `referral_code`           | String  | `"APX892"`                        | Organization referral code                    |
+| `pending_org_id`          | String  | `"cst_ApexBuilders_27-10-2026"`   | Draft recovery: Pending org document ID       |
+| `pending_org_name`        | String  | `"Apex Builders"`                 | Draft recovery: Organization name             |
+| `pending_email`           | String  | `"admin@apex.com"`                | Draft recovery: Email address                 |
+| `pending_phone`           | String  | `"9876543210"`                    | Draft recovery: Phone number                  |
+| `pending_username`        | String  | `"apexadmin"`                     | Draft recovery: Admin username                |
+| `pending_password`        | String  | `"Secret123!"`                    | Draft recovery: Password                      |
+| `pending_app_name`        | String  | `"Apex Workspace"`                | Draft recovery: App name                      |
+| `pending_date_str`        | String  | `"27-10-2026"`                    | Draft recovery: Date string                   |
+| `pending_theme_color`     | String  | `"#00A86B"`                       | Draft recovery: Theme hex string              |
+
+
+====================================================================================================
+10. END-TO-END DATA FLOW & LIFECYCLE TRACING
+====================================================================================================
+
+10.1 Scenario A: Free Trial Onboarding (Complete Walkthrough)
+-------------------------------------------------------------
+1. Step 1 (Details):
+   - User inputs:
+     * Org Name : "Zenith Construction"
+     * Email    : "contact@zenith.com"
+     * Phone    : "9812345678"
+     * Username : "zenithadmin"
+     * Password : "Password@2026"
+   - Debounce checks pass with green ticks.
+   - User taps "CONTINUE".
+   - `validateOrganizationRegistration` executes atomic check -> returns `isValid: true`.
+   - Navigates to `BrandingScreen`.
+
+2. Step 2 (Branding):
+   - User types App Name: "Zenith BuildHub".
+   - Selects "Ocean Blue" (`#017FDF`). Screen live-updates to vibrant blue.
+   - User taps "SAVE CHANGES".
+   - Generates `orgId = "cst_ZenithConstruction_27-10-2026"`.
+   - Generates referral code `"ZNT451"`.
+   - Batch writes pending registration to Firestore (`onboardingStep: "PAYMENT_PENDING"`, `isSubscriptionActive: false`).
+   - Creates Firebase Auth account for `contact@zenith.com`.
+   - Saves recovery draft in `SharedPreferences`.
+   - Navigates to `PricingScreen`.
+
+3. Step 3 (Pricing):
+   - User remains on "Free Trial" tab (14-Day Free Access, ₹0).
+   - Taps "START 14-DAY FREE TRIAL".
+   - `_register()` detects amount == 0:
+     * Skips PayU checkout entirely.
+     * Computes start date (`now`), end date (`now + 14 days`).
+     * Quotas: 1 project, 2 users, 1 manager, 1 supervisor.
+     * Updates Firestore:
+       `/organisation/cst_ZenithConstruction_27-10-2026` -> `isSubscriptionActive: true`, `onboardingStep: "COMPLETED"`.
+       `/organisation/cst_ZenithConstruction_27-10-2026/data/subscription` -> `subscriptionPlan: "Free Trial"`, `isSubscriptionActive: true`.
+     * Invokes Cloud Function `sendPlanInvoiceOnBackend`: dispatches Welcome / Free Trial activation email.
+     * Clears local recovery draft from `SharedPreferences`.
+     * Calls `AuthService().login(UserRole.organization, {...})`.
+     * Displays success toast: "Account activated successfully!".
+     * Navigates to `OrganizationDashboard`.
+
+
+10.2 Scenario B: Paid Plan Onboarding (PayU Success Walkthrough)
+----------------------------------------------------------------
+1. Steps 1 & 2 Completed:
+   - Account initialized with `cst_SummitBuilders_27-10-2026`, theme `#7C3AED` (Royal Purple).
+   - Routed to `PricingScreen`.
+
+2. Step 3 (Plan Selection):
+   - User selects "Gold" plan.
+   - Selects cadence: "Yearly" (Save 33%).
+   - Price displayed: "₹2,388" (Effective rate ₹199/mo).
+   - User taps "PROCEED TO PAY ₹2,388".
+
+3. PayU Gateway Checkout:
+   - `_register()` generates `txnid = "PAYU_1719483050123"`.
+   - Pushes `PayUCheckoutScreen(params: payUParams)`.
+   - `PayUService.buildPostDataAsync` calls Cloud Function `generatePayUHash`:
+     * Computes request hash: `sha512(a912BZ|PAYU_1719483050123|2388.00|SummitBuilders Gold Plan (Yearly)|SummitBuilders|admin@summit.com|SummitBuilders|||ebricks|ebricks_subscription||||||salt)`.
+     * Returns signed form data.
+   - WebView submits form to `https://secure.payu.in/_payment`.
+   - User selects UPI / Net Banking and approves payment.
+   - PayU redirects to `surl` callback.
+   - WebView intercepts payload via `PayUBridge` or URL callback.
+   - Client validates response signature via `PayUService.verifyResponseHash`.
+
+4. Backend Verification & Activation:
+   - `_register()` receives valid `PayUResult`.
+   - Sets Firestore `isSubscriptionActive: true`, `subscriptionPlan: "Gold"`, `subscriptionType: "Yearly"`, 
+     `subscriptionStartDate: now`, `subscriptionEndDate: now + 365 days`, quotas (10 projects, 15 users, 5 managers, 10 supervisors).
+   - Calls Cloud Function `verifySubscription`:
+     * Validates response hash server-to-server.
+     * Marks `verifiedByBackend: true` in Firestore.
+     * Dispatches official PDF/HTML tax invoice email to `admin@summit.com`.
+   - Clears pending recovery draft from `SharedPreferences`.
+   - Logs user into session.
+   - Pushes `TransactionCompletedScreen`.
+   - User reviews receipt card and taps "GO TO DASHBOARD".
+
+
+10.3 Sequence Diagram Representation (Textual)
+----------------------------------------------
+```
+[User]       [Mobile Client]        [Cloud Functions]       [PayU Gateway]       [Firestore DB]
+  |                 |                       |                      |                   |
+  |-- Step 1 Details->                      |                      |                   |
+  |                 |-- validateOrganizationRegistration --------->|                   |
+  |                 |<-- Validation OK ----------------------------|                   |
+  |-- Step 2 Brand ->                       |                      |                   |
+  |                 |-- createPendingOrganizationRegistration ------------------------>|
+  |                 |<-- OrgID & Referral Code Generated ------------------------------|
+  |-- Step 3 Plan -->                       |                      |                   |
+  |                 |-- generatePayUHash -> |                      |                   |
+  |                 |<-- Return PostData + Hash -------------------|                   |
+  |                 |-- Submit Form ------------------------------>|                   |
+  |                 |                       |                      |<-- Complete Txn --|
+  |                 |<-- Webhook / Bridge Callback ----------------|                   |
+  |                 |-- verifySubscription >|                      |                   |
+  |                 |                       |-- Verify Hash & TxnStatus                |
+  |                 |                       |-- Write Active Subscription ------------>|
+  |                 |                       |-- Send Invoice Email                     |
+  |                 |<-- Success Response --|                      |                   |
+  |                 |-- Clear Recovery Draft & AuthService.login   |                   |
+  |<-- Dashboard ---|                       |                      |                   |
+```
+
+
+====================================================================================================
+11. EDGE CASES, ERROR RECOVERY & APP CLOSURE BEHAVIOR
+====================================================================================================
+
+11.1 App Killed / Closed During Registration
+--------------------------------------------
+Problem Statement:
+What happens if the user kills the mobile app, experiences an OS crash, or runs out of battery:
+- Case 1: App killed during Step 1 (before tapping Continue):
+  Nothing was written to Firestore. Form state is abandoned. No orphan records exist.
+- Case 2: App killed during Step 2 (before tapping Save Changes):
+  Nothing was written to Firestore. No orphan records exist.
+- Case 3: App killed during Step 3 or during PayU Checkout (after Step 2 was completed):
+  The organization document was already committed to Firestore with:
+  `onboardingStep: "PAYMENT_PENDING"`, `isSubscriptionActive: false`.
+  The local draft was saved to `SharedPreferences` (`pending_org_id`, etc.).
+
+Recovery Behavior:
+1. When user reopens the app:
+   - If user visits `/orgRegistrationForm` and types their username or organization name, the real-time 
+     check triggers pending detection.
+   - An alert dialog appears:
+     "Pending Registration - An account for '...' was already registered and is awaiting subscription payment."
+   - Tapping "RESUME PAYMENT" fetches the pending document from Firestore, skips Steps 1 and 2, and 
+     navigates directly to `PricingScreen` with the saved theme and credentials pre-loaded.
+2. In `PricingScreen.initState()`:
+   - When opened, `_checkExistingSubscriptionStatus()` immediately checks if payment was already completed 
+     in the background (e.g., via asynchronous PayU webhook).
+   - If subscription is already active, redirects directly to `OrganizationDashboard`.
+
+
+11.2 Payment Cancellation, Gateway Dropouts & Failed Transactions
+-----------------------------------------------------------------
+1. User Cancels in PayU Gateway:
+   - PayU returns status `"cancel"`, `"cancelled"`, or `"user_cancelled"`.
+   - `PayUCheckoutScreen` intercepts cancellation and pops back with `PayUResult(isSuccess: false, errorMessage: "Payment was cancelled or failed.")`.
+   - `PricingScreen` displays a floating error toast: "Payment was cancelled or failed. Please try again."
+   - Account remains safely in `PAYMENT_PENDING` state. User can retry immediately with another card, UPI, 
+     or change to a different billing tier.
+
+2. Insufficient Funds / Bank Decline:
+   - PayU returns `status: "failure"` with bank error message.
+   - Screen remains on `PricingScreen`, displaying the specific error message returned by the gateway.
+
+
+11.3 Network Dropouts & Offline Cache Behavior
+----------------------------------------------
+1. Offline During Step 1:
+   - Debounce checks fail with "Error validating [field]. Please check network."
+   - Form submission blocks until network connectivity is restored via `ConnectivityWrapper`.
+2. Offline During PayU Hash Generation:
+   - If Cloud Function times out (8 seconds), `PayUService` falls back to local SHA-512 calculation using 
+     in-app cryptographic salts.
+3. Offline During Step 3 Finalization:
+   - Cloud Firestore enables offline disk persistence. Writes to `organisation/{orgId}` and `data/subscription` 
+     are queued locally and synced automatically the moment data connectivity resumes.
+
+
+11.4 Duplicate Registration Prevention & Race Condition Handling
+----------------------------------------------------------------
+1. Simultaneous Registrations with Same Name / Username:
+   - Tier 1 and Tier 2 indexed queries check root organizations, collection groups (`manager`, `supervisor`, 
+     `organizationUser`, `configUsers`), and direct document paths.
+   - Case-Insensitivity: All usernames and emails are converted to lower-case prior to querying and saving.
+   - Whitespace Immunity: Organization names are stripped of whitespace and compared against `cst_${noSpace}_*`.
+
+
+11.5 Cryptographic Signature Mismatch Handling
+----------------------------------------------
+- If a man-in-the-middle, proxy, or compromised client attempts to tamper with the amount, transaction ID, 
+  or response status, the reverse SHA-512 signature hash will fail:
+  `computedHash != receivedHash`
+- Result:
+  * Client refuses to activate subscription.
+  * Backend flags transaction as `FAILED_HASH_MISMATCH`.
+  * Subscription is NOT activated.
+  * Toast displays: "Payment signature verification failed. Please contact support."
+
+
+====================================================================================================
+12. COMPREHENSIVE TESTING SCENARIOS & ACCEPTANCE CRITERIA
+====================================================================================================
+
+12.1 Unit & Validation Test Cases
+---------------------------------
+Test Case UT-01: Email Validation Regex
+- Input: `test@`, `test@domain`, `test.com`, `@domain.com`, `user@domain.co.in`
+- Expected: First 4 fail regex check; `user@domain.co.in` passes.
+
+Test Case UT-02: Phone Number Formatter & Length
+- Input: `"98765abc43"`, `"987654321012"`
+- Expected: Alpha characters stripped -> `"9876543"`; input formatted and clamped to exactly 10 digits `"9876543210"`.
+
+Test Case UT-03: Password Entropy Scoring
+- Input: `"abc"` -> Weak; `"abcdefgh"` -> Weak (length only); `"Abcdefg1"` -> Moderate; `"Abcdef1!"` -> Strong.
+- Expected: Progress bar widths and color indicators update accurately.
+
+Test Case UT-04: Username Case-Insensitive Uniqueness
+- Existing in DB: `"ApexAdmin"`
+- Input: `"apexadmin"`, `"APEXADMIN"`, `"  ApexAdmin  "`
+- Expected: Detected as duplicate (`isGlobalUsernameUnique == false`).
+
+
+12.2 Integration Test Cases
+---------------------------
+Test Case IT-01: Step 1 to Step 2 Transition
+- Execution: Fill all 6 fields with valid, unique data. Tap "CONTINUE".
+- Expected: Atomic validation passes. Screen navigates to `BrandingScreen` with arguments correctly mapped.
+
+Test Case IT-02: Brand Color Live Switching
+- Execution: Tap "Ocean Blue", then "Crimson Red", then "Emerald Green".
+- Expected: Scaffold theme, icons, and button backgrounds update to corresponding color within 16ms without lag.
+
+Test Case IT-03: Free Trial Direct Activation
+- Execution: On `PricingScreen`, select "Free Trial", tap "START 14-DAY FREE TRIAL".
+- Expected: PayU gateway is bypassed; Firestore documents updated with `isSubscriptionActive: true` and 
+  `subscriptionPlan: "Free Trial"`; success toast displays; navigates to `OrganizationDashboard`.
+
+
+12.3 Payment & Gateway Test Vectors
+-----------------------------------
+Test Case PT-01: PayU Request Hash Computation
+- Vector Inputs:
+  * key         : `"GZrAha"`
+  * txnid       : `"PAYU_1719483000"`
+  * amount      : `99.00`
+  * productinfo : `"Subscription"`
+  * firstname   : `"TestOrg"`
+  * email       : `"test@org.com"`
+  * salt        : `"xpfwrDGBXY4sR5Y8O4xU8OB0seurgJMi"`
+- Expected Hash Sequence:
+  `GZrAha|PAYU_1719483000|99.00|Subscription|TestOrg|test@org.com||||ebricks|ebricks_subscription||||||xpfwrDGBXY4sR5Y8O4xU8OB0seurgJMi`
+- Result: SHA-512 matches expected cryptographic digest.
+
+Test Case PT-02: PayU Successful Transaction Handling
+- Execution: PayU test card approved.
+- Expected: WebView catches return URL; signature hash verified; `TransactionCompletedScreen` displays 
+  accurate amount and reference numbers; tapping "GO TO DASHBOARD" loads active organization.
+
+Test Case PT-03: PayU User Cancellation
+- Execution: User presses "Cancel Payment" on PayU checkout page.
+- Expected: WebView dismisses; user returns to `PricingScreen`; error toast shown; subscription remains inactive.
+
+
+12.4 Edge Case & Recovery Verification Cases
+--------------------------------------------
+Test Case ER-01: App Killed During Payment
+- Execution:
+  1. Complete Steps 1 & 2.
+  2. On `PricingScreen`, force close / kill app process.
+  3. Reopen app -> Navigate to Register Organization.
+  4. Type previously entered username.
+- Expected: Pending registration detected; dialog prompts "Resume Payment"; clicking "RESUME PAYMENT" 
+  restores theme and credentials on `PricingScreen`.
+
+Test Case ER-02: Webhook Asynchronous Verification
+- Execution: Complete payment in browser; mobile client loses connection before reaching completion screen.
+- Expected: Server-to-server `payuWebhook` executes in Cloud Functions; updates Firestore; next app launch 
+  detects active subscription and routes directly to `OrganizationDashboard`.
+
+
+12.5 Production Go-Live Checklist
+---------------------------------
+[ ] Verify `.env` contains valid `PAYU_PROD_KEY`, `PAYU_PROD_SALT`, `PAYU_PROD_MERCHANT_ID`.
+[ ] Verify `PAYU_ENVIRONMENT` is set to `"production"`.
+[ ] Confirm Cloud Functions deployed to `us-central1` with matching environment variables.
+[ ] Ensure Firestore Security Rules deployed (`firebase deploy --only firestore:rules`).
+[ ] Test physical Android and iOS devices for UPI intent URL scheme launches.
+[ ] Validate email SMTP credentials for transactional invoice delivery.
+[ ] Perform end-to-end sandbox and production test transactions.
+
+====================================================================================================
+END OF DOCUMENTATION
+====================================================================================================
+

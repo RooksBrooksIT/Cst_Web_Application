@@ -8,6 +8,7 @@ import { useNotifications } from './hooks/useNotifications'
 import NotificationBanner from './components/common/NotificationBanner'
 import { useAuth } from './hooks/useAuth'
 import Login from './pages/Login'
+import OrganizationOnboardingPage from './pages/organization/onboarding/OrganizationOnboardingPage'
 
 function ProtectedRoute({ allowedRole, children }) {
   const { user, role, loading } = useAuth()
@@ -44,6 +45,12 @@ function App() {
             <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="/login" element={<Login />} />
             <Route path="/forgot-password" element={<Login initialView="forgot-password" />} />
+            
+            {/* Organization Account Creation and Onboarding Flow */}
+            <Route path="/register" element={<OrganizationOnboardingPage />} />
+            <Route path="/organization/register" element={<OrganizationOnboardingPage />} />
+            <Route path="/orgRegistration" element={<OrganizationOnboardingPage />} />
+            <Route path="/orgRegistrationForm" element={<OrganizationOnboardingPage />} />
             
             {/* Organization Routes */}
             <Route

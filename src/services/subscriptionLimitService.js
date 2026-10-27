@@ -9,7 +9,7 @@ import {
   where,
 } from 'firebase/firestore'
 import { db } from './firebase.js'
-import { SUBSCRIPTION_PLANS, calculatePlanQuotas } from './subscriptionService.js'
+import { SUBSCRIPTION_PLANS, calculatePlanQuotas, isSubscriptionExpired, calculateDaysRemaining } from './subscriptionService.js'
 
 export const PLAN_FEATURE_PERMISSIONS = {
   // Free Trial features
@@ -38,8 +38,39 @@ export const PLAN_FEATURE_PERMISSIONS = {
   advanced_workforce_payroll: ['Platinum', 'Enterprise'],
 }
 
-export function isFeatureAllowedForPlan(featureKey, planName = 'Free Trial') {
+export { isSubscriptionExpired, calculateDaysRemaining }
+
+export function isFeatureAllowedForPlan(featureKey, planOrSubscription = 'Free Trial', explicitSubscription = null) {
+  let planName = 'Free Trial'
+  let subscription = explicitSubscription
+
+  if (typeof planOrSubscription === 'object' && planOrSubscription !== null) {
+    subscription = planOrSubscription
+    planName = subscription.subscriptionPlan || subscription.planName || 'Free Trial'
+  } else if (typeof planOrSubscription === 'string') {
+    planName = planOrSubscription
+  }
+
   const normPlan = String(planName || 'Free Trial').trim()
+  const isTrial = normPlan.toLowerCase().includes('trial') || normPlan.toLowerCase().includes('free')
+
+  // Check trial status: Active 14-day Free Trial grants full unrestricted access to all features & modules
+  if (isTrial) {
+    const isExpired = subscription ? isSubscriptionExpired(subscription) : false
+    if (!isExpired) {
+      return true
+    }
+    // Expired Free Trial restricts to baseline Free Trial tier permissions
+    const allowedTiers = PLAN_FEATURE_PERMISSIONS[featureKey]
+    if (!allowedTiers) return true
+    return allowedTiers.some((tier) => normPlan.toLowerCase().includes(tier.toLowerCase()))
+  }
+
+  // Paid plans: Silver, Gold, Platinum, Enterprise
+  if (subscription && isSubscriptionExpired(subscription)) {
+    return false
+  }
+
   const allowedTiers = PLAN_FEATURE_PERMISSIONS[featureKey]
   if (!allowedTiers) return true
   return allowedTiers.some((tier) => normPlan.toLowerCase().includes(tier.toLowerCase()))
@@ -79,8 +110,14 @@ export function formatCanonicalSiteId(siteId = '', siteCode = '', siteName = '')
  * Resolves drawing limits for a given plan name
  * @param {string} planName - e.g. "Free Trial", "Silver", "Gold", "Platinum", "Enterprise"
  */
-export function getDrawingLimitsForPlan(planName = '') {
-  const norm = String(planName || '').toLowerCase().trim()
+export function getDrawingLimitsForPlan(planName = '', subscription = null) {
+  let norm = String(planName || '').toLowerCase().trim()
+  let sub = subscription
+
+  if (typeof planName === 'object' && planName !== null) {
+    sub = planName
+    norm = String(sub.subscriptionPlan || sub.planName || '').toLowerCase().trim()
+  }
 
   if (norm.includes('enterprise')) {
     const policy = SUBSCRIPTION_PLANS.ENTERPRISE.drawingPolicy
@@ -142,10 +179,32 @@ export function getDrawingLimitsForPlan(planName = '') {
     }
   }
 
-  // Default to Free Trial
+  // Free Trial handling
+  const isExpired = sub ? isSubscriptionExpired(sub) : false
+  if (!isExpired) {
+    // 14-Day Free Trial Full Evaluation Drawing Policy:
+    // Allows up to 2 active docs per site with multi-delete & multi-reupload enabled
+    return {
+      planName: 'Free Trial',
+      isTrialActive: true,
+      isExpired: false,
+      maxActiveDocsPerSite: 2,
+      allowDelete: true,
+      allowReupload: true,
+      maxDeletesPerSite: Infinity,
+      maxReuploadsPerSite: Infinity,
+      multiDelete: true,
+      multiReupload: true,
+      description: '14-Day Free Trial Full Access (2 active docs per site, full delete/re-upload)',
+    }
+  }
+
+  // Expired Free Trial
   const policy = SUBSCRIPTION_PLANS.FREE_TRIAL.drawingPolicy
   return {
     planName: 'Free Trial',
+    isTrialActive: false,
+    isExpired: true,
     maxActiveDocsPerSite: policy.maxActiveDocsPerSite || 1,
     allowDelete: false,
     allowReupload: false,
@@ -166,12 +225,19 @@ export async function getActivePlanLimits(orgId) {
   const trialDrawing = getDrawingLimitsForPlan('Free Trial')
   const defaultLimits = {
     planName: 'Free Trial',
+    isTrial: true,
+    isTrialActive: true,
     isExpired: false,
-    maxProjects: trialQuotas.maxProjects,
-    maxUsers: trialQuotas.maxUsers,
-    maxManagers: trialQuotas.maxManagers,
-    maxSupervisors: trialQuotas.maxSupervisors,
-    quotas: trialQuotas,
+    maxProjects: 999999,
+    maxUsers: 3,
+    maxManagers: 1,
+    maxSupervisors: 1,
+    quotas: {
+      maxProjects: 999999,
+      maxUsers: 3,
+      maxManagers: 1,
+      maxSupervisors: 1,
+    },
     subscription: null,
     ...trialDrawing,
   }
@@ -195,23 +261,53 @@ export async function getActivePlanLimits(orgId) {
 
     if (subData) {
       const planName = subData.subscriptionPlan || subData.planName || 'Free Trial'
-      const platinumProjects = subData.platinumProjects || subData.queuedPlatinumProjects || 10
-      const quotas = calculatePlanQuotas(planName, platinumProjects)
-      const drawingLimits = getDrawingLimitsForPlan(planName)
-
+      const isTrial = planName.toLowerCase().includes('trial') || planName.toLowerCase().includes('free')
       const now = new Date()
       const endDate = subData.subscriptionEndDate
         ? (subData.subscriptionEndDate.toDate ? subData.subscriptionEndDate.toDate() : new Date(subData.subscriptionEndDate))
         : null
       const isExpired = subData.isSubscriptionActive === false || (endDate && endDate < now)
+      const isTrialActive = isTrial && !isExpired
 
-      const effectiveMaxProjects = subData.maxProjects || quotas.maxProjects
-      const effectiveMaxUsers = subData.maxUsers || quotas.maxUsers
-      const effectiveMaxManagers = subData.maxManagers || quotas.maxManagers
-      const effectiveMaxSupervisors = subData.maxSupervisors || quotas.maxSupervisors
+      if (isTrialActive) {
+        const drawingLimits = getDrawingLimitsForPlan(planName, subData)
+        return {
+          planName: 'Free Trial',
+          isTrial: true,
+          isTrialActive: true,
+          isExpired: false,
+          maxProjects: 999999,
+          maxUsers: 3,
+          maxManagers: 1,
+          maxSupervisors: 1,
+          quotas: {
+            maxProjects: 999999,
+            maxUsers: 3,
+            maxManagers: 1,
+            maxSupervisors: 1,
+          },
+          subscription: subData,
+          endDate,
+          ...drawingLimits,
+        }
+      }
+
+      const platinumProjects = subData.platinumProjects || subData.queuedPlatinumProjects || 10
+      const quotas = calculatePlanQuotas(planName, platinumProjects)
+      const drawingLimits = getDrawingLimitsForPlan(planName, subData)
+
+      // Single source of truth: calculatePlanQuotas defines limits for standard plans (Free Trial, Silver, Gold, Platinum).
+      // Only custom Enterprise tier falls back to custom Firestore numbers.
+      const isCustomEnterprise = planName.toLowerCase().includes('enterprise') || planName.toLowerCase().includes('custom')
+      const effectiveMaxProjects = isCustomEnterprise ? (subData.maxProjects || quotas.maxProjects) : quotas.maxProjects
+      const effectiveMaxUsers = isCustomEnterprise ? (subData.maxUsers || quotas.maxUsers) : quotas.maxUsers
+      const effectiveMaxManagers = isCustomEnterprise ? (subData.maxManagers || quotas.maxManagers) : quotas.maxManagers
+      const effectiveMaxSupervisors = isCustomEnterprise ? (subData.maxSupervisors || quotas.maxSupervisors) : quotas.maxSupervisors
 
       return {
         planName,
+        isTrial,
+        isTrialActive: false,
         isExpired,
         maxProjects: effectiveMaxProjects,
         maxUsers: effectiveMaxUsers,
@@ -224,6 +320,7 @@ export async function getActivePlanLimits(orgId) {
           maxSupervisors: effectiveMaxSupervisors,
         },
         subscription: subData,
+        endDate,
         ...drawingLimits,
       }
     }
@@ -289,13 +386,7 @@ export async function getTeamCounts(orgId) {
       counts.workers = workerSnap.value.size
     }
 
-    // Fallback check for supervisors under siteSupervisor if 0
-    if (counts.supervisors === 0) {
-      try {
-        const altSup = await getDocs(collection(db, 'organisation', orgId, 'siteSupervisor'))
-        counts.supervisors = altSup.size
-      } catch (e) {}
-    }
+    // Supervisors are counted strictly from the supervisor collection
 
     // Cumulative total team users limit of (Managers + Supervisors + Staff)
     counts.totalUsers = counts.managers + counts.supervisors + counts.workers + 1
@@ -313,22 +404,34 @@ export async function getTeamCounts(orgId) {
  * Compares active site count in Firestore against limits.maxProjects.
  * Blocks addition when limit reached, returning upgrade recommendations.
  */
-export async function canCreateSite({ orgId, currentPlanName = '', currentSitesCount }) {
-  const planLimits = currentPlanName
+export async function canCreateSite({ orgId, currentPlanName = '', currentSitesCount, subscription = null }) {
+  const planLimits = subscription
+    ? {
+        ...calculatePlanQuotas(subscription.subscriptionPlan || currentPlanName || 'Free Trial', 10),
+        ...getDrawingLimitsForPlan(subscription.subscriptionPlan || currentPlanName || 'Free Trial', subscription),
+        isExpired: isSubscriptionExpired(subscription),
+        isTrialActive: !isSubscriptionExpired(subscription) && (String(subscription.subscriptionPlan || currentPlanName || 'Free Trial').toLowerCase().includes('trial') || String(subscription.subscriptionPlan || currentPlanName || 'Free Trial').toLowerCase().includes('free')),
+        planName: subscription.subscriptionPlan || currentPlanName || 'Free Trial',
+      }
+    : (currentPlanName && !currentPlanName.toLowerCase().includes('trial') && !currentPlanName.toLowerCase().includes('free'))
     ? { ...calculatePlanQuotas(currentPlanName), ...getDrawingLimitsForPlan(currentPlanName), isExpired: false }
     : await getActivePlanLimits(orgId)
+
+  const isTrial = String(planLimits.planName || '').toLowerCase().includes('trial') || String(planLimits.planName || '').toLowerCase().includes('free')
 
   if (planLimits.isExpired) {
     return {
       isAllowed: false,
       allowed: false,
-      reason: 'SUBSCRIPTION_EXPIRED',
-      title: 'Subscription Expired',
-      message: `Your subscription (${planLimits.planName}) has expired. Please renew your subscription to create new projects.`,
+      reason: isTrial ? 'TRIAL_EXPIRED' : 'SUBSCRIPTION_EXPIRED',
+      title: isTrial ? 'Free Trial Expired' : 'Subscription Expired',
+      message: isTrial
+        ? 'Your 14-day Free Trial has expired. Please select a subscription plan to continue creating projects.'
+        : `Your subscription (${planLimits.planName}) has expired. Please renew your subscription to create new projects.`,
       currentCount: currentSitesCount || 0,
       maxLimit: planLimits.maxProjects,
       planName: planLimits.planName,
-      upgradePlan: 'Renew',
+      upgradePlan: isTrial ? 'Select Plan' : 'Renew',
       limits: planLimits,
     }
   }
@@ -336,6 +439,17 @@ export async function canCreateSite({ orgId, currentPlanName = '', currentSitesC
   const activeCount = currentSitesCount !== undefined
     ? currentSitesCount
     : await getActiveSitesCount(orgId)
+
+  // Full Unrestricted Access during active 14-day Free Trial
+  if (planLimits.isTrialActive) {
+    return {
+      isAllowed: true,
+      allowed: true,
+      currentCount: activeCount,
+      maxLimit: planLimits.maxProjects,
+      limits: planLimits,
+    }
+  }
 
   if (activeCount >= planLimits.maxProjects) {
     let nextTier = 'Silver'
@@ -378,34 +492,135 @@ export async function canCreateManager({
   orgId,
   currentPlanName = '',
   currentManagersCount,
+  currentSupervisorsCount,
+  currentWorkersCount,
   currentTotalUsersCount,
+  subscription = null,
 }) {
-  const planLimits = currentPlanName
+  const planLimits = subscription
+    ? {
+        ...calculatePlanQuotas(subscription.subscriptionPlan || currentPlanName || 'Free Trial', 10),
+        ...getDrawingLimitsForPlan(subscription.subscriptionPlan || currentPlanName || 'Free Trial', subscription),
+        isExpired: isSubscriptionExpired(subscription),
+        isTrialActive: !isSubscriptionExpired(subscription) && (String(subscription.subscriptionPlan || currentPlanName || 'Free Trial').toLowerCase().includes('trial') || String(subscription.subscriptionPlan || currentPlanName || 'Free Trial').toLowerCase().includes('free')),
+        planName: subscription.subscriptionPlan || currentPlanName || 'Free Trial',
+      }
+    : (currentPlanName && !currentPlanName.toLowerCase().includes('trial') && !currentPlanName.toLowerCase().includes('free'))
     ? { ...calculatePlanQuotas(currentPlanName), ...getDrawingLimitsForPlan(currentPlanName), isExpired: false }
     : await getActivePlanLimits(orgId)
+
+  const isTrial = String(planLimits.planName || '').toLowerCase().includes('trial') || String(planLimits.planName || '').toLowerCase().includes('free')
 
   if (planLimits.isExpired) {
     return {
       isAllowed: false,
       allowed: false,
-      reason: 'SUBSCRIPTION_EXPIRED',
-      title: 'Subscription Expired',
-      message: `Your subscription (${planLimits.planName}) has expired. Please renew your subscription to add team members.`,
+      reason: isTrial ? 'TRIAL_EXPIRED' : 'SUBSCRIPTION_EXPIRED',
+      title: isTrial ? 'Free Trial Expired' : 'Subscription Expired',
+      message: isTrial
+        ? 'Your 14-day Free Trial has expired. Please select a subscription plan to add managers.'
+        : `Your subscription (${planLimits.planName}) has expired. Please renew your subscription to add team members.`,
       currentCount: currentManagersCount || 0,
       maxLimit: planLimits.maxManagers,
       planName: planLimits.planName,
-      upgradePlan: 'Renew',
+      upgradePlan: isTrial ? 'Select Plan' : 'Renew',
       limits: planLimits,
     }
   }
 
+  // Free Trial Workforce Limits: Max 3 eligible users (1 Admin + 1 Manager + 1 Supervisor), Workers excluded
+  if (isTrial) {
+    let mgrCount = currentManagersCount
+    let supCount = currentSupervisorsCount
+    let wkrCount = currentWorkersCount
+
+    if (mgrCount === undefined || supCount === undefined || wkrCount === undefined) {
+      const counts = await getTeamCounts(orgId)
+      if (mgrCount === undefined) mgrCount = counts.managers
+      if (supCount === undefined) supCount = counts.supervisors
+      if (wkrCount === undefined) wkrCount = counts.workers
+    }
+
+    const adminCount = 1
+    const eligibleCount = adminCount + mgrCount + supCount
+    const maxEligible = 3
+    const maxManagers = 1
+
+    if (mgrCount >= maxManagers) {
+      return {
+        isAllowed: false,
+        allowed: false,
+        reason: 'FREE_TRIAL_USER_LIMIT_REACHED',
+        title: 'Free Trial User Limit Reached',
+        message: 'You have reached the maximum allowed limit of 1 Manager on the Free Trial plan. Upgrade to a paid plan to add more managers.',
+        isTrialLimit: true,
+        planName: 'Free Trial',
+        adminCount,
+        maxAdmin: 1,
+        managersCount: mgrCount,
+        maxManagers: 1,
+        supervisorsCount: supCount,
+        maxSupervisors: 1,
+        workersCount: wkrCount,
+        totalEligible: eligibleCount,
+        maxEligible,
+        upgradePlan: 'Silver',
+        limits: planLimits,
+      }
+    }
+
+    if (eligibleCount >= maxEligible) {
+      return {
+        isAllowed: false,
+        allowed: false,
+        reason: 'FREE_TRIAL_USER_LIMIT_REACHED',
+        title: 'Free Trial User Limit Reached',
+        message: 'Your organization has reached the maximum of 3 eligible users (1 Organization Admin, 1 Manager, 1 Site Supervisor) on the Free Trial plan. Upgrade to a paid plan to add more team members.',
+        isTrialLimit: true,
+        planName: 'Free Trial',
+        adminCount,
+        maxAdmin: 1,
+        managersCount: mgrCount,
+        maxManagers: 1,
+        supervisorsCount: supCount,
+        maxSupervisors: 1,
+        workersCount: wkrCount,
+        totalEligible: eligibleCount,
+        maxEligible,
+        upgradePlan: 'Silver',
+        limits: planLimits,
+      }
+    }
+
+    return {
+      isAllowed: true,
+      allowed: true,
+      currentCount: mgrCount,
+      maxLimit: 1,
+      adminCount,
+      managersCount: mgrCount,
+      supervisorsCount: supCount,
+      workersCount: wkrCount,
+      totalEligible: eligibleCount,
+      maxEligible,
+      limits: planLimits,
+    }
+  }
+
+  // Paid Plans Logic
   let mgrCount = currentManagersCount
-  let userCount = currentTotalUsersCount
-  if (mgrCount === undefined || userCount === undefined) {
+  let supCount = currentSupervisorsCount
+
+  if (mgrCount === undefined || supCount === undefined) {
     const counts = await getTeamCounts(orgId)
     if (mgrCount === undefined) mgrCount = counts.managers
-    if (userCount === undefined) userCount = counts.totalUsers
+    if (supCount === undefined) supCount = counts.supervisors
   }
+
+  // The user limit applies ONLY to Managers and Supervisors (and Org Admin). Workers are strictly excluded!
+  const adminCount = 1
+  const eligibleUsersCount = adminCount + (mgrCount || 0) + (supCount || 0)
+  const userCount = eligibleUsersCount
 
   let nextTier = 'Silver'
   const cur = planLimits.planName.toLowerCase()
@@ -413,19 +628,24 @@ export async function canCreateManager({
   else if (cur.includes('gold')) nextTier = 'Platinum'
   else if (cur.includes('platinum')) nextTier = 'Enterprise'
 
-  // Step 1: Checks total user count against limits.maxTotalUsers
+  // Step 1: Checks total eligible user count (Admin + Managers + Supervisors) against limits.maxUsers
   if (userCount >= planLimits.maxUsers) {
     return {
       isAllowed: false,
       allowed: false,
       reason: 'TOTAL_USERS_LIMIT_REACHED',
       title: 'Team User Quota Reached',
-      message: `You have reached your total team quota of ${planLimits.maxUsers} users on the ${planLimits.planName} plan. Upgrade to ${nextTier} to add more team members.`,
+      message: `You have reached your total team quota of ${planLimits.maxUsers} users (Managers and Supervisors) on the ${planLimits.planName} plan. Upgrade to ${nextTier} to add more team members.`,
       currentCount: userCount,
       maxLimit: planLimits.maxUsers,
       planName: planLimits.planName,
       upgradePlan: nextTier,
       limits: planLimits,
+      adminCount,
+      managersCount: mgrCount,
+      supervisorsCount: supCount,
+      workersCount: currentWorkersCount,
+      totalEligible: userCount,
     }
   }
 
@@ -442,6 +662,11 @@ export async function canCreateManager({
       planName: planLimits.planName,
       upgradePlan: nextTier,
       limits: planLimits,
+      adminCount,
+      managersCount: mgrCount,
+      supervisorsCount: supCount,
+      workersCount: currentWorkersCount,
+      totalEligible: userCount,
     }
   }
 
@@ -451,6 +676,11 @@ export async function canCreateManager({
     currentCount: mgrCount,
     maxLimit: planLimits.maxManagers,
     limits: planLimits,
+    adminCount,
+    managersCount: mgrCount,
+    supervisorsCount: supCount,
+    workersCount: currentWorkersCount,
+    totalEligible: userCount,
   }
 }
 
@@ -464,35 +694,136 @@ export async function canCreateManager({
 export async function canCreateSupervisor({
   orgId,
   currentPlanName = '',
+  currentManagersCount,
   currentSupervisorsCount,
+  currentWorkersCount,
   currentTotalUsersCount,
+  subscription = null,
 }) {
-  const planLimits = currentPlanName
+  const planLimits = subscription
+    ? {
+        ...calculatePlanQuotas(subscription.subscriptionPlan || currentPlanName || 'Free Trial', 10),
+        ...getDrawingLimitsForPlan(subscription.subscriptionPlan || currentPlanName || 'Free Trial', subscription),
+        isExpired: isSubscriptionExpired(subscription),
+        isTrialActive: !isSubscriptionExpired(subscription) && (String(subscription.subscriptionPlan || currentPlanName || 'Free Trial').toLowerCase().includes('trial') || String(subscription.subscriptionPlan || currentPlanName || 'Free Trial').toLowerCase().includes('free')),
+        planName: subscription.subscriptionPlan || currentPlanName || 'Free Trial',
+      }
+    : (currentPlanName && !currentPlanName.toLowerCase().includes('trial') && !currentPlanName.toLowerCase().includes('free'))
     ? { ...calculatePlanQuotas(currentPlanName), ...getDrawingLimitsForPlan(currentPlanName), isExpired: false }
     : await getActivePlanLimits(orgId)
+
+  const isTrial = String(planLimits.planName || '').toLowerCase().includes('trial') || String(planLimits.planName || '').toLowerCase().includes('free')
 
   if (planLimits.isExpired) {
     return {
       isAllowed: false,
       allowed: false,
-      reason: 'SUBSCRIPTION_EXPIRED',
-      title: 'Subscription Expired',
-      message: `Your subscription (${planLimits.planName}) has expired. Please renew your subscription to add team members.`,
+      reason: isTrial ? 'TRIAL_EXPIRED' : 'SUBSCRIPTION_EXPIRED',
+      title: isTrial ? 'Free Trial Expired' : 'Subscription Expired',
+      message: isTrial
+        ? 'Your 14-day Free Trial has expired. Please select a subscription plan to add supervisors.'
+        : `Your subscription (${planLimits.planName}) has expired. Please renew your subscription to add team members.`,
       currentCount: currentSupervisorsCount || 0,
       maxLimit: planLimits.maxSupervisors,
       planName: planLimits.planName,
-      upgradePlan: 'Renew',
+      upgradePlan: isTrial ? 'Select Plan' : 'Renew',
       limits: planLimits,
     }
   }
 
+  // Free Trial Workforce Limits: Max 3 eligible users (1 Admin + 1 Manager + 1 Supervisor), Workers excluded
+  if (isTrial) {
+    let mgrCount = currentManagersCount
+    let supCount = currentSupervisorsCount
+    let wkrCount = currentWorkersCount
+
+    if (mgrCount === undefined || supCount === undefined || wkrCount === undefined) {
+      const counts = await getTeamCounts(orgId)
+      if (mgrCount === undefined) mgrCount = counts.managers
+      if (supCount === undefined) supCount = counts.supervisors
+      if (wkrCount === undefined) wkrCount = counts.workers
+    }
+
+    const adminCount = 1
+    const eligibleCount = adminCount + mgrCount + supCount
+    const maxEligible = 3
+    const maxSupervisors = 1
+
+    if (supCount >= maxSupervisors) {
+      return {
+        isAllowed: false,
+        allowed: false,
+        reason: 'FREE_TRIAL_USER_LIMIT_REACHED',
+        title: 'Free Trial User Limit Reached',
+        message: 'You have reached the maximum allowed limit of 1 Site Supervisor on the Free Trial plan. Upgrade to a paid plan to add more supervisors.',
+        isTrialLimit: true,
+        planName: 'Free Trial',
+        adminCount,
+        maxAdmin: 1,
+        managersCount: mgrCount,
+        maxManagers: 1,
+        supervisorsCount: supCount,
+        maxSupervisors: 1,
+        workersCount: wkrCount,
+        totalEligible: eligibleCount,
+        maxEligible,
+        upgradePlan: 'Silver',
+        limits: planLimits,
+      }
+    }
+
+    if (eligibleCount >= maxEligible) {
+      return {
+        isAllowed: false,
+        allowed: false,
+        reason: 'FREE_TRIAL_USER_LIMIT_REACHED',
+        title: 'Free Trial User Limit Reached',
+        message: 'Your organization has reached the maximum of 3 eligible users (1 Organization Admin, 1 Manager, 1 Site Supervisor) on the Free Trial plan. Upgrade to a paid plan to add more team members.',
+        isTrialLimit: true,
+        planName: 'Free Trial',
+        adminCount,
+        maxAdmin: 1,
+        managersCount: mgrCount,
+        maxManagers: 1,
+        supervisorsCount: supCount,
+        maxSupervisors: 1,
+        workersCount: wkrCount,
+        totalEligible: eligibleCount,
+        maxEligible,
+        upgradePlan: 'Silver',
+        limits: planLimits,
+      }
+    }
+
+    return {
+      isAllowed: true,
+      allowed: true,
+      currentCount: supCount,
+      maxLimit: 1,
+      adminCount,
+      managersCount: mgrCount,
+      supervisorsCount: supCount,
+      workersCount: wkrCount,
+      totalEligible: eligibleCount,
+      maxEligible,
+      limits: planLimits,
+    }
+  }
+
+  // Paid Plans Logic
+  let mgrCount = currentManagersCount
   let supCount = currentSupervisorsCount
-  let userCount = currentTotalUsersCount
-  if (supCount === undefined || userCount === undefined) {
+
+  if (supCount === undefined || mgrCount === undefined) {
     const counts = await getTeamCounts(orgId)
     if (supCount === undefined) supCount = counts.supervisors
-    if (userCount === undefined) userCount = counts.totalUsers
+    if (mgrCount === undefined) mgrCount = counts.managers
   }
+
+  // The user limit applies ONLY to Managers and Supervisors (and Org Admin). Workers are strictly excluded!
+  const adminCount = 1
+  const eligibleUsersCount = adminCount + (mgrCount || 0) + (supCount || 0)
+  const userCount = eligibleUsersCount
 
   let nextTier = 'Silver'
   const cur = planLimits.planName.toLowerCase()
@@ -500,19 +831,24 @@ export async function canCreateSupervisor({
   else if (cur.includes('gold')) nextTier = 'Platinum'
   else if (cur.includes('platinum')) nextTier = 'Enterprise'
 
-  // Step 1: Checks total user count against limits.maxTotalUsers
+  // Step 1: Checks total eligible user count (Admin + Managers + Supervisors) against limits.maxUsers
   if (userCount >= planLimits.maxUsers) {
     return {
       isAllowed: false,
       allowed: false,
       reason: 'TOTAL_USERS_LIMIT_REACHED',
       title: 'Team User Quota Reached',
-      message: `You have reached your total team quota of ${planLimits.maxUsers} users on the ${planLimits.planName} plan. Upgrade to ${nextTier} to add more team members.`,
+      message: `You have reached your total team quota of ${planLimits.maxUsers} users (Managers and Supervisors) on the ${planLimits.planName} plan. Upgrade to ${nextTier} to add more team members.`,
       currentCount: userCount,
       maxLimit: planLimits.maxUsers,
       planName: planLimits.planName,
       upgradePlan: nextTier,
       limits: planLimits,
+      adminCount,
+      managersCount: mgrCount,
+      supervisorsCount: supCount,
+      workersCount: currentWorkersCount,
+      totalEligible: userCount,
     }
   }
 
@@ -529,6 +865,11 @@ export async function canCreateSupervisor({
       planName: planLimits.planName,
       upgradePlan: nextTier,
       limits: planLimits,
+      adminCount,
+      managersCount: mgrCount,
+      supervisorsCount: supCount,
+      workersCount: currentWorkersCount,
+      totalEligible: userCount,
     }
   }
 
@@ -538,6 +879,11 @@ export async function canCreateSupervisor({
     currentCount: supCount,
     maxLimit: planLimits.maxSupervisors,
     limits: planLimits,
+    adminCount,
+    managersCount: mgrCount,
+    supervisorsCount: supCount,
+    workersCount: currentWorkersCount,
+    totalEligible: userCount,
   }
 }
 
@@ -651,10 +997,47 @@ export async function canUploadDrawing({
   const cleanSiteId = formatCanonicalSiteId(siteId)
   const limits = currentPlanName ? getDrawingLimitsForPlan(currentPlanName) : await getActivePlanLimits(orgId)
   const usage = await getSiteDrawingUsage(orgId, cleanSiteId)
+  const isTrial = String(limits.planName || '').toLowerCase().includes('trial') || String(limits.planName || '').toLowerCase().includes('free')
+
+  if (limits.isExpired) {
+    return {
+      isAllowed: false,
+      reason: isTrial ? 'TRIAL_EXPIRED' : 'SUBSCRIPTION_EXPIRED',
+      message: isTrial
+        ? 'Your 14-day Free Trial has expired. Please upgrade to a paid plan to upload site drawings.'
+        : `Your subscription (${limits.planName}) has expired. Please renew your subscription to upload drawings.`,
+      limits,
+      usage,
+      upgradePlan: 'Select Plan',
+    }
+  }
 
   const activeDocsCount = currentActiveDocs !== null
     ? currentActiveDocs
     : await getActiveDrawingsCountForSite(orgId, cleanSiteId)
+
+  // Full Access during active 14-day Free Trial (allows up to 2 active docs per site and re-uploads)
+  if (limits.isTrialActive) {
+    if (activeDocsCount + newDocsCount > (limits.maxActiveDocsPerSite || 2)) {
+      return {
+        isAllowed: false,
+        reason: 'ACTIVE_CAPACITY_EXCEEDED',
+        message: `Evaluation limit: You have reached the maximum of ${limits.maxActiveDocsPerSite || 2} active documents for Site ${siteId || cleanSiteId}. Upgrade to Platinum for expanded dynamic capacity.`,
+        currentActiveDocs: activeDocsCount,
+        maxActiveDocsPerSite: limits.maxActiveDocsPerSite || 2,
+        limits,
+        usage,
+        upgradePlan: 'Platinum',
+      }
+    }
+
+    return {
+      isAllowed: true,
+      limits,
+      usage,
+      currentActiveDocs: activeDocsCount,
+    }
+  }
 
   // 1. Active Document Capacity Check
   if (activeDocsCount + newDocsCount > limits.maxActiveDocsPerSite) {
@@ -720,6 +1103,30 @@ export async function canDeleteDrawing({
   const cleanSiteId = formatCanonicalSiteId(siteId)
   const limits = currentPlanName ? getDrawingLimitsForPlan(currentPlanName) : await getActivePlanLimits(orgId)
   const usage = await getSiteDrawingUsage(orgId, cleanSiteId)
+  const isTrial = String(limits.planName || '').toLowerCase().includes('trial') || String(limits.planName || '').toLowerCase().includes('free')
+
+  if (limits.isExpired) {
+    return {
+      isAllowed: false,
+      reason: isTrial ? 'TRIAL_EXPIRED' : 'SUBSCRIPTION_EXPIRED',
+      message: isTrial
+        ? 'Your 14-day Free Trial has expired. Please upgrade to a paid plan to manage drawings.'
+        : `Your subscription (${limits.planName}) has expired. Please renew your subscription to delete drawings.`,
+      limits,
+      usage,
+      upgradePlan: 'Select Plan',
+    }
+  }
+
+  // Full Unrestricted Access during active 14-day Free Trial
+  if (limits.isTrialActive) {
+    return {
+      isAllowed: true,
+      isGoldWarning: false,
+      limits,
+      usage,
+    }
+  }
 
   // 1. Deletion Permitted Check
   if (!limits.allowDelete) {

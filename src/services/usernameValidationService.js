@@ -8,7 +8,7 @@ import {
   where,
   limit,
 } from 'firebase/firestore'
-import { db } from './firebase'
+import { db } from './firebase.js'
 
 /**
  * Universal High-Speed Case-Insensitive Username Validation Engine
@@ -240,7 +240,7 @@ export async function isGlobalUsernameUnique(username, options = {}) {
 
     // A. Subcollections under current active organization (if orgId present)
     if (orgId) {
-      for (const subCol of ['manager', 'managers', 'supervisor', 'supervisors', 'siteSupervisor']) {
+      for (const subCol of ['manager', 'supervisor']) {
         const colRef = collection(db, 'organisation', orgId, subCol)
         for (const v of variations) {
           queryPromises.push(getDocs(query(colRef, where('UserName', '==', v), limit(1))))

@@ -1,28 +1,52 @@
 import React from 'react'
 import { ShieldAlert, ArrowUpRight, CheckCircle2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import FreeTrialUserLimitModal from './FreeTrialUserLimitModal'
 
 /**
  * Universal Subscription Quota & Limit Enforcement Modal
  * Complies with Section 5 of SUBSCRIPTION_PLAN_LIMITATIONS.txt
  * Displays when a user hits resource limits (Sites, Managers, Supervisors, Drawings, or Expired Subscription)
  */
-export default function SubscriptionLimitModal({
-  isOpen,
-  onClose,
-  title = 'Subscription Quota Reached',
-  message,
-  planName = 'Free Trial',
-  currentCount,
-  maxLimit,
-  recommendedPlan = 'Gold',
-  resourceType = 'Resource',
-  onUpgrade,
-}) {
+export default function SubscriptionLimitModal(props) {
+  const {
+    isOpen,
+    onClose,
+    title = 'Subscription Quota Reached',
+    message,
+    planName = 'Free Trial',
+    currentCount,
+    maxLimit,
+    recommendedPlan = 'Gold',
+    resourceType = 'Resource',
+    onUpgrade,
+    limitData,
+    isTrialLimit,
+  } = props
+
   if (!isOpen) return null
 
+  // If this is a Free Trial user quota limit, display the dedicated FreeTrialUserLimitModal
+  if (isTrialLimit || limitData?.isTrialLimit) {
+    const data = limitData || props
+    return (
+      <FreeTrialUserLimitModal
+        isOpen={isOpen}
+        onClose={onClose}
+        title={data.title || 'Free Trial User Limit Reached'}
+        message={data.message || message}
+        adminCount={data.adminCount ?? 1}
+        managersCount={data.managersCount ?? data.currentManagersCount ?? 0}
+        supervisorsCount={data.supervisorsCount ?? data.currentSupervisorsCount ?? 0}
+        workersCount={data.workersCount ?? data.currentWorkersCount ?? 0}
+        onUpgrade={onUpgrade}
+      />
+    )
+  }
+
   const isExpired = title?.toLowerCase().includes('expired') || message?.toLowerCase().includes('expired')
-  const upgradeLabel = isExpired ? 'Renew Subscription' : `Upgrade to ${recommendedPlan}`
+  const isTrial = String(planName || '').toLowerCase().includes('trial') || String(planName || '').toLowerCase().includes('free')
+  const upgradeLabel = isExpired ? (isTrial ? 'Select a Plan' : 'Renew Subscription') : `Upgrade to ${recommendedPlan}`
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 animate-fade-in">
