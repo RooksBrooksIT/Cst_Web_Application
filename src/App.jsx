@@ -1,4 +1,4 @@
-import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
+import { BrowserRouter, HashRouter, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import OrganizationDashboard from './pages/organization/Dashboard'
 import ManagerDashboard from './pages/manager/ManagerDashboard'
 import ManagerModule from './pages/manager/ManagerModule'
@@ -9,6 +9,14 @@ import NotificationBanner from './components/common/NotificationBanner'
 import { useAuth } from './hooks/useAuth'
 import Login from './pages/Login'
 import OrganizationOnboardingPage from './pages/organization/onboarding/OrganizationOnboardingPage'
+
+const isElectron = typeof window !== 'undefined' && (
+  window.location.protocol === 'file:' ||
+  navigator.userAgent.includes('Electron') ||
+  Boolean(window.process?.versions?.electron)
+)
+
+const AppRouter = isElectron ? HashRouter : BrowserRouter
 
 function ProtectedRoute({ allowedRole, children }) {
   const { user, role, loading } = useAuth()
@@ -39,7 +47,7 @@ function App() {
   return (
     <AuthProvider>
       <NotificationProvider>
-        <BrowserRouter>
+        <AppRouter>
           <GlobalNotificationBanner />
           <Routes>
             <Route path="/" element={<Navigate to="/login" replace />} />
@@ -87,7 +95,7 @@ function App() {
             {/* Global Fallback */}
             <Route path="*" element={<Navigate to="/login" replace />} />
           </Routes>
-        </BrowserRouter>
+        </AppRouter>
       </NotificationProvider>
     </AuthProvider>
   )
