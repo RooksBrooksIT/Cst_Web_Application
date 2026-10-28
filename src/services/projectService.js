@@ -260,8 +260,8 @@ export async function createProjectAndSiteAtomic(orgId, data, managerActor) {
     // Staff & Governance
     supervisorId: data.supervisorId || '',
     supervisorName: data.supervisorName || '',
-    managerId: managerActor?.id || 'mgr_lead',
-    managerName: managerActor?.name || 'Operations Manager',
+    managerId: data.managerId || managerActor?.id || 'mgr_lead',
+    managerName: data.managerName || managerActor?.name || 'Operations Manager',
 
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
