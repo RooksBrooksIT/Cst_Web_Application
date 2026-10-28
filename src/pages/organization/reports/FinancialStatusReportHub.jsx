@@ -17,6 +17,7 @@ export default function FinancialStatusReportHub({
   siteSupervisorEntries = [],
   subReport = 'statement',
   initialSiteId = 'all',
+  hideHeaderFilters = false,
 }) {
   const normalizedSites = useMemo(() => getNormalizedSiteOptions(sites), [sites])
   const [activeTab, setActiveTab] = useState(subReport === 'cash_flow' ? 'weekly' : 'statement')
@@ -182,77 +183,79 @@ export default function FinancialStatusReportHub({
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Top Controls & Sub-Tab Switcher Card */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
-              Financial Overview
-            </span>
-            <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
-              {activeTab === 'weekly' ? 'Cash Flow Analysis' : 'Financial Statement & Budget Status'}
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Consolidated balance sheets, client inflow realization rates, and weekly cash flow ledgers.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              onClick={handleExportCSV}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
-            >
-              📥 Export CSV
-            </button>
-            <button
-              type="button"
-              onClick={handlePrintPDF}
-              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors shadow-2xs cursor-pointer"
-            >
-              🖨️ Print Statement PDF
-            </button>
-          </div>
-        </div>
-
-        {/* Filters and Sub-Tab Switcher */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-100">
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-slate-500 font-semibold">Filter Site:</label>
-            <select
-              value={selectedSiteId}
-              onChange={(e) => setSelectedSiteId(e.target.value)}
-              className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs cursor-pointer"
-            >
-              <option value="all">All Portfolio Sites</option>
-              {normalizedSites.map((s, idx) => (
-                <option key={`fin-site-${s.id || s.siteId || idx}-${idx}`} value={s.id || s.siteId}>
-                  {s.label || s.projectName || s.siteName || s.name || s.id}
-                </option>
-              ))}
-            </select>
+      {!hideHeaderFilters && (
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
+                Financial Overview
+              </span>
+              <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
+                {activeTab === 'weekly' ? 'Cash Flow Analysis' : 'Financial Statement & Budget Status'}
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Consolidated balance sheets, client inflow realization rates, and weekly cash flow ledgers.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={handleExportCSV}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
+              >
+                📥 Export CSV
+              </button>
+              <button
+                type="button"
+                onClick={handlePrintPDF}
+                className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors shadow-2xs cursor-pointer"
+              >
+                🖨️ Print Statement PDF
+              </button>
+            </div>
           </div>
 
-          <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200/80 self-start sm:self-auto">
-            <button
-              type="button"
-              onClick={() => setActiveTab('statement')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                activeTab === 'statement' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Financial Statement
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('weekly')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                activeTab === 'weekly' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Cash Flow
-            </button>
+          {/* Filters and Sub-Tab Switcher */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-100">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-slate-500 font-semibold">Filter Site:</label>
+              <select
+                value={selectedSiteId}
+                onChange={(e) => setSelectedSiteId(e.target.value)}
+                className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs cursor-pointer"
+              >
+                <option value="all">All Portfolio Sites</option>
+                {normalizedSites.map((s, idx) => (
+                  <option key={`fin-site-${s.id || s.siteId || idx}-${idx}`} value={s.id || s.siteId}>
+                    {s.label || s.projectName || s.siteName || s.name || s.id}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200/80 self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => setActiveTab('statement')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  activeTab === 'statement' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Financial Statement
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('weekly')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  activeTab === 'weekly' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Cash Flow
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* 6 Executive Summary KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">

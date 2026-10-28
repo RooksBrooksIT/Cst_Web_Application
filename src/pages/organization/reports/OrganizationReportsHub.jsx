@@ -1,5 +1,26 @@
-import React, { useState, useMemo, useEffect, Component } from 'react'
-import { useLocation } from 'react-router-dom'
+import React, { useState, useMemo, useEffect, Component, useRef } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import {
+  Building2,
+  TrendingUp,
+  Receipt,
+  ReceiptText,
+  Wallet,
+  Layers,
+  Users,
+  Boxes,
+  Calendar,
+  Filter,
+  Download,
+  Printer,
+  RotateCcw,
+  Sparkles,
+  ChevronDown,
+  Activity,
+  ArrowUpRight,
+  SlidersHorizontal,
+} from 'lucide-react'
+
 import SiteExpensesReportHub from './SiteExpensesReportHub'
 import ProjectStageReportsHub from './ProjectStageReportsHub'
 import SiteStatusReportHub from './SiteStatusReportHub'
@@ -8,7 +29,7 @@ import PettyCashInsightsReportHub from './PettyCashInsightsReportHub'
 import DomainInventoryReportsHub from './DomainInventoryReportsHub'
 import WorkerAttendanceReport from './WorkerAttendanceReport'
 import { money, parseAmount } from '../../../services/reportService'
-import ExportButton from '../../../components/common/ExportButton'
+import { exportToCSV, printReport } from '../../../services/exportService'
 import { useAuth } from '../../../hooks/useAuth'
 import { CONFIG_SECTIONS, subscribeConfigItems } from '../../../services/projectConfigService'
 import {
@@ -88,11 +109,28 @@ export default function OrganizationReportsHub(props) {
 
   const { orgId: authOrgId } = useAuth()
   const activeOrgId = orgId || authOrgId
+  const location = useLocation()
+  const navigate = useNavigate()
+
   const [stagesFromConfig, setStagesFromConfig] = useState([])
   const [internalMaterialsAvailability, setInternalMaterialsAvailability] = useState([])
   const [internalSiteMaterialPool, setInternalSiteMaterialPool] = useState([])
   const [internalMaterialAllocations, setInternalMaterialAllocations] = useState([])
+  const [showExportMenu, setShowExportMenu] = useState(false)
+  const exportMenuRef = useRef(null)
 
+  // Close export menu on outside click
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target)) {
+        setShowExportMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  // Subscriptions for inventory assets
   useEffect(() => {
     if (!activeOrgId) return
     let unsub1 = () => {}
@@ -146,7 +184,8 @@ export default function OrganizationReportsHub(props) {
       ? propMaterialAllocations
       : internalMaterialAllocations
 
-  React.useEffect(() => {
+  // Subscriptions for project stages
+  useEffect(() => {
     if (projectStages && projectStages.length > 0) return
     if (!activeOrgId) return
     const unsub = subscribeConfigItems(
@@ -159,11 +198,12 @@ export default function OrganizationReportsHub(props) {
   }, [activeOrgId, projectStages])
 
   const configuredStageNames = useMemo(() => {
-    const list = (projectStages && projectStages.length > 0) ? projectStages : stagesFromConfig
+    const list = projectStages && projectStages.length > 0 ? projectStages : stagesFromConfig
     const names = (list || []).map((s) => (typeof s === 'string' ? s : s.projectStage || s.name || '').trim()).filter(Boolean)
     return [...new Set(names)]
   }, [projectStages, stagesFromConfig])
 
+  // Normalized deduplicated sites
   const allSites = useMemo(() => {
     const raw = sites.length > 0 ? sites : projects
     const seen = new Set()
@@ -177,76 +217,76 @@ export default function OrganizationReportsHub(props) {
       return true
     })
   }, [sites, projects])
+
   const normalizedAllSites = useMemo(() => getNormalizedSiteOptions(allSites), [allSites])
 
-  const categories = [
+  // Single-Tier Primary Report Suites Definition
+  const reportSuites = useMemo(() => [
     {
       id: 'site_expenses',
       label: 'Site Expenses',
-      desc: 'Daily & cumulative site spend',
-      icon: '💳',
+      desc: 'Daily ledger & cumulative vouchers',
+      icon: ReceiptText,
       subReports: [
-        { id: 'daily', label: 'Daily Expense Report' },
-        { id: 'range', label: 'Date Range Report' },
-        { id: 'summary', label: 'Cumulative Expense Summary' },
-      ],
-    },
-    {
-      id: 'workforce_reports',
-      label: 'Workforce & Attendance',
-      desc: 'Muster roll & wage ledgers',
-      icon: '👥',
-      subReports: [
-        { id: 'muster', label: 'Attendance & Muster Roll' },
-        { id: 'incentives', label: 'Supervisor & Manager Incentives' },
-      ],
-    },
-    {
-      id: 'project_reports',
-      label: 'Project Reports',
-      desc: 'Progress & milestone schedules',
-      icon: '🏗️',
-      subReports: [
-        { id: 'progress', label: 'Milestone Progress' },
-        { id: 'status', label: 'Site Status & Timeline' },
+        { id: 'daily', label: 'Daily Expense Ledger', hint: 'Daily itemized transactions' },
+        { id: 'range', label: 'Date Range Spend', hint: 'Audit period aggregations' },
+        { id: 'summary', label: 'Cumulative Spend Summary', hint: 'Lifetime site expenditure' },
       ],
     },
     {
       id: 'financial_reports',
-      label: 'Financial Reports',
-      desc: 'Statements & cash flow audit',
-      icon: '📊',
+      label: 'Financials & Cash Flow',
+      desc: 'Balance sheets & cash flow audit',
+      icon: TrendingUp,
       subReports: [
-        { id: 'statement', label: 'Financial Statement' },
-        { id: 'cash_flow', label: 'Cash Flow' },
-        { id: 'petty_cash', label: 'Petty Cash Report' },
+        { id: 'statement', label: 'Financial Statement', hint: 'Budget vs received vs spent' },
+        { id: 'cash_flow', label: 'Cash Flow Analysis', hint: 'Weekly inflow & outflow velocity' },
+        { id: 'petty_cash', label: 'Petty Cash Float', hint: 'Supervisor float audit' },
+      ],
+    },
+    {
+      id: 'project_reports',
+      label: 'Milestones & Projects',
+      desc: 'Stage burn & execution timelines',
+      icon: Layers,
+      subReports: [
+        { id: 'progress', label: 'Milestone Progress', hint: 'Foundation to finishing' },
+        { id: 'status', label: 'Site Status & Timelines', hint: 'Schedule delays & forecasts' },
+      ],
+    },
+    {
+      id: 'workforce_reports',
+      label: 'Workforce & Labor',
+      desc: 'Muster roll & wage liabilities',
+      icon: Users,
+      subReports: [
+        { id: 'muster', label: 'Attendance Muster Roll', hint: 'Daily worker status grid' },
+        { id: 'incentives', label: 'Supervisor Incentives', hint: 'Target achievement bonuses' },
       ],
     },
     {
       id: 'inventory_reports',
-      label: 'Inventory Reports',
-      desc: 'Materials, tools & asset logs',
-      icon: '📦',
+      label: 'Inventory & Assets',
+      desc: 'Materials stock & equipment',
+      icon: Boxes,
       subReports: [
-        { id: 'materials', label: 'Material Stock' },
-        { id: 'tools', label: 'Tools & Machinery' },
-        { id: 'summary', label: 'Contractor Payouts' },
+        { id: 'materials', label: 'Material Stock & Ledger', hint: 'Dispatches & field consumption' },
+        { id: 'tools', label: 'Tools & Equipment', hint: 'Machinery inventory & status' },
+        { id: 'summary', label: 'Contractor Ledger', hint: 'Trade contractor bills & payouts' },
       ],
     },
-  ]
+  ], [])
 
-  const [activeCategory, setActiveCategory] = useState('site_expenses')
+  const [activeSuiteId, setActiveSuiteId] = useState('site_expenses')
   const [activeSubReports, setActiveSubReports] = useState({
     site_expenses: 'daily',
-    workforce_reports: 'muster',
-    project_reports: 'progress',
     financial_reports: 'statement',
+    project_reports: 'progress',
+    workforce_reports: 'muster',
     inventory_reports: 'materials',
   })
 
-  const location = useLocation()
-
-  // Sync category and subReport with URL params if provided
+  // URL sync: Read on mount / location change
   useEffect(() => {
     if (!location?.search) return
     try {
@@ -255,14 +295,14 @@ export default function OrganizationReportsHub(props) {
       const sub = params.get('sub') || params.get('subReport') || params.get('report')
 
       if (cat) {
-        const found = categories.find((c) => c.id === cat || c.label.toLowerCase().includes(cat.toLowerCase()))
+        const found = reportSuites.find((s) => s.id === cat || s.label.toLowerCase().includes(cat.toLowerCase()))
         if (found) {
-          setActiveCategory(found.id)
+          setActiveSuiteId(found.id)
           if (sub) {
             setActiveSubReports((prev) => ({ ...prev, [found.id]: sub }))
           }
         } else if (cat.includes('project')) {
-          setActiveCategory('project_reports')
+          setActiveSuiteId('project_reports')
           if (sub) {
             setActiveSubReports((prev) => ({ ...prev, project_reports: sub }))
           }
@@ -271,76 +311,80 @@ export default function OrganizationReportsHub(props) {
     } catch (e) {
       console.warn('Could not parse reports URL params:', e)
     }
-  }, [location?.search])
+  }, [location?.search, reportSuites])
 
-  const currentSubReport = activeSubReports[activeCategory]
+  // Sync back to URL when suite or subreport changes
+  const updateUrlParams = (suiteId, subId) => {
+    try {
+      const search = new URLSearchParams(location.search)
+      search.set('category', suiteId)
+      search.set('sub', subId)
+      navigate({ search: search.toString() }, { replace: true })
+    } catch {
+      // fallback
+    }
+  }
 
-  // Filter Bar state
+  const handleSuiteChange = (suiteId) => {
+    setActiveSuiteId(suiteId)
+    const currentSub = activeSubReports[suiteId] || reportSuites.find((s) => s.id === suiteId)?.subReports[0]?.id || 'daily'
+    updateUrlParams(suiteId, currentSub)
+  }
+
+  const handleSubReportChange = (subId) => {
+    setActiveSubReports((prev) => ({
+      ...prev,
+      [activeSuiteId]: subId,
+    }))
+    updateUrlParams(activeSuiteId, subId)
+  }
+
+  const activeSuiteObj = reportSuites.find((s) => s.id === activeSuiteId) || reportSuites[0]
+  const currentSubReport = activeSubReports[activeSuiteId] || activeSuiteObj.subReports[0]?.id
+
+  // Unified Filter State
   const todayStr = new Date().toISOString().split('T')[0]
   const thirtyDaysAgoStr = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
+  const currentMonthStr = todayStr.slice(0, 7)
 
   const [filterSiteId, setFilterSiteId] = useState('all')
   const [filterDate, setFilterDate] = useState(todayStr)
   const [filterFromDate, setFilterFromDate] = useState(thirtyDaysAgoStr)
   const [filterToDate, setFilterToDate] = useState(todayStr)
   const [filterStage, setFilterStage] = useState('all')
-  const [isGenerating, setIsGenerating] = useState(false)
 
-  const [appliedFilters, setAppliedFilters] = useState({
-    siteId: 'all',
-    date: todayStr,
-    fromDate: thirtyDaysAgoStr,
-    toDate: todayStr,
-    stage: 'all',
-  })
-
-  const handleSiteChange = (val) => {
-    setFilterSiteId(val)
-    setAppliedFilters((prev) => ({ ...prev, siteId: val }))
+  const handleResetFilters = () => {
+    setFilterSiteId('all')
+    setFilterDate(todayStr)
+    setFilterFromDate(thirtyDaysAgoStr)
+    setFilterToDate(todayStr)
+    setFilterStage('all')
   }
 
-  const handleDateChange = (val) => {
-    setFilterDate(val)
-    setAppliedFilters((prev) => ({ ...prev, date: val }))
+  // Quick Date Range Presets
+  const setDatePreset = (preset) => {
+    const now = new Date()
+    if (preset === 'today') {
+      const t = now.toISOString().split('T')[0]
+      setFilterDate(t)
+      setFilterFromDate(t)
+      setFilterToDate(t)
+    } else if (preset === '7d') {
+      const past = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0]
+      setFilterFromDate(past)
+      setFilterToDate(now.toISOString().split('T')[0])
+    } else if (preset === 'month') {
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
+      setFilterFromDate(firstDay)
+      setFilterToDate(now.toISOString().split('T')[0])
+      setFilterDate(now.toISOString().split('T')[0])
+    } else if (preset === 'all') {
+      setFilterFromDate('2020-01-01')
+      setFilterToDate(now.toISOString().split('T')[0])
+    }
   }
 
-  const handleFromDateChange = (val) => {
-    setFilterFromDate(val)
-    setAppliedFilters((prev) => ({ ...prev, fromDate: val }))
-  }
-
-  const handleToDateChange = (val) => {
-    setFilterToDate(val)
-    setAppliedFilters((prev) => ({ ...prev, toDate: val }))
-  }
-
-  const handleStageChange = (val) => {
-    setFilterStage(val)
-    setAppliedFilters((prev) => ({ ...prev, stage: val }))
-  }
-
-  const handleGenerateReport = () => {
-    setIsGenerating(true)
-    setAppliedFilters({
-      siteId: filterSiteId,
-      date: filterDate,
-      fromDate: filterFromDate,
-      toDate: filterToDate,
-      stage: filterStage,
-    })
-    setTimeout(() => {
-      setIsGenerating(false)
-    }, 300)
-  }
-
-  const handleSubReportChange = (subId) => {
-    setActiveSubReports((prev) => ({
-      ...prev,
-      [activeCategory]: subId,
-    }))
-  }
-
-  // Quick KPI summary calculations
+  // Real-time Executive KPI Calculations
   const totalBudget = useMemo(() => {
     return allSites.reduce((sum, s) => sum + parseAmount(s.projectBudget || s.budget || 0), 0)
   }, [allSites])
@@ -364,218 +408,399 @@ export default function OrganizationReportsHub(props) {
   }, [allSites, totalSiteExpensesPerDay])
 
   const cashInHand = totalReceived - totalSpent
-  const activeCategoryObj = categories.find((c) => c.id === activeCategory) || categories[0]
+  const collectionRate = totalBudget > 0 ? Math.min(100, Math.round((totalReceived / totalBudget) * 100)) : 0
+  const burnRate = totalReceived > 0 ? Math.min(100, Math.round((totalSpent / totalReceived) * 100)) : 0
+
+  // Export handlers
+  const handleExportPortfolioSummary = () => {
+    exportToCSV('Portfolio_Executive_Summary', ['Metric', 'Value (INR / Count)'], [
+      ['Total Portfolio Sites', allSites.length],
+      ['Total Approved Contract Budget', totalBudget],
+      ['Cumulative Inflow Received', totalReceived],
+      ['Consolidated Actual Outflows', totalSpent],
+      ['Operating Liquidity Balance', cashInHand],
+      ['Budget Collection Rate', `${collectionRate}%`],
+      ['Capital Burn Rate', `${burnRate}%`],
+    ])
+    setShowExportMenu(false)
+  }
+
+  const handlePrintExecutivePDF = () => {
+    const content = `
+      <div style="margin-bottom: 24px; padding-bottom: 12px; border-bottom: 2px solid #0B3470;">
+        <h2 style="margin: 0; color: #0B3470; font-size: 20px;">Executive Portfolio Statement</h2>
+        <p style="margin: 4px 0; color: #64748b; font-size: 12px;">Verified real-time multi-site financial telemetry</p>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px;">
+        <div style="padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px;">
+          <span style="font-size: 11px; color: #64748b; text-transform: uppercase;">Active Sites</span>
+          <div style="font-size: 18px; font-weight: bold; color: #0f172a; margin-top: 4px;">${allSites.length} Sites</div>
+        </div>
+        <div style="padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px;">
+          <span style="font-size: 11px; color: #64748b; text-transform: uppercase;">Total Inflows</span>
+          <div style="font-size: 18px; font-weight: bold; color: #047857; margin-top: 4px;">${money(totalReceived)}</div>
+          <small style="color: #64748b; font-size: 10px;">${collectionRate}% of Budget</small>
+        </div>
+        <div style="padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px;">
+          <span style="font-size: 11px; color: #64748b; text-transform: uppercase;">Consolidated Outflow</span>
+          <div style="font-size: 18px; font-weight: bold; color: #e11d48; margin-top: 4px;">${money(totalSpent)}</div>
+          <small style="color: #64748b; font-size: 10px;">${burnRate}% Burn Rate</small>
+        </div>
+        <div style="padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px;">
+          <span style="font-size: 11px; color: #64748b; text-transform: uppercase;">Operating Liquidity</span>
+          <div style="font-size: 18px; font-weight: bold; color: ${cashInHand >= 0 ? '#6b21a8' : '#e11d48'}; margin-top: 4px;">${money(cashInHand)}</div>
+          <small style="color: #64748b; font-size: 10px;">${cashInHand >= 0 ? 'Surplus Balance' : 'Liquidity Deficit'}</small>
+        </div>
+      </div>
+
+      <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+        <thead>
+          <tr style="background: #f8fafc;">
+            <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: left;">Site Name / Code</th>
+            <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: left;">Current Stage</th>
+            <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: right;">Contract Budget</th>
+            <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: right;">Received</th>
+            <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: right;">Total Spent</th>
+            <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: right;">Net Balance</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${allSites.map((s) => {
+            const b = parseAmount(s.projectBudget || s.budget || 0)
+            const r = parseAmount(s.amountPaid || 0)
+            const sp = parseAmount(s.amountSpent || s.spentAmount || 0)
+            const net = r - sp
+            return `
+              <tr>
+                <td style="padding: 8px 10px; border: 1px solid #e2e8f0;">
+                  <strong>${s.projectName || s.siteName || s.name || s.id}</strong>
+                  ${s.siteId ? `<br/><small style="color:#64748b;">${s.siteId}</small>` : ''}
+                </td>
+                <td style="padding: 8px 10px; border: 1px solid #e2e8f0;">${s.projectStage || s.stage || 'General'}</td>
+                <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: right; font-family: monospace;">${money(b)}</td>
+                <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: right; font-family: monospace; color: #047857;">${money(r)}</td>
+                <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: right; font-family: monospace; color: #e11d48;">${money(sp)}</td>
+                <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: right; font-family: monospace; font-weight: bold; color: ${net >= 0 ? '#6b21a8' : '#e11d48'};">${money(net)}</td>
+              </tr>
+            `
+          }).join('')}
+        </tbody>
+      </table>
+    `
+    printReport('Executive Portfolio Financial Statement', content)
+    setShowExportMenu(false)
+  }
 
   return (
-    <div className="space-y-5 text-slate-800 animate-fade-in pb-12">
-      {/* 1. Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs">
-        <div>
-          <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Organization Reports</h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Real-time multi-site financial summaries, attendance ledgers, inventory logs, and milestone progress.
-          </p>
-        </div>
+    <div className="space-y-6 text-slate-800 animate-fade-in pb-16">
+      {/* ----------------------------------------------------------------------------------------- */}
+      {/* 1. EXECUTIVE WORKSPACE HEADER */}
+      {/* ----------------------------------------------------------------------------------------- */}
+      <div className="relative overflow-hidden bg-white rounded-3xl border border-slate-200/90 shadow-xs p-6 lg:p-7">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5 relative z-10">
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200/70">
+                <Sparkles className="w-3 h-3 text-blue-600" />
+                Executive Analytics Workspace
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Real-time Live Telemetry
+              </span>
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+              Organization Reports & Financial Intelligence
+            </h1>
+            <p className="text-xs sm:text-sm text-slate-500 max-w-3xl leading-relaxed">
+              Consolidated multi-site expenditure ledgers, client realization rates, workforce payroll records, and milestone timeline forecasts.
+            </p>
+          </div>
 
-        <div className="flex items-center gap-2 self-start sm:self-auto">
-          <ExportButton
-            filename="portfolio_executive_summary"
-            headers={['Metric', 'Value']}
-            data={[
-              ['Total Portfolio Sites', allSites.length],
-              ['Total Approved Contract Budget (INR)', totalBudget],
-              ['Cumulative Inflow Received (INR)', totalReceived],
-              ['Consolidated Actual Outflows (INR)', totalSpent],
-              ['Operating Liquidity (INR)', cashInHand],
-            ]}
-            title="Export Portfolio Summary"
-          />
-        </div>
-      </div>
+          {/* Quick Date Range Shortcuts & Export Dropdown */}
+          <div className="flex items-center gap-2.5 flex-wrap self-start lg:self-center">
+            {/* Date Preset Buttons */}
+            <div className="hidden sm:flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80 text-[11px] font-semibold text-slate-600">
+              <button
+                type="button"
+                onClick={() => setDatePreset('today')}
+                className="px-2.5 py-1 rounded-lg hover:bg-white hover:text-slate-900 transition-all cursor-pointer"
+              >
+                Today
+              </button>
+              <button
+                type="button"
+                onClick={() => setDatePreset('7d')}
+                className="px-2.5 py-1 rounded-lg hover:bg-white hover:text-slate-900 transition-all cursor-pointer"
+              >
+                Last 7D
+              </button>
+              <button
+                type="button"
+                onClick={() => setDatePreset('month')}
+                className="px-2.5 py-1 rounded-lg hover:bg-white hover:text-slate-900 transition-all cursor-pointer"
+              >
+                This Month
+              </button>
+              <button
+                type="button"
+                onClick={() => setDatePreset('all')}
+                className="px-2.5 py-1 rounded-lg hover:bg-white hover:text-slate-900 transition-all cursor-pointer"
+              >
+                All Time
+              </button>
+            </div>
 
-      {/* 2. Executive 4-KPI Strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs">
-          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Portfolio Sites</span>
-          <strong className="text-xl font-extrabold text-slate-900 block font-mono mt-0.5">
-            {allSites.length} <span className="text-xs font-normal text-slate-500">Active Sites</span>
-          </strong>
-        </div>
+            {/* Export Dropdown Menu */}
+            <div className="relative" ref={exportMenuRef}>
+              <button
+                type="button"
+                onClick={() => setShowExportMenu(!showExportMenu)}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white shadow-xs transition-all cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Export Statement</span>
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showExportMenu ? 'rotate-180' : ''}`} />
+              </button>
 
-        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs">
-          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Total Inflow Received</span>
-          <strong className="text-xl font-extrabold text-emerald-700 block font-mono mt-0.5">
-            {money(totalReceived)}
-          </strong>
-        </div>
-
-        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs">
-          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Consolidated Outflow</span>
-          <strong className="text-xl font-extrabold text-rose-600 block font-mono mt-0.5">
-            {money(totalSpent)}
-          </strong>
-        </div>
-
-        <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs">
-          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Operating Liquidity</span>
-          <strong className={`text-xl font-extrabold block font-mono mt-0.5 ${cashInHand >= 0 ? 'text-purple-700' : 'text-rose-600'}`}>
-            {money(cashInHand)}
-          </strong>
-        </div>
-      </div>
-
-      {/* 2B. Insight Dashboard Quick Access Reports Portal */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-xs space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-            <span>🚀</span>
-            <span>Insight Dashboard Quick Reports Portal</span>
-          </h3>
-          <span className="text-[11px] text-slate-400">Direct report navigation</span>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
-          <button
-            type="button"
-            onClick={() => {
-              setActiveCategory('site_expenses')
-              handleSubReportChange('range')
-            }}
-            className="p-3 rounded-xl bg-slate-50 hover:bg-blue-50/70 border border-slate-200/80 hover:border-blue-300 text-left transition-all cursor-pointer group"
-          >
-            <span className="text-base block mb-1">💳</span>
-            <span className="text-xs font-extrabold text-slate-900 group-hover:text-blue-700 block truncate">Site Expenses</span>
-            <span className="text-[10px] text-slate-400 block truncate">Daily & range spend</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setActiveCategory('project_reports')
-              handleSubReportChange('progress')
-            }}
-            className="p-3 rounded-xl bg-slate-50 hover:bg-blue-50/70 border border-slate-200/80 hover:border-blue-300 text-left transition-all cursor-pointer group"
-          >
-            <span className="text-base block mb-1">🏗️</span>
-            <span className="text-xs font-extrabold text-slate-900 group-hover:text-blue-700 block truncate">Stage Expenses</span>
-            <span className="text-[10px] text-slate-400 block truncate">Milestones & budget</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setActiveCategory('project_reports')
-              handleSubReportChange('status')
-            }}
-            className="p-3 rounded-xl bg-slate-50 hover:bg-blue-50/70 border border-slate-200/80 hover:border-blue-300 text-left transition-all cursor-pointer group"
-          >
-            <span className="text-base block mb-1">⏱️</span>
-            <span className="text-xs font-extrabold text-slate-900 group-hover:text-blue-700 block truncate">Site Status</span>
-            <span className="text-[10px] text-slate-400 block truncate">Timeline & delays</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setActiveCategory('financial_reports')
-              handleSubReportChange('statement')
-            }}
-            className="p-3 rounded-xl bg-slate-50 hover:bg-blue-50/70 border border-slate-200/80 hover:border-blue-300 text-left transition-all cursor-pointer group"
-          >
-            <span className="text-base block mb-1">📊</span>
-            <span className="text-xs font-extrabold text-slate-900 group-hover:text-blue-700 block truncate">Financial Status</span>
-            <span className="text-[10px] text-slate-400 block truncate">Balance sheet & flows</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setActiveCategory('inventory_reports')
-              handleSubReportChange('summary')
-            }}
-            className="p-3 rounded-xl bg-slate-50 hover:bg-blue-50/70 border border-slate-200/80 hover:border-blue-300 text-left transition-all cursor-pointer group"
-          >
-            <span className="text-base block mb-1">👷</span>
-            <span className="text-xs font-extrabold text-slate-900 group-hover:text-blue-700 block truncate">Contractor Report</span>
-            <span className="text-[10px] text-slate-400 block truncate">Trade bills & payouts</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setActiveCategory('financial_reports')
-              handleSubReportChange('petty_cash')
-            }}
-            className="p-3 rounded-xl bg-slate-50 hover:bg-blue-50/70 border border-slate-200/80 hover:border-blue-300 text-left transition-all cursor-pointer group"
-          >
-            <span className="text-base block mb-1">💵</span>
-            <span className="text-xs font-extrabold text-slate-900 group-hover:text-blue-700 block truncate">Petty Cash</span>
-            <span className="text-[10px] text-slate-400 block truncate">Float & receipts</span>
-          </button>
+              {showExportMenu && (
+                <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-xl border border-slate-200 p-1.5 z-50 animate-fade-in space-y-1">
+                  <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    Select Export Format
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleExportPortfolioSummary}
+                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors flex items-center gap-2.5 cursor-pointer"
+                  >
+                    <Download className="w-4 h-4 text-emerald-600" />
+                    <div>
+                      <div className="font-bold text-slate-800">Export Summary (CSV)</div>
+                      <div className="text-[10px] text-slate-400">Download tabular KPI portfolio data</div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handlePrintExecutivePDF}
+                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors flex items-center gap-2.5 cursor-pointer"
+                  >
+                    <Printer className="w-4 h-4 text-blue-600" />
+                    <div>
+                      <div className="font-bold text-slate-800">Print Statement (PDF)</div>
+                      <div className="text-[10px] text-slate-400">Official printable portfolio audit statement</div>
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* 3. Category Tabs & Sub-Reports Selector */}
-      <div className="bg-white p-3 rounded-2xl border border-slate-200/90 shadow-xs space-y-3">
-        {/* Category Tabs */}
-        <div className="flex gap-2 overflow-x-auto pb-1 border-b border-slate-100">
-          {categories.map((cat) => {
-            const isActive = activeCategory === cat.id
+      {/* ----------------------------------------------------------------------------------------- */}
+      {/* 2. EXECUTIVE 4-KPI STRIP WITH VISUAL PROGRESS GAUGES */}
+      {/* ----------------------------------------------------------------------------------------- */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* KPI 1: Active Portfolio Sites */}
+        <div className="bg-white rounded-2xl p-5 border border-slate-200/90 shadow-xs flex flex-col justify-between hover:border-slate-300 transition-all group">
+          <div className="flex items-start justify-between">
+            <div>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                Portfolio Footprint
+              </span>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-2xl lg:text-3xl font-extrabold text-slate-900 font-mono tracking-tight">
+                  {allSites.length}
+                </span>
+                <span className="text-xs font-semibold text-slate-500">Active Sites</span>
+              </div>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center border border-indigo-100 group-hover:scale-105 transition-transform">
+              <Building2 className="w-5 h-5" />
+            </div>
+          </div>
+          <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+            <span>Contract Baseline</span>
+            <span className="font-semibold text-slate-800 font-mono">{money(totalBudget)}</span>
+          </div>
+        </div>
+
+        {/* KPI 2: Total Inflow Received */}
+        <div className="bg-white rounded-2xl p-5 border border-slate-200/90 shadow-xs flex flex-col justify-between hover:border-slate-300 transition-all group">
+          <div className="flex items-start justify-between">
+            <div>
+              <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">
+                Total Inflow Realized
+              </span>
+              <div className="flex items-baseline gap-1 mt-1">
+                <span className="text-2xl lg:text-3xl font-extrabold text-emerald-700 font-mono tracking-tight">
+                  {money(totalReceived)}
+                </span>
+              </div>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center border border-emerald-100 group-hover:scale-105 transition-transform">
+              <TrendingUp className="w-5 h-5" />
+            </div>
+          </div>
+          <div className="mt-4 space-y-1.5 pt-3 border-t border-slate-100">
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-slate-500 font-medium">Budget Realized</span>
+              <span className="font-bold text-emerald-700 font-mono">{collectionRate}%</span>
+            </div>
+            <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+              <div
+                className="bg-emerald-600 h-1.5 rounded-full transition-all duration-500"
+                style={{ width: `${Math.min(100, Math.max(3, collectionRate))}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* KPI 3: Consolidated Outflow */}
+        <div className="bg-white rounded-2xl p-5 border border-slate-200/90 shadow-xs flex flex-col justify-between hover:border-slate-300 transition-all group">
+          <div className="flex items-start justify-between">
+            <div>
+              <span className="text-[11px] font-bold text-rose-600 uppercase tracking-wider block">
+                Consolidated Outflows
+              </span>
+              <div className="flex items-baseline gap-1 mt-1">
+                <span className="text-2xl lg:text-3xl font-extrabold text-rose-600 font-mono tracking-tight">
+                  {money(totalSpent)}
+                </span>
+              </div>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center border border-rose-100 group-hover:scale-105 transition-transform">
+              <Receipt className="w-5 h-5" />
+            </div>
+          </div>
+          <div className="mt-4 space-y-1.5 pt-3 border-t border-slate-100">
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-slate-500 font-medium">Fund Burn Rate</span>
+              <span className="font-bold text-rose-600 font-mono">{burnRate}%</span>
+            </div>
+            <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+              <div
+                className="bg-rose-500 h-1.5 rounded-full transition-all duration-500"
+                style={{ width: `${Math.min(100, Math.max(3, burnRate))}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* KPI 4: Operating Liquidity */}
+        <div className="bg-white rounded-2xl p-5 border border-slate-200/90 shadow-xs flex flex-col justify-between hover:border-slate-300 transition-all group">
+          <div className="flex items-start justify-between">
+            <div>
+              <span className="text-[11px] font-bold text-purple-700 uppercase tracking-wider block">
+                Operating Liquidity
+              </span>
+              <div className="flex items-baseline gap-1 mt-1">
+                <span className={`text-2xl lg:text-3xl font-extrabold font-mono tracking-tight ${cashInHand >= 0 ? 'text-purple-700' : 'text-rose-600'}`}>
+                  {money(cashInHand)}
+                </span>
+              </div>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center border border-purple-100 group-hover:scale-105 transition-transform">
+              <Wallet className="w-5 h-5" />
+            </div>
+          </div>
+          <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+            <span className="text-slate-500 font-medium">Liquidity State</span>
+            <span
+              className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                cashInHand >= 0
+                  ? 'bg-purple-50 text-purple-700 border border-purple-200/60'
+                  : 'bg-rose-50 text-rose-600 border border-rose-200/60'
+              }`}
+            >
+              {cashInHand >= 0 ? 'Surplus Float' : 'Liquidity Deficit'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* ----------------------------------------------------------------------------------------- */}
+      {/* 3. EXECUTIVE SINGLE-TIER SUITE NAVIGATION & CONTEXTUAL SUB-PILLS */}
+      {/* ----------------------------------------------------------------------------------------- */}
+      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs p-3 sm:p-4 space-y-3.5">
+        {/* Primary Suite Tabs */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none border-b border-slate-100">
+          {reportSuites.map((suite) => {
+            const Icon = suite.icon
+            const isActive = activeSuiteId === suite.id
             return (
               <button
-                key={cat.id}
+                key={suite.id}
                 type="button"
-                onClick={() => setActiveCategory(cat.id)}
-                className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-2 ${
+                onClick={() => handleSuiteChange(suite.id)}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
                   isActive
                     ? 'bg-[#0B3470] text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900 bg-transparent'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                 }`}
               >
-                <span>{cat.icon}</span>
-                <span>{cat.label}</span>
+                <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-500'}`} />
+                <span>{suite.label}</span>
               </button>
             )
           })}
         </div>
 
-        {/* Sub-report pills */}
-        <div className="flex items-center gap-2 overflow-x-auto">
-          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap">
-            Sub Reports:
-          </span>
-          {activeCategoryObj.subReports.map((sub) => {
-            const isSubActive = currentSubReport === sub.id
-            return (
-              <button
-                key={sub.id}
-                type="button"
-                onClick={() => handleSubReportChange(sub.id)}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                  isSubActive
-                    ? 'bg-[#0B3470] text-white shadow-xs font-bold'
-                    : 'text-slate-600 hover:text-slate-900 bg-transparent'
-                }`}
-              >
-                {sub.label}
-              </button>
-            )
-          })}
+        {/* Contextual Sub-Report Selector Pills */}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-1 whitespace-nowrap">
+              Active Module:
+            </span>
+            {activeSuiteObj.subReports.map((sub) => {
+              const isSubActive = currentSubReport === sub.id
+              return (
+                <button
+                  key={sub.id}
+                  type="button"
+                  onClick={() => handleSubReportChange(sub.id)}
+                  title={sub.hint}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                    isSubActive
+                      ? 'bg-blue-50 text-blue-800 border border-blue-200/90 shadow-2xs font-extrabold'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50 border border-transparent'
+                  }`}
+                >
+                  {sub.label}
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="text-[11px] font-medium text-slate-400 italic hidden md:block">
+            {activeSuiteObj.desc}
+          </div>
         </div>
       </div>
 
-      {/* 4. Compact Filter Bar */}
-      <div className="bg-white p-3.5 rounded-2xl border border-slate-200/90 shadow-xs">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
-          <div>
-            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide block mb-1">
-              Filter Site
+      {/* ----------------------------------------------------------------------------------------- */}
+      {/* 4. UNIFIED STICKY CONTROL & FILTER CENTER */}
+      {/* ----------------------------------------------------------------------------------------- */}
+      <div className="sticky top-2 z-30 bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-sm p-3.5 transition-all">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3 items-end">
+          {/* Site Selector (Span 4) */}
+          <div className="lg:col-span-4">
+            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1 flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                <Building2 className="w-3 h-3 text-slate-400" />
+                Target Project / Site
+              </span>
+              <span className="text-[10px] font-semibold text-slate-400">
+                {filterSiteId === 'all' ? `${allSites.length} Sites` : 'Filtered'}
+              </span>
             </label>
             <select
               value={filterSiteId}
-              onChange={(e) => handleSiteChange(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all cursor-pointer"
+              onChange={(e) => setFilterSiteId(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all cursor-pointer shadow-2xs"
             >
-              <option value="all">All Managed Sites</option>
+              <option value="all">All Managed Sites ({allSites.length})</option>
               {normalizedAllSites.map((s, idx) => (
                 <option key={`hub-site-${s.id || s.siteId || idx}-${idx}`} value={s.id || s.siteId}>
                   {s.label || s.projectName || s.siteName || s.name || s.id}
@@ -584,48 +809,69 @@ export default function OrganizationReportsHub(props) {
             </select>
           </div>
 
+          {/* Contextual Date Controls (Span 4 or 5) */}
           {currentSubReport === 'daily' ? (
-            <div>
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide block mb-1">
-                Select Date
+            <div className="lg:col-span-4">
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1 flex items-center gap-1">
+                <Calendar className="w-3 h-3 text-slate-400" />
+                Audit Record Date
               </label>
               <input
                 type="date"
                 value={filterDate}
-                onChange={(e) => handleDateChange(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all cursor-pointer"
+                onChange={(e) => setFilterDate(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all cursor-pointer shadow-2xs"
+              />
+            </div>
+          ) : currentSubReport === 'muster' ? (
+            <div className="lg:col-span-4">
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1 flex items-center gap-1">
+                <Calendar className="w-3 h-3 text-slate-400" />
+                Audit Month Period
+              </label>
+              <input
+                type="month"
+                value={filterDate ? filterDate.slice(0, 7) : currentMonthStr}
+                onChange={(e) => setFilterDate(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all cursor-pointer shadow-2xs"
               />
             </div>
           ) : (
-            <div>
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide block mb-1">
-                Date Range
+            <div className="lg:col-span-5">
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1 flex items-center justify-between">
+                <span className="flex items-center gap-1">
+                  <Calendar className="w-3 h-3 text-slate-400" />
+                  Date Range Window
+                </span>
+                <span className="text-[10px] text-slate-400 font-medium">From — To</span>
               </label>
-              <div className="grid grid-cols-2 gap-1.5">
+              <div className="grid grid-cols-2 gap-2">
                 <input
                   type="date"
                   value={filterFromDate}
-                  onChange={(e) => handleFromDateChange(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-1.5 text-[11px] font-medium text-slate-800 outline-none focus:bg-white focus:border-blue-600 cursor-pointer"
+                  onChange={(e) => setFilterFromDate(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all cursor-pointer shadow-2xs"
                 />
                 <input
                   type="date"
                   value={filterToDate}
-                  onChange={(e) => handleToDateChange(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-1.5 text-[11px] font-medium text-slate-800 outline-none focus:bg-white focus:border-blue-600 cursor-pointer"
+                  onChange={(e) => setFilterToDate(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all cursor-pointer shadow-2xs"
                 />
               </div>
             </div>
           )}
 
-          <div>
-            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide block mb-1">
-              Project Stage
+          {/* Construction Stage Selector */}
+          <div className={currentSubReport === 'range' || currentSubReport === 'summary' || currentSubReport === 'statement' || currentSubReport === 'cash_flow' ? 'lg:col-span-2' : 'lg:col-span-3'}>
+            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1 flex items-center gap-1">
+              <Layers className="w-3 h-3 text-slate-400" />
+              Stage Filter
             </label>
             <select
               value={filterStage}
-              onChange={(e) => handleStageChange(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all cursor-pointer"
+              onChange={(e) => setFilterStage(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all cursor-pointer shadow-2xs"
             >
               <option value="all">All Stages</option>
               {configuredStageNames.map((stg) => (
@@ -636,27 +882,28 @@ export default function OrganizationReportsHub(props) {
             </select>
           </div>
 
-          <div>
+          {/* Reset Filters Shortcut Button */}
+          <div className="lg:col-span-1 flex items-center">
             <button
               type="button"
-              onClick={handleGenerateReport}
-              disabled={isGenerating}
-              className="w-full py-2 bg-[#0B3470] hover:bg-[#082654] text-white rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer disabled:opacity-75"
+              onClick={handleResetFilters}
+              title="Reset all filters to defaults"
+              className="w-full py-2 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer border border-slate-200 shadow-2xs"
             >
-              {isGenerating ? (
-                <span>Filtering...</span>
-              ) : (
-                <span>Apply Filter</span>
-              )}
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline lg:hidden">Reset</span>
             </button>
           </div>
         </div>
       </div>
 
-      {/* 5. Active Report Content */}
+      {/* ----------------------------------------------------------------------------------------- */}
+      {/* 5. ACTIVE REPORT CANVAS VIEW (CLEAN DATA PRESENTATION) */}
+      {/* ----------------------------------------------------------------------------------------- */}
       <ReportErrorBoundary>
         <div className="space-y-6">
-          {activeCategory === 'site_expenses' && (
+          {/* Site Expenses Hub */}
+          {activeSuiteId === 'site_expenses' && (
             <SiteExpensesReportHub
               sites={allSites}
               siteSupervisorEntries={siteSupervisorEntries}
@@ -668,23 +915,80 @@ export default function OrganizationReportsHub(props) {
               siteSupervisorIncentives={siteSupervisorIncentives}
               dailySiteLogs={dailySiteLogs}
               subReport={currentSubReport}
-              initialSiteId={appliedFilters.siteId}
-              initialDate={appliedFilters.date}
-              initialFromDate={appliedFilters.fromDate}
-              initialToDate={appliedFilters.toDate}
-              initialStage={appliedFilters.stage}
+              initialSiteId={filterSiteId}
+              initialDate={filterDate}
+              initialFromDate={filterFromDate}
+              initialToDate={filterToDate}
+              initialStage={filterStage}
               projectStages={configuredStageNames}
+              hideHeaderFilters={true}
             />
           )}
 
-          {activeCategory === 'workforce_reports' && (
+          {/* Financial Status Hub */}
+          {activeSuiteId === 'financial_reports' && (
+            <>
+              {(currentSubReport === 'statement' || currentSubReport === 'cash_flow') && (
+                <FinancialStatusReportHub
+                  sites={allSites}
+                  sitePayments={sitePayments}
+                  totalSiteExpensesPerDay={totalSiteExpensesPerDay}
+                  siteSupervisorEntries={siteSupervisorEntries}
+                  subReport={currentSubReport}
+                  initialSiteId={filterSiteId}
+                  hideHeaderFilters={true}
+                />
+              )}
+              {currentSubReport === 'petty_cash' && (
+                <PettyCashInsightsReportHub
+                  sites={allSites}
+                  pettyCashAccounts={pettyCashAccounts}
+                  pettyCashExpenses={pettyCashExpenses}
+                  pettyCashRequests={pettyCashRequests}
+                  subReport="audit"
+                  initialSiteId={filterSiteId}
+                  hideHeaderFilters={true}
+                />
+              )}
+            </>
+          )}
+
+          {/* Project Milestones Hub */}
+          {activeSuiteId === 'project_reports' && (
+            <>
+              {currentSubReport === 'status' ? (
+                <SiteStatusReportHub
+                  sites={allSites}
+                  initialSiteId={filterSiteId}
+                  initialStage={filterStage}
+                  hideHeaderFilters={true}
+                />
+              ) : (
+                <ProjectStageReportsHub
+                  sites={allSites}
+                  siteSupervisorEntries={siteSupervisorEntries}
+                  managerExpenses={managerExpenses}
+                  organizationEntries={organizationEntries}
+                  contractorEntries={contractorEntries}
+                  subReport={currentSubReport}
+                  initialStage={filterStage}
+                  projectStages={configuredStageNames}
+                  hideHeaderFilters={true}
+                />
+              )}
+            </>
+          )}
+
+          {/* Workforce Hub */}
+          {activeSuiteId === 'workforce_reports' && (
             <>
               {currentSubReport === 'muster' && (
                 <WorkerAttendanceReport
                   orgId={orgId}
                   sites={allSites}
-                  initialMonth={appliedFilters.date ? appliedFilters.date.slice(0, 7) : new Date().toISOString().slice(0, 7)}
-                  initialSiteId={appliedFilters.siteId}
+                  initialMonth={filterDate ? filterDate.slice(0, 7) : currentMonthStr}
+                  initialSiteId={filterSiteId}
+                  hideHeaderFilters={true}
                 />
               )}
               {currentSubReport === 'incentives' && (
@@ -704,65 +1008,19 @@ export default function OrganizationReportsHub(props) {
                   siteSupervisorEntries={siteSupervisorEntries}
                   sites={allSites}
                   subReport="incentives"
-                  initialSiteId={appliedFilters.siteId}
-                  initialFromDate={appliedFilters.fromDate}
-                  initialToDate={appliedFilters.toDate}
-                  initialStage={appliedFilters.stage}
+                  initialSiteId={filterSiteId}
+                  initialFromDate={filterFromDate}
+                  initialToDate={filterToDate}
+                  initialStage={filterStage}
                   projectStages={configuredStageNames}
+                  hideHeaderFilters={true}
                 />
               )}
             </>
           )}
 
-          {activeCategory === 'project_reports' && (
-            <>
-              {currentSubReport === 'status' ? (
-                <SiteStatusReportHub
-                  sites={allSites}
-                  initialSiteId={appliedFilters.siteId}
-                  initialStage={appliedFilters.stage}
-                />
-              ) : (
-                <ProjectStageReportsHub
-                  sites={allSites}
-                  siteSupervisorEntries={siteSupervisorEntries}
-                  managerExpenses={managerExpenses}
-                  organizationEntries={organizationEntries}
-                  contractorEntries={contractorEntries}
-                  subReport={currentSubReport}
-                  initialStage={appliedFilters.stage}
-                  projectStages={configuredStageNames}
-                />
-              )}
-            </>
-          )}
-
-          {activeCategory === 'financial_reports' && (
-            <>
-              {(currentSubReport === 'statement' || currentSubReport === 'cash_flow') && (
-                <FinancialStatusReportHub
-                  sites={allSites}
-                  sitePayments={sitePayments}
-                  totalSiteExpensesPerDay={totalSiteExpensesPerDay}
-                  siteSupervisorEntries={siteSupervisorEntries}
-                  subReport={currentSubReport}
-                  initialSiteId={appliedFilters.siteId}
-                />
-              )}
-              {currentSubReport === 'petty_cash' && (
-                <PettyCashInsightsReportHub
-                  sites={allSites}
-                  pettyCashAccounts={pettyCashAccounts}
-                  pettyCashExpenses={pettyCashExpenses}
-                  pettyCashRequests={pettyCashRequests}
-                  subReport="audit"
-                  initialSiteId={appliedFilters.siteId}
-                />
-              )}
-            </>
-          )}
-
-          {activeCategory === 'inventory_reports' && (
+          {/* Inventory & Assets Hub */}
+          {activeSuiteId === 'inventory_reports' && (
             <DomainInventoryReportsHub
               contractors={contractors}
               contractorBills={contractorBills}
@@ -779,11 +1037,12 @@ export default function OrganizationReportsHub(props) {
               siteSupervisorEntries={siteSupervisorEntries}
               sites={allSites}
               subReport={currentSubReport}
-              initialSiteId={appliedFilters.siteId}
-              initialFromDate={appliedFilters.fromDate}
-              initialToDate={appliedFilters.toDate}
-              initialStage={appliedFilters.stage}
+              initialSiteId={filterSiteId}
+              initialFromDate={filterFromDate}
+              initialToDate={filterToDate}
+              initialStage={filterStage}
               projectStages={configuredStageNames}
+              hideHeaderFilters={true}
             />
           )}
         </div>

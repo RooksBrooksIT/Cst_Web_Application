@@ -15,6 +15,7 @@ export default function PettyCashInsightsReportHub({
   pettyCashRequests = [],
   subReport = 'audit',
   initialSiteId = 'all',
+  hideHeaderFilters = false,
 }) {
   const [activeTab, setActiveTab] = useState(subReport === 'ledger' ? 'ledger' : 'audit')
   const [selectedSiteId, setSelectedSiteId] = useState(initialSiteId)
@@ -153,92 +154,94 @@ export default function PettyCashInsightsReportHub({
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Top Header & Sub-Tab Switcher Card */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
-              Petty Cash & Float Management
-            </span>
-            <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
-              {activeTab === 'ledger' ? 'Itemized Petty Cash Receipts' : 'Petty Cash & Imprest Float Reports'}
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Supervisor float balances, emergency disbursal top-ups, and itemized receipt vouchers.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              onClick={handleExportCSV}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
-            >
-              📥 Export CSV
-            </button>
-            <button
-              type="button"
-              onClick={handlePrintPDF}
-              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors shadow-2xs cursor-pointer"
-            >
-              🖨️ Print PDF Statement
-            </button>
-          </div>
-        </div>
-
-        {/* Filters and Sub-Tab Switcher */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-100">
-          <div className="flex items-center gap-2 flex-wrap">
-            {activeTab === 'ledger' && (
-              <>
-                <input
-                  type="month"
-                  value={selectedMonth}
-                  onChange={(e) => setSelectedMonth(e.target.value)}
-                  className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs cursor-pointer"
-                />
-                <select
-                  value={categoryFilter}
-                  onChange={(e) => setCategoryFilter(e.target.value)}
-                  className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs cursor-pointer"
-                >
-                  <option value="all">All Expense Categories</option>
-                  <option value="food">Food & Refreshments</option>
-                  <option value="fuel">Fuel & Logistics</option>
-                  <option value="tools">Tools & Hardware</option>
-                  <option value="materials">Emergency Materials</option>
-                </select>
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search receipt..."
-                  className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs"
-                />
-              </>
-            )}
+      {!hideHeaderFilters && (
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
+                Petty Cash & Float Management
+              </span>
+              <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
+                {activeTab === 'ledger' ? 'Itemized Petty Cash Receipts' : 'Petty Cash & Imprest Float Reports'}
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Supervisor float balances, emergency disbursal top-ups, and itemized receipt vouchers.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={handleExportCSV}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
+              >
+                📥 Export CSV
+              </button>
+              <button
+                type="button"
+                onClick={handlePrintPDF}
+                className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors shadow-2xs cursor-pointer"
+              >
+                🖨️ Print PDF Statement
+              </button>
+            </div>
           </div>
 
-          <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200/80 self-start sm:self-auto">
-            <button
-              type="button"
-              onClick={() => setActiveTab('audit')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                activeTab === 'audit' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Site Float Audit List
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('ledger')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                activeTab === 'ledger' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Itemized Receipts
-            </button>
+          {/* Filters and Sub-Tab Switcher */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-100">
+            <div className="flex items-center gap-2 flex-wrap">
+              {activeTab === 'ledger' && (
+                <>
+                  <input
+                    type="month"
+                    value={selectedMonth}
+                    onChange={(e) => setSelectedMonth(e.target.value)}
+                    className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs cursor-pointer"
+                  />
+                  <select
+                    value={categoryFilter}
+                    onChange={(e) => setCategoryFilter(e.target.value)}
+                    className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs cursor-pointer"
+                  >
+                    <option value="all">All Expense Categories</option>
+                    <option value="food">Food & Refreshments</option>
+                    <option value="fuel">Fuel & Logistics</option>
+                    <option value="tools">Tools & Hardware</option>
+                    <option value="materials">Emergency Materials</option>
+                  </select>
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search receipt..."
+                    className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs"
+                  />
+                </>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200/80 self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => setActiveTab('audit')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  activeTab === 'audit' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Site Float Audit List
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('ledger')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  activeTab === 'ledger' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Itemized Receipts
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* 3 Overview KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

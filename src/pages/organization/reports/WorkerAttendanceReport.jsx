@@ -9,6 +9,7 @@ export default function WorkerAttendanceReport({
   sites = [],
   initialMonth = new Date().toISOString().slice(0, 7),
   initialSiteId = 'all',
+  hideHeaderFilters = false,
 }) {
   const normalizedSites = useMemo(() => getNormalizedSiteOptions(sites), [sites])
   const [selectedMonth, setSelectedMonth] = useState(initialMonth)
@@ -160,83 +161,85 @@ export default function WorkerAttendanceReport({
   return (
     <div className="space-y-6 animate-fade-in">
       {/* 1. Header & Controls */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
-              Workforce & Payroll Analytics
-            </span>
-            <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
-              Workers Attendance & Muster Roll Report
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Comprehensive daily attendance status grid, overtime accruals, and monthly wage liabilities.
-            </p>
+      {!hideHeaderFilters && (
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
+                Workforce & Payroll Analytics
+              </span>
+              <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
+                Workers Attendance & Muster Roll Report
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Comprehensive daily attendance status grid, overtime accruals, and monthly wage liabilities.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={handleExportCSV}
+                className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
+              >
+                📥 Export CSV
+              </button>
+              <button
+                type="button"
+                onClick={handlePrintPDF}
+                className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors shadow-2xs cursor-pointer"
+              >
+                🖨️ Print Report PDF
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              onClick={handleExportCSV}
-              className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
-            >
-              📥 Export CSV
-            </button>
-            <button
-              type="button"
-              onClick={handlePrintPDF}
-              className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors shadow-2xs cursor-pointer"
-            >
-              🖨️ Print Report PDF
-            </button>
+
+          {/* Filters */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-100">
+            <div>
+              <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide block mb-1">
+                Filter by Site
+              </label>
+              <select
+                value={selectedSiteId}
+                onChange={(e) => setSelectedSiteId(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all cursor-pointer"
+              >
+                <option value="all">All Portfolio Sites</option>
+                {normalizedSites.map((s, idx) => (
+                  <option key={`att-site-${s.id || s.siteId || idx}-${idx}`} value={s.id || s.siteId}>
+                    {s.label || s.siteName || s.projectName || s.name || s.id}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide block mb-1">
+                Select Month
+              </label>
+              <input
+                type="month"
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all cursor-pointer"
+              />
+            </div>
+
+            <div>
+              <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide block mb-1">
+                Search Worker / ID
+              </label>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by worker name, ID, designation..."
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs"
+              />
+            </div>
           </div>
         </div>
-
-        {/* Filters */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-100">
-          <div>
-            <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide block mb-1">
-              Filter by Site
-            </label>
-            <select
-              value={selectedSiteId}
-              onChange={(e) => setSelectedSiteId(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all cursor-pointer"
-            >
-              <option value="all">All Portfolio Sites</option>
-              {normalizedSites.map((s, idx) => (
-                <option key={`att-site-${s.id || s.siteId || idx}-${idx}`} value={s.id || s.siteId}>
-                  {s.label || s.siteName || s.projectName || s.name || s.id}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide block mb-1">
-              Select Month
-            </label>
-            <input
-              type="month"
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all cursor-pointer"
-            />
-          </div>
-
-          <div>
-            <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide block mb-1">
-              Search Worker / ID
-            </label>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by worker name, ID, designation..."
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs"
-            />
-          </div>
-        </div>
-      </div>
+      )}
 
       {/* 2. 5 Summary KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">

@@ -31,6 +31,7 @@ export default function SiteExpensesReportHub({
   initialStage = null,
   projectStages = null,
   orgId = null,
+  hideHeaderFilters = false,
 }) {
   const { orgId: authOrgId } = useAuth()
   const activeOrgId = orgId || authOrgId
@@ -338,125 +339,127 @@ export default function SiteExpensesReportHub({
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Top Filter & Sub-Report Switcher Card */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div>
-            <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider block">
-              Expense Operations
-            </span>
-            <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
-              Site Expense Reports
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Select site and audit period to view itemized vouchers, wage sheets, and material consumption ledgers.
-            </p>
-          </div>
-
-          {/* Sub-report selector tabs */}
-          <div className="flex items-center gap-1 bg-slate-100 p-1.5 rounded-xl self-start lg:self-auto border border-slate-200/80 flex-wrap">
-            {[
-              { id: 'daily', label: 'Daily Expense Report', icon: '📅' },
-              { id: 'range', label: 'Date Range Report', icon: '🗓️' },
-              { id: 'summary', label: 'Cumulative Expense Summary', icon: '📈' },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveSubTab(tab.id)}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                  activeSubTab === tab.id
-                    ? 'bg-[#0B3470] text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900 bg-transparent'
-                }`}
-              >
-                <span>{tab.icon}</span>
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Dynamic Filters Form */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-3 border-t border-slate-100 items-end">
-          <div>
-            <label className="block text-[11px] font-bold text-slate-600 mb-1">Select Site</label>
-            <select
-              value={selectedSiteId}
-              onChange={(e) => setSelectedSiteId(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600 focus:bg-white transition-all cursor-pointer shadow-2xs"
-            >
-              {normalizedSites.map((s, idx) => (
-                <option key={`exp-site-${s.id || s.siteId || idx}-${idx}`} value={s.id || s.siteId}>
-                  {s.label || s.projectName || s.siteName || s.name || s.id}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {activeSubTab === 'daily' && (
+      {!hideHeaderFilters && (
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             <div>
-              <label className="block text-[11px] font-bold text-slate-600 mb-1">Select Date</label>
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600 focus:bg-white transition-all cursor-pointer shadow-2xs"
-              />
+              <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider block">
+                Expense Operations
+              </span>
+              <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
+                Site Expense Reports
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Select site and audit period to view itemized vouchers, wage sheets, and material consumption ledgers.
+              </p>
             </div>
-          )}
 
-          {activeSubTab === 'range' && (
-            <>
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">Start Date</label>
-                <input
-                  type="date"
-                  value={fromDate}
-                  onChange={(e) => setFromDate(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600 focus:bg-white transition-all cursor-pointer shadow-2xs"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">End Date</label>
-                <input
-                  type="date"
-                  value={toDate}
-                  onChange={(e) => setToDate(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600 focus:bg-white transition-all cursor-pointer shadow-2xs"
-                />
-              </div>
-            </>
-          )}
+            {/* Sub-report selector tabs */}
+            <div className="flex items-center gap-1 bg-slate-100 p-1.5 rounded-xl self-start lg:self-auto border border-slate-200/80 flex-wrap">
+              {[
+                { id: 'daily', label: 'Daily Expense Report', icon: '📅' },
+                { id: 'range', label: 'Date Range Report', icon: '🗓️' },
+                { id: 'summary', label: 'Cumulative Expense Summary', icon: '📈' },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveSubTab(tab.id)}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    activeSubTab === tab.id
+                      ? 'bg-[#0B3470] text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 bg-transparent'
+                  }`}
+                >
+                  <span>{tab.icon}</span>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
-          {activeSubTab !== 'summary' && (
+          {/* Dynamic Filters Form */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-3 border-t border-slate-100 items-end">
             <div>
-              <label className="block text-[11px] font-bold text-slate-600 mb-1">Select Project Stage</label>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">Select Site</label>
               <select
-                value={selectedStage}
-                onChange={(e) => setSelectedStage(e.target.value)}
+                value={selectedSiteId}
+                onChange={(e) => setSelectedSiteId(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600 focus:bg-white transition-all cursor-pointer shadow-2xs"
               >
-                <option value="all">All Stages</option>
-                {availableStages.map((stg) => (
-                  <option key={stg} value={stg}>
-                    {stg}
+                {normalizedSites.map((s, idx) => (
+                  <option key={`exp-site-${s.id || s.siteId || idx}-${idx}`} value={s.id || s.siteId}>
+                    {s.label || s.projectName || s.siteName || s.name || s.id}
                   </option>
                 ))}
               </select>
             </div>
-          )}
 
-          <div>
-            <button
-              type="button"
-              className="w-full py-2 px-4 rounded-xl text-xs font-bold bg-[#0B3470] text-white hover:bg-[#082654] transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              <span>⚡</span>
-              <span>Generate Report</span>
-            </button>
+            {activeSubTab === 'daily' && (
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Select Date</label>
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600 focus:bg-white transition-all cursor-pointer shadow-2xs"
+                />
+              </div>
+            )}
+
+            {activeSubTab === 'range' && (
+              <>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Start Date</label>
+                  <input
+                    type="date"
+                    value={fromDate}
+                    onChange={(e) => setFromDate(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600 focus:bg-white transition-all cursor-pointer shadow-2xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">End Date</label>
+                  <input
+                    type="date"
+                    value={toDate}
+                    onChange={(e) => setToDate(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600 focus:bg-white transition-all cursor-pointer shadow-2xs"
+                  />
+                </div>
+              </>
+            )}
+
+            {activeSubTab !== 'summary' && (
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Select Project Stage</label>
+                <select
+                  value={selectedStage}
+                  onChange={(e) => setSelectedStage(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600 focus:bg-white transition-all cursor-pointer shadow-2xs"
+                >
+                  <option value="all">All Stages</option>
+                  {availableStages.map((stg) => (
+                    <option key={stg} value={stg}>
+                      {stg}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div>
+              <button
+                type="button"
+                className="w-full py-2 px-4 rounded-xl text-xs font-bold bg-[#0B3470] text-white hover:bg-[#082654] transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <span>⚡</span>
+                <span>Generate Report</span>
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* ----------------------------------------------------------------------------------------- */}
       {/* DAILY SITE EXPENSES REPORT VIEW */}

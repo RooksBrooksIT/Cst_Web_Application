@@ -20,6 +20,7 @@ export default function ProjectStageReportsHub({
   subReport = null,
   projectStages = null,
   orgId = null,
+  hideHeaderFilters = false,
 }) {
   const { orgId: authOrgId } = useAuth()
   const activeOrgId = orgId || authOrgId
@@ -79,6 +80,12 @@ export default function ProjectStageReportsHub({
       setSelectedStage('')
     }
   }, [availableStages, initialStage, selectedStage])
+
+  useEffect(() => {
+    if (initialStage && (initialStage === 'all' || availableStages.includes(initialStage))) {
+      setSelectedStage(initialStage === 'all' ? (availableStages[0] || '') : initialStage)
+    }
+  }, [initialStage, availableStages])
 
   useEffect(() => {
     if (subReport === 'detail' || subReport === 'summary') {
@@ -195,62 +202,64 @@ export default function ProjectStageReportsHub({
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Top Controls & Stage Selector Card */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider block">
-              Project Milestones
-            </span>
-            <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
-              Project / Milestone Progress
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Inspect construction milestones from Foundation to Finishing and track stage-specific expenditure burn.
-            </p>
+      {!hideHeaderFilters && (
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider block">
+                Project Milestones
+              </span>
+              <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
+                Project / Milestone Progress
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Inspect construction milestones from Foundation to Finishing and track stage-specific expenditure burn.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={handleExportCSV}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer flex items-center gap-1"
+              >
+                <span>📥</span> Export CSV
+              </button>
+              <button
+                type="button"
+                onClick={handlePrintPDF}
+                className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors shadow-2xs cursor-pointer flex items-center gap-1"
+              >
+                <span>🖨️</span> Print PDF
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              onClick={handleExportCSV}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer flex items-center gap-1"
-            >
-              <span>📥</span> Export CSV
-            </button>
-            <button
-              type="button"
-              onClick={handlePrintPDF}
-              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors shadow-2xs cursor-pointer flex items-center gap-1"
-            >
-              <span>🖨️</span> Print PDF
-            </button>
-          </div>
-        </div>
 
-        {/* Stage Selector Pills */}
-        <div className="space-y-1.5 pt-3 border-t border-slate-100">
-          <label className="block text-[11px] font-bold text-slate-600">Select Construction Stage</label>
-          <div className="flex gap-1.5 overflow-x-auto pb-1">
-            {availableStages.length > 0 ? (
-              availableStages.map((stg) => (
-                <button
-                  key={stg}
-                  type="button"
-                  onClick={() => setSelectedStage(stg)}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-                    selectedStage === stg
-                      ? 'bg-[#0B3470] text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900 bg-transparent'
-                  }`}
-                >
-                  {stg}
-                </button>
-              ))
-            ) : (
-              <p className="text-xs text-slate-400 py-1 italic">No construction stages configured in backend.</p>
-            )}
+          {/* Stage Selector Pills */}
+          <div className="space-y-1.5 pt-3 border-t border-slate-100">
+            <label className="block text-[11px] font-bold text-slate-600">Select Construction Stage</label>
+            <div className="flex gap-1.5 overflow-x-auto pb-1">
+              {availableStages.length > 0 ? (
+                availableStages.map((stg) => (
+                  <button
+                    key={stg}
+                    type="button"
+                    onClick={() => setSelectedStage(stg)}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                      selectedStage === stg
+                        ? 'bg-[#0B3470] text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 bg-transparent'
+                    }`}
+                  >
+                    {stg}
+                  </button>
+                ))
+              ) : (
+                <p className="text-xs text-slate-400 py-1 italic">No construction stages configured in backend.</p>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Stage KPI Banner */}
       <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 sm:gap-3">

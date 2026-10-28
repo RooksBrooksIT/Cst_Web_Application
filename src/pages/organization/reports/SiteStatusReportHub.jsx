@@ -7,6 +7,7 @@ export default function SiteStatusReportHub({
   sites = [],
   initialSiteId = 'all',
   initialStage = 'all',
+  hideHeaderFilters = false,
 }) {
   const [statusFilter, setStatusFilter] = useState('all')
   const [searchQuery, setSearchQuery] = useState('')
@@ -117,65 +118,67 @@ export default function SiteStatusReportHub({
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Top Header & Search Controls */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
-              Execution Status
-            </span>
-            <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
-              Site Status & Progress Report
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Live schedule tracking, percentage completion meters, deadline forecasts, and delay alerts.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              onClick={handleExportCSV}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
-            >
-              📥 Export CSV
-            </button>
-            <button
-              type="button"
-              onClick={handlePrintPDF}
-              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors shadow-2xs cursor-pointer"
-            >
-              🖨️ Print PDF
-            </button>
-          </div>
-        </div>
-
-        {/* Search & Filter Toolbar */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-3 border-t border-slate-100">
-          <div className="relative">
-            <span className="absolute inset-y-0 left-3 flex items-center text-slate-400 text-xs">⌕</span>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search site, manager, stage, or location..."
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-2 text-xs text-slate-800 placeholder:text-slate-400 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs"
-            />
+      {!hideHeaderFilters && (
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest block">
+                Execution Status
+              </span>
+              <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
+                Site Status & Progress Report
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Live schedule tracking, percentage completion meters, deadline forecasts, and delay alerts.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={handleExportCSV}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
+              >
+                📥 Export CSV
+              </button>
+              <button
+                type="button"
+                onClick={handlePrintPDF}
+                className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors shadow-2xs cursor-pointer"
+              >
+                🖨️ Print PDF
+              </button>
+            </div>
           </div>
 
-          <div>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs cursor-pointer"
-            >
-              <option value="all">All Project Statuses</option>
-              <option value="live">Live / In Progress</option>
-              <option value="planning">Planning / Draft</option>
-              <option value="completed">Completed</option>
-              <option value="on_hold">On Hold</option>
-            </select>
+          {/* Search & Filter Toolbar */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-3 border-t border-slate-100">
+            <div className="relative">
+              <span className="absolute inset-y-0 left-3 flex items-center text-slate-400 text-xs">⌕</span>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search site, manager, stage, or location..."
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-2 text-xs text-slate-800 placeholder:text-slate-400 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs"
+              />
+            </div>
+
+            <div>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600 transition-all shadow-2xs cursor-pointer"
+              >
+                <option value="all">All Project Statuses</option>
+                <option value="live">Live / In Progress</option>
+                <option value="planning">Planning / Draft</option>
+                <option value="completed">Completed</option>
+                <option value="on_hold">On Hold</option>
+              </select>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Timeline & Portfolio Summary KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">

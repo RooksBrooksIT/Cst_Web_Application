@@ -29,6 +29,7 @@ export default function DomainInventoryReportsHub({
   initialToDate = null,
   initialStage = 'all',
   projectStages = [],
+  hideHeaderFilters = false,
 }) {
   const getInitialDomain = (sub) => {
     if (sub === 'materials') return 'materials'
@@ -211,80 +212,82 @@ export default function DomainInventoryReportsHub({
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Top Header & Domain Switcher Card */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 mb-1 flex-wrap">
-              <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest">
-                Inventory & Operations
-              </span>
-              <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-semibold">
-                Site: {activeSiteName}
-              </span>
-              {stage && stage !== 'all' && (
-                <span className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 text-[10px] font-semibold border border-blue-200">
-                  Stage: {stage}
+      {!hideHeaderFilters && (
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                <span className="text-[11px] font-bold text-blue-700 uppercase tracking-widest">
+                  Inventory & Operations
                 </span>
-              )}
+                <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-semibold">
+                  Site: {activeSiteName}
+                </span>
+                {stage && stage !== 'all' && (
+                  <span className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 text-[10px] font-semibold border border-blue-200">
+                    Stage: {stage}
+                  </span>
+                )}
+              </div>
+              <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
+                {reportData.title || 'Inventory & Domain Reports'}
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Real-time telemetry and auditing across material stock, direct site allocations, and field consumption.
+              </p>
             </div>
-            <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
-              {reportData.title || 'Inventory & Domain Reports'}
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Real-time telemetry and auditing across material stock, direct site allocations, and field consumption.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            {activeDomain === 'incentives' && (
-              <Link
-                to="/organization/incentive-calculation"
-                className="px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white transition-colors shadow-2xs cursor-pointer flex items-center gap-1"
-              >
-                <span>🏆 New Incentive Calculation →</span>
-              </Link>
-            )}
-            <button
-              type="button"
-              onClick={handleExportCSV}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
-            >
-              📥 Export CSV
-            </button>
-            <button
-              type="button"
-              onClick={handlePrintPDF}
-              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors shadow-2xs cursor-pointer"
-            >
-              🖨️ Print Domain PDF
-            </button>
-          </div>
-        </div>
-
-        {/* Domain Navigation Tabs */}
-        <div className="flex gap-1.5 overflow-x-auto pt-3 border-t border-slate-100 pb-1">
-          {domainTabs.map((tab) => {
-            const isActive = activeDomain === tab.id
-            return (
+            <div className="flex items-center gap-2 flex-wrap">
+              {activeDomain === 'incentives' && (
+                <Link
+                  to="/organization/incentive-calculation"
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white transition-colors shadow-2xs cursor-pointer flex items-center gap-1"
+                >
+                  <span>🏆 New Incentive Calculation →</span>
+                </Link>
+              )}
               <button
-                key={tab.id}
                 type="button"
-                onClick={() => {
-                  setActiveDomain(tab.id)
-                  setSearchQuery('')
-                }}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 ${
-                  isActive
-                    ? 'bg-[#0B3470] text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900 bg-transparent'
-                }`}
+                onClick={handleExportCSV}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
               >
-                <span>{tab.icon}</span>
-                {tab.label}
+                📥 Export CSV
               </button>
-            )
-          })}
+              <button
+                type="button"
+                onClick={handlePrintPDF}
+                className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors shadow-2xs cursor-pointer"
+              >
+                🖨️ Print Domain PDF
+              </button>
+            </div>
+          </div>
+
+          {/* Domain Navigation Tabs */}
+          <div className="flex gap-1.5 overflow-x-auto pt-3 border-t border-slate-100 pb-1">
+            {domainTabs.map((tab) => {
+              const isActive = activeDomain === tab.id
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveDomain(tab.id)
+                    setSearchQuery('')
+                  }}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 ${
+                    isActive
+                      ? 'bg-[#0B3470] text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 bg-transparent'
+                  }`}
+                >
+                  <span>{tab.icon}</span>
+                  {tab.label}
+                </button>
+              )
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Materials Summary KPI Cards */}
       {activeDomain === 'materials' && reportData.summary && (
