@@ -29,6 +29,7 @@ import {
   subscribeOrganizationExpenses,
   recordOrganizationExpense,
   deleteOrganizationExpense,
+  deleteOrganizationExpenseBill,
 } from '../../../services/organizationExpenseService.js'
 import {
   isExpenseMatchingSite,
@@ -251,7 +252,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
       // manager expenses/organisation/{tenantId}/organization expenses/{siteId_siteName}/{image}
       const processedBills = await Promise.all(
         bills
-          .filter((b) => b.description?.trim())
+          .filter((b) => b.description?.trim() || b.vendor?.trim() || Number(b.amount) > 0)
           .map(async (b) => {
             let billUrl = b.billUrl || ''
             let storagePath = b.storagePath || ''
@@ -271,9 +272,9 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
             }
 
             return {
-              description: b.description,
-              vendor: b.vendor,
-              billNo: b.billNo,
+              description: b.description?.trim() || (b.vendor?.trim() ? `${b.vendor.trim()} Bill` : 'Bill Item'),
+              vendor: b.vendor?.trim() || 'Vendor',
+              billNo: b.billNo?.trim() || '',
               amount: b.amount,
               billUrl,
               imageUrl: billUrl,
@@ -311,39 +312,217 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
     }
   }
 
-  const handleDelete = async (expenseId) => {
-    if (!orgId || !expenseId) return
-    if (!window.confirm('Delete this organization expense record?')) return
+  const handleDelete = async (entry) => {
+    if (!orgId || !entry) return
+    const billDesc = entry.billNo ? `Bill #${entry.billNo}` : 'this bill entry'
+    if (!window.confirm(`Delete ${billDesc} (${entry.vendor || 'Expense'})?`)) return
     try {
-      await deleteOrganizationExpense(orgId, expenseId)
-      onNotify?.('Organization expense record deleted', 'info')
+      if (entry.isItemizedBill && entry.totalBillsInDoc > 1) {
+        await deleteOrganizationExpenseBill(orgId, entry.parentExpenseId, entry.billIndex)
+      } else {
+        await deleteOrganizationExpense(orgId, entry.parentExpenseId || entry.id)
+      }
+      onNotify?.(`${billDesc} deleted successfully`, 'info')
       await loadData()
     } catch (err) {
       console.error(err)
-      onNotify?.('Failed to delete expense', 'error')
+      onNotify?.(err.message || 'Failed to delete expense', 'error')
     }
   }
 
+  // Flatten Firestore documents into individual bill entries
+  const billEntries = useMemo(() => {
+    if (!Array.isArray(expenses)) return []
+    const list = []
+
+    expenses.forEach((item) => {
+      const rawBills = Array.isArray(item.bills) && item.bills.length > 0 ? item.bills : null
+
+      if (rawBills) {
+        rawBills.forEach((b, idx) => {
+          const billAmt = Number(b.amount !== undefined ? b.amount : b.billAmount) || 0
+          const billNo = b.billNo || (idx + 1).toString().padStart(3, '0')
+          const vendor = b.vendor || b.billVendor || item.vendor || item.billVendor || 'Vendor'
+          const billDoc = b.billUrl || b.imageUrl || (b.billCopy && b.billCopy !== 'billURL' ? b.billCopy : '')
+          const remarks = b.description || b.remarks || b.purpose || item.remarks || ''
+          const billDate = b.date || b.billDate || item.date || item.expenseDate
+
+          list.push({
+            id: `${item.id || item.expenseId}_bill_${b.id || b.billNo || idx}`,
+            parentExpenseId: item.id || item.expenseId,
+            billIndex: idx,
+            billId: b.id || `bill_${idx}`,
+            siteId: item.siteId,
+            siteCode: item.siteCode,
+            siteName: item.siteName || item.projectName || 'Project Site',
+            projectName: item.projectName || item.siteName || 'Project Site',
+            projectStage: item.projectStage || 'Central',
+            projectCategory: item.projectCategory || item.projectStage || 'Central',
+            date: billDate,
+            expenseDate: item.expenseDate,
+            billNo,
+            vendor,
+            billVendor: vendor,
+            amount: billAmt,
+            billAmount: billAmt,
+            totalAmount: billAmt,
+            billUrl: billDoc,
+            imageUrl: billDoc,
+            billCopy: billDoc,
+            storagePath: b.storagePath || '',
+            description: b.description || remarks,
+            remarks: remarks,
+            rawExpense: item,
+            rawBill: b,
+            isItemizedBill: true,
+            totalBillsInDoc: rawBills.length,
+          })
+        })
+      } else {
+        // Document has no itemized bills array (legacy entry or recorded without bills array)
+        const amt = Number(item.totalAmount !== undefined ? item.totalAmount : item.amount) || 0
+        const billDoc = item.billUrl || item.imageUrl || (item.billCopy && item.billCopy !== 'billURL' ? item.billCopy : '')
+        const billNo = item.billNo || '001'
+        const vendor = item.vendor || item.billVendor || 'Organization Expense'
+        const remarks = item.remarks || item.description || ''
+
+        list.push({
+          id: item.id || item.expenseId,
+          parentExpenseId: item.id || item.expenseId,
+          billIndex: 0,
+          billId: item.id || item.expenseId,
+          siteId: item.siteId,
+          siteCode: item.siteCode,
+          siteName: item.siteName || item.projectName || 'Project Site',
+          projectName: item.projectName || item.siteName || 'Project Site',
+          projectStage: item.projectStage || 'Central',
+          projectCategory: item.projectCategory || item.projectStage || 'Central',
+          date: item.date || item.expenseDate,
+          expenseDate: item.expenseDate,
+          billNo,
+          vendor,
+          billVendor: vendor,
+          amount: amt,
+          billAmount: amt,
+          totalAmount: amt,
+          billUrl: billDoc,
+          imageUrl: billDoc,
+          billCopy: billDoc,
+          storagePath: item.storagePath || '',
+          description: item.description || remarks,
+          remarks: remarks,
+          rawExpense: item,
+          rawBill: null,
+          isItemizedBill: false,
+          totalBillsInDoc: 1,
+        })
+      }
+    })
+
+    // Sort by date descending
+    return list.sort((a, b) => {
+      const getTimestamp = (e) => {
+        if (e.date instanceof Date && !isNaN(e.date.getTime())) return e.date.getTime()
+        if (e.date?.seconds) return e.date.seconds * 1000
+        if (e.date?.toDate && typeof e.date.toDate === 'function') return e.date.toDate().getTime()
+        if (e.expenseDate?.seconds) return e.expenseDate.seconds * 1000
+        if (typeof e.date === 'string' && e.date.trim()) {
+          const t = new Date(e.date).getTime()
+          if (!isNaN(t)) return t
+        }
+        return 0
+      }
+      return getTimestamp(b) - getTimestamp(a)
+    })
+  }, [expenses])
+
+  const formatEntryDate = (entry) => {
+    let d = null
+    const dateVal = entry.date || entry.billDate
+    const fallbackVal = entry.expenseDate || entry.rawExpense?.date || entry.rawExpense?.expenseDate
+
+    if (dateVal instanceof Date && !isNaN(dateVal.getTime())) {
+      d = dateVal
+    } else if (dateVal?.toDate && typeof dateVal.toDate === 'function') {
+      d = dateVal.toDate()
+    } else if (dateVal?.seconds) {
+      d = new Date(dateVal.seconds * 1000)
+    } else if (typeof dateVal === 'string' && dateVal.trim()) {
+      d = new Date(dateVal)
+    }
+
+    if ((!d || isNaN(d.getTime())) && fallbackVal) {
+      if (fallbackVal instanceof Date && !isNaN(fallbackVal.getTime())) {
+        d = fallbackVal
+      } else if (fallbackVal?.toDate && typeof fallbackVal.toDate === 'function') {
+        d = fallbackVal.toDate()
+      } else if (fallbackVal?.seconds) {
+        d = new Date(fallbackVal.seconds * 1000)
+      } else if (typeof fallbackVal === 'string' && fallbackVal.trim()) {
+        d = new Date(fallbackVal)
+      }
+    }
+
+    if (!d || isNaN(d.getTime())) return 'Recent'
+
+    return d.toLocaleDateString('en-IN', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    })
+  }
+
+  // Filtered bill entries
+  const filteredEntries = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim()
+    return billEntries.filter((e) => {
+      const siteName = (e.siteName || '').toLowerCase()
+      const projectName = (e.projectName || '').toLowerCase()
+      const projectStage = (e.projectStage || '').toLowerCase()
+      const remarks = (e.remarks || e.description || '').toLowerCase()
+      const vendor = (e.vendor || e.billVendor || '').toLowerCase()
+      const billNo = (e.billNo || '').toLowerCase()
+      const raiser = (e.rawExpense?.raiserName || e.rawExpense?.supervisorName || '').toLowerCase()
+
+      const matchesSearch =
+        !q ||
+        siteName.includes(q) ||
+        projectName.includes(q) ||
+        projectStage.includes(q) ||
+        remarks.includes(q) ||
+        vendor.includes(q) ||
+        billNo.includes(q) ||
+        raiser.includes(q)
+
+      const matchesSite = isExpenseMatchingSite(e.rawExpense || e, selectedSiteFilter, sites)
+      return matchesSearch && matchesSite
+    })
+  }, [billEntries, searchQuery, selectedSiteFilter, sites])
+
+  const totalSumSpent = useMemo(() => {
+    return filteredEntries.reduce(
+      (acc, e) => acc + (Number(e.amount) || 0),
+      0
+    )
+  }, [filteredEntries])
+
   // Export CSV
   const handleExportCSV = () => {
-    if (expenses.length === 0) return
+    if (filteredEntries.length === 0) return
     const rows = [
-      ['Expense ID', 'Site Name', 'Stage', 'Date', 'Total Amount', 'Recorder', 'Remarks', 'Bill Attached'],
-      ...expenses.map((e) => {
-        const dStr = e.date instanceof Date
-          ? e.date.toLocaleDateString('en-IN')
-          : (e.expenseDate?.seconds
-              ? new Date(e.expenseDate.seconds * 1000).toLocaleDateString('en-IN')
-              : '')
+      ['Expense ID', 'Bill No', 'Site Name', 'Stage', 'Date', 'Vendor', 'Amount', 'Description / Remarks', 'Bill Attached'],
+      ...filteredEntries.map((e) => {
+        const dStr = formatEntryDate(e)
         return [
-          e.expenseId || e.id,
-          e.siteName || e.projectName || '',
-          e.projectStage || '',
-          dStr,
-          e.totalAmount || e.amount || 0,
-          e.raiserName || '',
-          `"${(e.remarks || '').replace(/"/g, '""')}"`,
-          e.billUrl || e.bills?.some((b) => b.billUrl || b.imageUrl || (b.billCopy && b.billCopy !== 'billURL')) ? 'Yes' : 'No',
+          e.parentExpenseId || e.id,
+          `"${e.billNo || ''}"`,
+          `"${(e.siteName || e.projectName || '').replace(/"/g, '""')}"`,
+          `"${(e.projectStage || '').replace(/"/g, '""')}"`,
+          `"${dStr}"`,
+          `"${(e.vendor || '').replace(/"/g, '""')}"`,
+          e.amount || 0,
+          `"${(e.remarks || e.description || '').replace(/"/g, '""')}"`,
+          e.billUrl ? 'Yes' : 'No',
         ]
       }),
     ]
@@ -354,48 +533,12 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
     link.setAttribute('href', encodedUri)
     link.setAttribute(
       'download',
-      `organization_expenses_${new Date().toISOString().split('T')[0]}.csv`
+      `organization_bills_${new Date().toISOString().split('T')[0]}.csv`
     )
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
   }
-
-  // Filtered expenses
-  const filteredExpenses = useMemo(() => {
-    const q = searchQuery.toLowerCase().trim()
-    return expenses.filter((e) => {
-      const siteName = (e.siteName || '').toLowerCase()
-      const projectName = (e.projectName || '').toLowerCase()
-      const projectStage = (e.projectStage || '').toLowerCase()
-      const remarks = (e.remarks || '').toLowerCase()
-      const raiser = (e.raiserName || e.supervisorName || '').toLowerCase()
-
-      const matchesSearch =
-        !q ||
-        siteName.includes(q) ||
-        projectName.includes(q) ||
-        projectStage.includes(q) ||
-        remarks.includes(q) ||
-        raiser.includes(q) ||
-        (Array.isArray(e.bills) &&
-          e.bills.some((b) =>
-            (b.vendor || b.billVendor || '').toLowerCase().includes(q) ||
-            (b.billNo || '').toLowerCase().includes(q) ||
-            (b.description || '').toLowerCase().includes(q)
-          ))
-
-      const matchesSite = isExpenseMatchingSite(e, selectedSiteFilter, sites)
-      return matchesSearch && matchesSite
-    })
-  }, [expenses, searchQuery, selectedSiteFilter, sites])
-
-  const totalSumSpent = useMemo(() => {
-    return filteredExpenses.reduce(
-      (acc, e) => acc + (Number(e.totalAmount || e.amount) || 0),
-      0
-    )
-  }, [filteredExpenses])
 
   return (
     <div className="space-y-6">
@@ -420,7 +563,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
           <button
             type="button"
             onClick={handleExportCSV}
-            disabled={expenses.length === 0}
+            disabled={filteredEntries.length === 0}
             className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200/80 text-slate-700 text-xs font-bold rounded-xl transition-all disabled:opacity-50 cursor-pointer"
           >
             <Download className="w-4 h-4" />
@@ -453,12 +596,12 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
         </div>
         <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-            Expense Invoices / Vouchers
+            Bill Entries Recorded
           </p>
           <p className="text-2xl font-black text-slate-900 mt-1">
-            {filteredExpenses.length}
+            {filteredEntries.length}
           </p>
-          <p className="text-xs text-slate-500 mt-1">Direct verified ledger claims</p>
+          <p className="text-xs text-slate-500 mt-1">Itemized bill records</p>
         </div>
         <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
@@ -481,7 +624,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search expense by site or notes..."
+            placeholder="Search bills by vendor, bill #, site or remarks..."
             className="w-full pl-9 pr-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20"
           />
         </div>
@@ -540,62 +683,41 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
         <div className="py-20 text-center text-slate-400">
           Loading organization expense claims...
         </div>
-      ) : filteredExpenses.length === 0 ? (
+      ) : filteredEntries.length === 0 ? (
         <div className="bg-white p-12 text-center rounded-2xl border border-dashed border-slate-200">
           <Receipt className="w-12 h-12 text-slate-300 mx-auto mb-2" />
           <p className="text-sm font-semibold text-slate-700">
-            No organization direct expenses recorded
+            No organization bill entries found
           </p>
           <p className="text-xs text-slate-400 mt-1">
             Click "Record Organization Bill" to log and attach bills for your projects.
           </p>
         </div>
       ) : viewMode === 'table' ? (
-        /* EXPENSES TABLE FORMAT */
+        /* EXPENSES TABLE FORMAT - EACH ROW IS AN INDIVIDUAL BILL */
         <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50/75 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
                   <th className="py-3.5 px-4">Site & Stage</th>
-                  <th className="py-3.5 px-4">Date</th>
-                  <th className="py-3.5 px-4">Bill Items</th>
-                  <th className="py-3.5 px-4">Bill Document</th>
-                  <th className="py-3.5 px-4">Total Amount</th>
-                  <th className="py-3.5 px-4">Remarks / Notes</th>
+                  <th className="py-3.5 px-4">Bill Date</th>
+                  <th className="py-3.5 px-4">Bill No.</th>
+                  <th className="py-3.5 px-4">Vendor</th>
+                  <th className="py-3.5 px-4">Receipt</th>
+                  <th className="py-3.5 px-4">Amount</th>
+                  <th className="py-3.5 px-4">Description / Remarks</th>
                   <th className="py-3.5 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs">
-                {filteredExpenses.map((item) => {
-                  const expenseDate = item.date instanceof Date
-                    ? item.date.toLocaleDateString('en-IN', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                      })
-                    : (item.expenseDate?.seconds
-                        ? new Date(item.expenseDate.seconds * 1000).toLocaleDateString('en-IN', {
-                            day: 'numeric',
-                            month: 'short',
-                            year: 'numeric',
-                          })
-                        : 'Recent')
-                  const billsCount = Array.isArray(item.bills) ? item.bills.length : 1
-                  const totalAmt = Number(item.totalAmount || item.amount) || 0
-
-                  const billWithDoc =
-                    (Array.isArray(item.bills) &&
-                      item.bills.find((b) => b.billUrl || b.imageUrl || (b.billCopy && b.billCopy !== 'billURL'))) ||
-                    (item.billUrl && item.billUrl !== 'billURL'
-                      ? { billUrl: item.billUrl, description: item.remarks }
-                      : (item.imageUrl && item.imageUrl !== 'billURL'
-                          ? { billUrl: item.imageUrl, description: item.remarks }
-                          : (item.billCopy && item.billCopy !== 'billURL' ? { billUrl: item.billCopy, description: item.remarks } : null)))
+                {filteredEntries.map((entry) => {
+                  const entryDateStr = formatEntryDate(entry)
+                  const billAmt = Number(entry.amount) || 0
 
                   return (
                     <tr
-                      key={item.id || item.expenseId}
+                      key={entry.id}
                       className="hover:bg-slate-50/70 transition-colors"
                     >
                       <td className="py-3.5 px-4">
@@ -605,43 +727,49 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
                           </div>
                           <div>
                             <strong className="block font-bold text-slate-900 text-sm">
-                              {item.siteName || item.projectName}
+                              {entry.siteName || entry.projectName}
                             </strong>
                             <span className="px-2 py-0.5 text-[10px] font-semibold bg-indigo-50 text-indigo-700 rounded-md inline-block mt-0.5">
-                              {item.projectStage || 'Central'}
+                              {entry.projectStage || 'Central'}
                             </span>
                           </div>
                         </div>
                       </td>
 
-                      <td className="py-3.5 px-4 font-mono text-slate-700">
-                        {expenseDate}
+                      <td className="py-3.5 px-4 font-mono text-slate-700 whitespace-nowrap">
+                        {entryDateStr}
                       </td>
 
                       <td className="py-3.5 px-4">
-                        <span className="px-2 py-0.5 text-[11px] font-semibold bg-slate-100 text-slate-800 rounded-md">
-                          {billsCount} {billsCount === 1 ? 'Bill' : 'Bills'}
+                        <span className="px-2 py-0.5 text-[11px] font-mono font-bold bg-slate-100 text-slate-800 rounded-md">
+                          #{entry.billNo}
+                        </span>
+                      </td>
+
+                      <td className="py-3.5 px-4">
+                        <span className="font-semibold text-slate-900">
+                          {entry.vendor || '—'}
                         </span>
                       </td>
 
                       {/* Bill Document Column with Instant Preview */}
                       <td className="py-3.5 px-4">
-                        {billWithDoc ? (
+                        {entry.billUrl ? (
                           <button
                             type="button"
                             onClick={() =>
                               setPreviewModal({
                                 isOpen: true,
-                                imageUrl: billWithDoc.billUrl || billWithDoc.imageUrl || billWithDoc.billCopy,
-                                title: billWithDoc.description || item.siteName || item.projectName,
-                                vendor: billWithDoc.vendor || billWithDoc.billVendor || 'Organization Expense',
-                                amount: billWithDoc.amount || billWithDoc.billAmount || totalAmt,
-                                billNo: billWithDoc.billNo || '',
-                                date: expenseDate,
+                                imageUrl: entry.billUrl,
+                                title: entry.description || entry.remarks || `${entry.vendor} Bill`,
+                                vendor: entry.vendor,
+                                amount: billAmt,
+                                billNo: entry.billNo,
+                                date: entryDateStr,
                               })
                             }
                             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 text-xs font-semibold transition-all cursor-pointer shadow-2xs"
-                            title="Click to view uploaded bill image"
+                            title="Click to view uploaded bill receipt"
                           >
                             <ImageIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                             <span>View Bill</span>
@@ -651,19 +779,19 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
                         )}
                       </td>
 
-                      <td className="py-3.5 px-4 font-black text-slate-900 text-sm">
-                        ₹{totalAmt.toLocaleString('en-IN')}
+                      <td className="py-3.5 px-4 font-black text-slate-900 text-sm whitespace-nowrap">
+                        ₹{billAmt.toLocaleString('en-IN')}
                       </td>
 
-                      <td className="py-3.5 px-4 text-slate-600 max-w-xs truncate">
-                        {item.remarks || 'No remarks'}
+                      <td className="py-3.5 px-4 text-slate-600 max-w-xs truncate" title={entry.description || entry.remarks}>
+                        {entry.description || entry.remarks || 'No remarks'}
                       </td>
 
                       <td className="py-3.5 px-4 text-right">
                         <button
-                          onClick={() => handleDelete(item.id || item.expenseId)}
+                          onClick={() => handleDelete(entry)}
                           className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer border border-slate-200"
-                          title="Delete Record"
+                          title="Delete Bill Entry"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -676,178 +804,103 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
           </div>
         </div>
       ) : (
-        /* EXPENSES CARDS FEED FORMAT */
+        /* EXPENSES CARDS FEED FORMAT - EACH CARD IS AN INDIVIDUAL BILL */
         <div className="space-y-4">
-          {filteredExpenses.map((item) => {
-            const isExpanded = expandedId === (item.id || item.expenseId)
-            const expenseDate = item.date instanceof Date
-              ? item.date.toLocaleDateString('en-IN', {
-                  day: 'numeric',
-                  month: 'short',
-                  year: 'numeric',
-                })
-              : (item.expenseDate?.seconds
-                  ? new Date(item.expenseDate.seconds * 1000).toLocaleDateString('en-IN', {
-                      day: 'numeric',
-                      month: 'short',
-                      year: 'numeric',
-                    })
-                  : 'Recent')
-
-            const billsCount = Array.isArray(item.bills) ? item.bills.length : 1
-            const hasBillsWithDoc =
-              (item.billUrl && item.billUrl !== 'billURL') ||
-              (item.imageUrl && item.imageUrl !== 'billURL') ||
-              (Array.isArray(item.bills) &&
-                item.bills.some((b) => b.billUrl || b.imageUrl || (b.billCopy && b.billCopy !== 'billURL')))
+          {filteredEntries.map((entry) => {
+            const entryDateStr = formatEntryDate(entry)
+            const billAmt = Number(entry.amount) || 0
 
             return (
               <div
-                key={item.id || item.expenseId}
-                className="bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:border-blue-200 transition-all overflow-hidden"
+                key={entry.id}
+                className="bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:border-blue-200 transition-all p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
               >
-                <div
-                  onClick={() =>
-                    setExpandedId(isExpanded ? null : item.id || item.expenseId)
-                  }
-                  className="p-5 cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-4 select-none hover:bg-slate-50/50"
-                >
-                  <div className="flex items-start gap-3.5">
-                    <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center shrink-0 mt-0.5">
-                      <Receipt className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="text-base font-bold text-slate-900 leading-snug">
-                          {item.siteName || item.projectName}
-                        </h3>
-                        <span className="px-2 py-0.5 text-xs font-semibold bg-indigo-50 text-indigo-700 rounded-md">
-                          {item.projectStage || 'Central'}
-                        </span>
-                        <span className="px-2 py-0.5 text-[11px] font-semibold bg-emerald-50 text-emerald-700 rounded-md">
-                          {billsCount} {billsCount === 1 ? 'Bill Item' : 'Bill Items'}
-                        </span>
-                        {hasBillsWithDoc && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 rounded-full">
-                            <ImageIcon className="w-3 h-3" />
-                            Receipt Attached
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-3 text-xs text-slate-500 mt-1.5 flex-wrap">
-                        <span className="flex items-center gap-1 font-medium text-slate-700">
-                          <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                          {expenseDate}
-                        </span>
-                        {item.remarks && (
-                          <>
-                            <span>•</span>
-                            <span className="text-slate-600 truncate max-w-sm italic">
-                              "{item.remarks}"
-                            </span>
-                          </>
-                        )}
-                      </div>
-                    </div>
+                <div className="flex items-start gap-3.5">
+                  <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center shrink-0 mt-0.5 border border-blue-100">
+                    <Receipt className="w-5 h-5" />
                   </div>
-
-                  <div className="flex items-center justify-between sm:justify-end gap-6 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
-                    <div className="text-left sm:text-right">
-                      <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">
-                        Disbursed Amount
-                      </p>
-                      <p className="text-lg font-bold text-slate-900">
-                        ₹
-                        {(
-                          Number(item.totalAmount || item.amount) || 0
-                        ).toLocaleString('en-IN')}
-                      </p>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-base font-bold text-slate-900 leading-snug">
+                        {entry.siteName || entry.projectName}
+                      </h3>
+                      <span className="px-2 py-0.5 text-xs font-semibold bg-indigo-50 text-indigo-700 rounded-md">
+                        {entry.projectStage || 'Central'}
+                      </span>
+                      <span className="px-2 py-0.5 text-xs font-mono font-bold bg-blue-50 text-blue-700 border border-blue-200 rounded-md">
+                        Bill #{entry.billNo}
+                      </span>
+                      <span className="px-2 py-0.5 text-xs font-semibold bg-slate-100 text-slate-700 rounded-md">
+                        Vendor: <span className="font-bold text-slate-900">{entry.vendor}</span>
+                      </span>
+                      {entry.billUrl && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full">
+                          <ImageIcon className="w-3 h-3" />
+                          Receipt Attached
+                        </span>
+                      )}
                     </div>
 
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleDelete(item.id || item.expenseId)
-                        }}
-                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
-                        title="Delete voucher"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                      <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500">
-                        {isExpanded ? (
-                          <ChevronUp className="w-4 h-4" />
-                        ) : (
-                          <ChevronDown className="w-4 h-4" />
-                        )}
-                      </div>
+                    <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap pt-0.5">
+                      <span className="flex items-center gap-1 font-medium text-slate-700">
+                        <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                        {entryDateStr}
+                      </span>
+                      {(entry.description || entry.remarks) && (
+                        <>
+                          <span>•</span>
+                          <span className="text-slate-600 truncate max-w-sm italic">
+                            "{entry.description || entry.remarks}"
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
 
-                {isExpanded && Array.isArray(item.bills) && item.bills.length > 0 && (
-                  <div className="p-5 bg-slate-50/70 border-t border-slate-100 space-y-3">
-                    <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                      Itemized Bills Breakdown
-                    </h4>
-                    <div className="bg-white rounded-xl border border-slate-200/80 overflow-hidden divide-y divide-slate-100 text-xs">
-                      {item.bills.map((bill, bIdx) => {
-                        const billDocUrl = bill.billUrl || bill.imageUrl || (bill.billCopy && bill.billCopy !== 'billURL' ? bill.billCopy : '')
-                        const billVendorName = bill.vendor || bill.billVendor || 'Central Office'
-                        const billAmt = Number(bill.amount || bill.billAmount) || 0
-
-                        return (
-                          <div
-                            key={bIdx}
-                            className="p-3 flex items-center justify-between gap-4"
-                          >
-                            <div className="min-w-0">
-                              <p className="font-semibold text-slate-900 truncate">
-                                {bill.description || `${billVendorName} Disbursement`}
-                              </p>
-                              <p className="text-slate-500 mt-0.5">
-                                Vendor:{' '}
-                                <span className="font-medium text-slate-700">
-                                  {billVendorName}
-                                </span>
-                                {bill.billNo && ` • Bill #${bill.billNo}`}
-                              </p>
-                            </div>
-
-                            <div className="flex items-center gap-3 shrink-0">
-                              {billDocUrl ? (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setPreviewModal({
-                                      isOpen: true,
-                                      imageUrl: billDocUrl,
-                                      title: bill.description || `${billVendorName} Receipt`,
-                                      vendor: billVendorName,
-                                      amount: billAmt,
-                                      billNo: bill.billNo || '',
-                                      date: expenseDate,
-                                    })
-                                  }
-                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 font-semibold cursor-pointer shadow-2xs"
-                                >
-                                  <ImageIcon className="w-3.5 h-3.5 text-emerald-600" />
-                                  <span>View Receipt</span>
-                                </button>
-                              ) : null}
-
-                              <span className="text-sm font-bold text-slate-900">
-                                ₹{billAmt.toLocaleString('en-IN')}
-                              </span>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
+                <div className="flex items-center justify-between sm:justify-end gap-5 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-100 shrink-0">
+                  <div className="text-left sm:text-right">
+                    <p className="text-[11px] text-slate-400 uppercase tracking-wider font-semibold">
+                      Bill Amount
+                    </p>
+                    <p className="text-lg font-black text-slate-900">
+                      ₹{billAmt.toLocaleString('en-IN')}
+                    </p>
                   </div>
-                )}
+
+                  <div className="flex items-center gap-2">
+                    {entry.billUrl && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPreviewModal({
+                            isOpen: true,
+                            imageUrl: entry.billUrl,
+                            title: entry.description || entry.remarks || `${entry.vendor} Bill`,
+                            vendor: entry.vendor,
+                            amount: billAmt,
+                            billNo: entry.billNo,
+                            date: entryDateStr,
+                          })
+                        }
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 text-xs font-semibold cursor-pointer transition-all shadow-2xs"
+                        title="View uploaded bill receipt"
+                      >
+                        <ImageIcon className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>View Receipt</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(entry)}
+                      className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer transition-colors border border-slate-200"
+                      title="Delete bill entry"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
               </div>
             )
           })}

@@ -178,20 +178,13 @@ export function subscribeOrganizationExpenses(orgId, onData, onError) {
 
   const emitMerged = () => {
     const deduped = new Map()
-    // 1. Ingest mobile entries
+    // 1. Ingest mobile entries as base/fallback
     for (const [id, rec] of recordsByCol.organizationEntries.entries()) {
       deduped.set(id, rec)
     }
-    // 2. Overlay / merge web expenses
+    // 2. Overlay / merge primary organizationExpenses (authoritative source)
     for (const [id, rec] of recordsByCol.organizationExpenses.entries()) {
-      if (!deduped.has(id)) {
-        deduped.set(id, rec)
-      } else {
-        const existing = deduped.get(id)
-        if ((!existing.bills || existing.bills.length === 0) && (rec.bills && rec.bills.length > 0)) {
-          deduped.set(id, rec)
-        }
-      }
+      deduped.set(id, rec)
     }
 
     const list = Array.from(deduped.values()).sort((a, b) => {
@@ -467,3 +460,126 @@ export async function deleteOrganizationExpense(orgId, expenseId, siteId = null)
     } catch (_) {}
   }
 }
+
+/**
+ * Deletes a single bill entry from an organization expense document.
+ * If the document only contains this 1 bill, deletes the entire document.
+ */
+export async function deleteOrganizationExpenseBill(orgId, expenseId, billIdOrIndex, siteId = null) {
+  if (!orgId || !expenseId) throw new Error('orgId and expenseId are required')
+
+  const docRef = doc(db, 'organisation', orgId, 'organizationExpenses', expenseId)
+  let existingData = null
+  try {
+    const snap = await getDoc(docRef)
+    if (snap.exists()) {
+      existingData = snap.data()
+    }
+  } catch (err) {
+    console.warn(`[deleteOrganizationExpenseBill] Doc lookup error:`, err?.message)
+  }
+
+  if (!existingData) {
+    return deleteOrganizationExpense(orgId, expenseId, siteId)
+  }
+
+  const bills = Array.isArray(existingData.bills) ? [...existingData.bills] : []
+
+  // If doc only has 1 bill or none, delete whole document
+  if (bills.length <= 1) {
+    return deleteOrganizationExpense(
+      orgId,
+      expenseId,
+      siteId || existingData.siteId || existingData.rawSiteId
+    )
+  }
+
+  // Find index of bill to remove
+  let removeIndex = -1
+  if (typeof billIdOrIndex === 'number') {
+    removeIndex = billIdOrIndex
+  } else if (typeof billIdOrIndex === 'string') {
+    removeIndex = bills.findIndex(
+      (b, idx) =>
+        b.id === billIdOrIndex ||
+        b.billNo === billIdOrIndex ||
+        `bill_${idx}` === billIdOrIndex
+    )
+  }
+
+  if (removeIndex < 0 || removeIndex >= bills.length) {
+    return deleteOrganizationExpense(
+      orgId,
+      expenseId,
+      siteId || existingData.siteId || existingData.rawSiteId
+    )
+  }
+
+  const removedBill = bills[removeIndex]
+  const removedAmount = Number(removedBill.amount || removedBill.billAmount || 0)
+  bills.splice(removeIndex, 1)
+
+  const newTotal = bills.reduce(
+    (acc, b) => acc + (Number(b.amount || b.billAmount) || 0),
+    0
+  )
+
+  const primaryBill = bills.find((b) => b.billUrl || b.imageUrl || b.billCopy) || {}
+  const primaryBillUrl =
+    primaryBill.billUrl || primaryBill.imageUrl || primaryBill.billCopy || null
+
+  const updatedPayload = {
+    bills,
+    totalAmount: newTotal,
+    amount: newTotal,
+    billUrl: primaryBillUrl,
+    imageUrl: primaryBillUrl,
+    updatedAt: serverTimestamp(),
+  }
+
+  await updateDoc(docRef, updatedPayload)
+
+  // Mirror to organizationEntries if exists
+  try {
+    const entryRef = doc(db, 'organisation', orgId, 'organizationEntries', expenseId)
+    await updateDoc(entryRef, updatedPayload)
+  } catch (_) {}
+
+  // Mirror to organizationExpenseSummary
+  try {
+    const summaryRef = doc(db, 'organisation', orgId, 'organizationExpenseSummary', expenseId)
+    await updateDoc(summaryRef, {
+      orgExpenseTotalAmount: newTotal,
+      updatedAt: serverTimestamp(),
+    })
+  } catch (_) {}
+
+  // Adjust site cumulative expenditure
+  const targetSiteId = siteId || existingData.rawSiteId || existingData.siteId
+  if (targetSiteId && removedAmount > 0) {
+    try {
+      const siteRef = doc(db, 'organisation', orgId, 'projects', targetSiteId)
+      const siteSnap = await getDoc(siteRef)
+      if (siteSnap.exists()) {
+        const currentSpent = Number(
+          siteSnap.data().totalAmountSpent || siteSnap.data().spentAmount || 0
+        )
+        const nextSpent = Math.max(0, currentSpent - removedAmount)
+        await updateDoc(siteRef, {
+          totalAmountSpent: nextSpent,
+          spentAmount: nextSpent,
+          amountSpent: nextSpent,
+          updatedAt: serverTimestamp(),
+        })
+      }
+    } catch (_) {}
+  }
+
+  const canonicalSiteKey = targetSiteId ? resolveCanonicalSiteKey(targetSiteId) : null
+  if (canonicalSiteKey) {
+    try {
+      await recalcTotalsAndSyncProject(orgId, canonicalSiteKey)
+    } catch (_) {}
+  }
+}
+

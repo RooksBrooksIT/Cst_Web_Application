@@ -409,6 +409,69 @@ describe('Expense Synchronization & Normalization Tests', () => {
       assert.equal(normalized.bills[0].billAmount, 25000)
       assert.equal(normalized.remarks, 'Direct cement order')
     })
+
+    it('correctly handles multi-bill organization documents with individual bill details and no double counting', () => {
+      // Document matching user example: dated 2026-10-28, two bills (002 for 1000, 001 for 100), total 1100
+      const rawOrgDoc = {
+        siteId: 'ST001_newProject',
+        siteName: 'Riverside Commercial Complex',
+        projectName: 'newProject',
+        projectStage: 'Structure Work',
+        expenseDate: '2026-10-28',
+        totalAmount: 1100,
+        remarks: 'Daily centralized materials',
+        bills: [
+          {
+            billNo: '002',
+            vendor: 'hgghh',
+            billVendor: 'hgghh',
+            amount: 1000,
+            billAmount: 1000,
+            billUrl: 'https://storage/bill002.jpg',
+            description: 'hgghh material supply',
+          },
+          {
+            billNo: '001',
+            vendor: 'were',
+            billVendor: 'were',
+            amount: 100,
+            billAmount: 100,
+            billUrl: 'https://storage/bill001.jpg',
+            description: 'were testing tools',
+          },
+        ],
+      }
+
+      const normalized = normalizeExpenseRecord('ST001_newProject_28102026', rawOrgDoc, 'Organization')
+      assert.equal(normalized.totalAmount, 1100)
+      assert.equal(normalized.bills.length, 2)
+
+      // Simulate the UI bill flattening
+      const billEntries = []
+      normalized.bills.forEach((b, idx) => {
+        billEntries.push({
+          id: `${normalized.id}_bill_${b.id || b.billNo || idx}`,
+          parentExpenseId: normalized.id,
+          billNo: b.billNo,
+          vendor: b.vendor,
+          amount: b.amount,
+          billUrl: b.billUrl,
+          description: b.description,
+        })
+      })
+
+      assert.equal(billEntries.length, 2, 'Must produce two separate bill entries for the log')
+      assert.equal(billEntries[0].billNo, '002')
+      assert.equal(billEntries[0].vendor, 'hgghh')
+      assert.equal(billEntries[0].amount, 1000)
+      assert.equal(billEntries[1].billNo, '001')
+      assert.equal(billEntries[1].vendor, 'were')
+      assert.equal(billEntries[1].amount, 100)
+
+      // Total sum spent aggregated from individual bills without double counting
+      const aggregatedTotal = billEntries.reduce((sum, e) => sum + e.amount, 0)
+      assert.equal(aggregatedTotal, 1100, 'Sum of individual bills must equal 1100 without double counting')
+    })
   })
 })
 
