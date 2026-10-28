@@ -37,11 +37,20 @@ import SubscriptionLimitModal from '../../../components/common/SubscriptionLimit
 import FreeTrialUserLimitModal from '../../../components/common/FreeTrialUserLimitModal'
 
 /**
+ * Detects whether an identifier is a raw Firebase Auth UID (e.g. 28-character alphanumeric string)
+ */
+function isRawAuthUid(str) {
+  if (!str || typeof str !== 'string') return false
+  const trimmed = str.trim()
+  return /^[A-Za-z0-9_-]{24,36}$/.test(trimmed) && /[A-Z]/.test(trimmed) && /[a-z]/.test(trimmed) && /[0-9]/.test(trimmed)
+}
+
+/**
  * Normalizes any workforce member (Manager, Supervisor, Worker)
  * into a standard unified format for table display and filtering.
  */
 function normalizeWorkforceMember(item, explicitCategory = null, sites = [], workerSiteMap = {}, supervisorSiteMap = {}) {
-  const id = String(
+  let id = String(
     item.ManagerId ||
     item.managerId ||
     item.SupervisorId ||
@@ -76,11 +85,26 @@ function normalizeWorkforceMember(item, explicitCategory = null, sites = [], wor
     ''
   ).trim()
 
-  // 1. Determine Role Category: 'manager' | 'supervisor' | 'worker'
+  // 1. Determine Role Category: 'org_admin' | 'manager' | 'supervisor' | 'worker'
   let roleCategory = explicitCategory
   if (!roleCategory) {
     const roleLower = rawRole.toLowerCase()
     if (
+      roleLower.includes('organization') ||
+      roleLower.includes('org head') ||
+      roleLower.includes('org_head') ||
+      roleLower.includes('org admin') ||
+      roleLower.includes('org_admin') ||
+      roleLower === 'org' ||
+      roleLower === 'admin' ||
+      roleLower.includes('organization head') ||
+      roleLower.includes('organization admin') ||
+      item.isOrgAdmin ||
+      item.isOrganizationUser ||
+      item.isOrganizationAdmin
+    ) {
+      roleCategory = 'org_admin'
+    } else if (
       item.workerId ||
       item.dailyWageRate !== undefined ||
       item.trade ||
@@ -111,8 +135,6 @@ function normalizeWorkforceMember(item, explicitCategory = null, sites = [], wor
       item.managerId ||
       item.ManagerId ||
       roleLower.includes('manager') ||
-      roleLower.includes('admin') ||
-      roleLower.includes('head') ||
       roleLower.includes('director') ||
       roleLower.includes('executive')
     ) {
@@ -124,8 +146,9 @@ function normalizeWorkforceMember(item, explicitCategory = null, sites = [], wor
 
   // 2. Determine Designation / Trade Label
   let designation = rawRole
-  if (!designation) {
-    if (roleCategory === 'manager') designation = 'Operations Manager'
+  if (!designation || designation.toLowerCase() === 'organization') {
+    if (roleCategory === 'org_admin') designation = 'Organization Head'
+    else if (roleCategory === 'manager') designation = 'Operations Manager'
     else if (roleCategory === 'supervisor') designation = 'Site Supervisor'
     else designation = 'General Field Worker'
   }
@@ -149,8 +172,23 @@ function normalizeWorkforceMember(item, explicitCategory = null, sites = [], wor
     status = 'Active'
   }
 
+  let resolvedId = id
+  if (roleCategory === 'org_admin') {
+    if (!resolvedId || isRawAuthUid(resolvedId)) {
+      resolvedId = (item.username || item.userName || item.orgId || item.code || '').trim()
+    }
+  }
+
+  if (!resolvedId || isRawAuthUid(resolvedId)) {
+    if (roleCategory === 'org_admin') {
+      resolvedId = (item.username || item.userName || item.orgId || 'ORG-HEAD').trim()
+    } else {
+      resolvedId = resolvedId || `WF-${Math.random().toString(36).substring(2, 7).toUpperCase()}`
+    }
+  }
+
   return {
-    id: id || `WF-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
+    id: resolvedId,
     fullName: rawName,
     username: (item.username || item.userName || item.UserName || '').trim(),
     email,
@@ -248,6 +286,12 @@ function resolveSiteAssignments(item, id, name, roleCategory, sites = [], worker
  */
 function RoleBadge({ roleCategory, designation }) {
   const meta = {
+    org_admin: {
+      bg: 'bg-purple-50/90 text-purple-900 border-purple-200/90 shadow-2xs',
+      icon: Building2,
+      label: 'Organization Head',
+      dot: 'bg-purple-600',
+    },
     manager: {
       bg: 'bg-blue-50/90 text-[#0B3470] border-blue-200/90 shadow-2xs',
       icon: Shield,
@@ -293,7 +337,16 @@ function RoleBadge({ roleCategory, designation }) {
 /**
  * Site Assignment badge list
  */
-function SiteAssignmentBadge({ sites = [] }) {
+function SiteAssignmentBadge({ sites = [], isOrgAdmin = false }) {
+  if (isOrgAdmin) {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-purple-50/70 text-purple-900 border border-purple-200/70">
+        <Building2 className="w-3 h-3 text-purple-600 shrink-0" />
+        <span>All Portfolio Sites</span>
+      </span>
+    )
+  }
+
   if (!sites || sites.length === 0) {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 text-slate-500 border border-slate-200/70">
@@ -332,7 +385,7 @@ export default function TeamManagement({
   sites = [],
   projects = [],
 }) {
-  const { orgId } = useAuth()
+  const { orgId, user, role: authRole, userData } = useAuth()
 
   // Real-time backend states
   const [fetchedManagers, setFetchedManagers] = useState([])
@@ -705,48 +758,153 @@ export default function TeamManagement({
     const combinedSites = [...sites, ...projects]
     const dedupeMap = new Map()
 
+    const findExisting = (incoming) => {
+      for (const existing of dedupeMap.values()) {
+        // 1. Direct ID match (case-insensitive)
+        if (existing.id && incoming.id && existing.id.toLowerCase() === incoming.id.toLowerCase()) {
+          return existing
+        }
+
+        // 2. Email match (case-insensitive, non-empty)
+        if (existing.email && incoming.email && existing.email.toLowerCase() === incoming.email.toLowerCase()) {
+          return existing
+        }
+
+        // 3. Phone match (normalized digits, min 7 digits)
+        const p1 = (existing.phone || '').replace(/\D/g, '')
+        const p2 = (incoming.phone || '').replace(/\D/g, '')
+        if (p1.length >= 7 && p2.length >= 7 && p1 === p2) {
+          return existing
+        }
+
+        // 4. Username match (case-insensitive, non-empty)
+        if (existing.username && incoming.username && existing.username.toLowerCase() === incoming.username.toLowerCase()) {
+          return existing
+        }
+
+        // 5. Organization Head role deduplication (only 1 org head entity per org)
+        if (existing.roleCategory === 'org_admin' && incoming.roleCategory === 'org_admin') {
+          return existing
+        }
+
+        // 6. Direct match with logged-in user UID
+        if (
+          (user?.uid && (existing.id === user.uid || incoming.id === user.uid)) ||
+          (userData?.uid && (existing.id === userData.uid || incoming.id === userData.uid))
+        ) {
+          if (existing.roleCategory === 'org_admin' || incoming.roleCategory === 'org_admin') {
+            return existing
+          }
+        }
+      }
+      return null
+    }
+
+    const mergeInto = (existing, incoming) => {
+      // 1. Resolve Best Clean ID: NEVER retain raw Firebase Auth UID
+      if (isRawAuthUid(existing.id) || existing.id === user?.uid || existing.id === userData?.uid) {
+        if (!isRawAuthUid(incoming.id) && incoming.id) {
+          existing.id = incoming.id
+        } else {
+          existing.id = incoming.username || existing.username || userData?.username || orgId || 'ORG-HEAD'
+        }
+      } else if (!existing.id && incoming.id && !isRawAuthUid(incoming.id)) {
+        existing.id = incoming.id
+      }
+
+      // If existing.id is still raw auth UID for org_admin, replace with clean username/orgId
+      if (existing.roleCategory === 'org_admin' && (isRawAuthUid(existing.id) || existing.id === user?.uid)) {
+        existing.id = incoming.username || existing.username || userData?.username || orgId || 'ORG-HEAD'
+      }
+
+      // 2. Full Name
+      if ((!existing.fullName || existing.fullName === 'Organization Head' || existing.fullName === 'Team Member') && incoming.fullName) {
+        existing.fullName = incoming.fullName
+      }
+
+      // 3. Email & Phone
+      if (!existing.email && incoming.email) existing.email = incoming.email
+      if (!existing.phone && incoming.phone) existing.phone = incoming.phone
+      if (!existing.username && incoming.username) existing.username = incoming.username
+
+      // 4. Assigned Sites
+      if (existing.assignedSites.length === 0 && incoming.assignedSites.length > 0) {
+        existing.assignedSites = incoming.assignedSites
+      }
+
+      // 5. Role & Designation
+      if (incoming.roleCategory === 'org_admin') {
+        existing.roleCategory = 'org_admin'
+        existing.designation = incoming.designation || 'Organization Head'
+      } else if (incoming.roleCategory !== 'worker' && existing.roleCategory === 'worker') {
+        existing.roleCategory = incoming.roleCategory
+        existing.designation = incoming.designation
+      }
+    }
+
     // Helper to register person
     const register = (item, explicitRole) => {
       if (!item) return
       const normalized = normalizeWorkforceMember(item, explicitRole, combinedSites, workerSiteMap, supervisorSiteMap)
-      if (!normalized.id && !normalized.fullName) return
+      if (!normalized || (!normalized.id && !normalized.fullName)) return
 
-      // Deduplication key
-      const key = (normalized.id || normalized.email || normalized.phone || normalized.fullName).toLowerCase().trim()
-      if (!dedupeMap.has(key)) {
-        dedupeMap.set(key, normalized)
+      // Sanitize ID: For org_admin, replace raw Firebase Auth UID with clean business ID (username or orgId)
+      if (normalized.roleCategory === 'org_admin') {
+        if (isRawAuthUid(normalized.id) || normalized.id === user?.uid || normalized.id === userData?.uid) {
+          normalized.id = userData?.username || normalized.username || orgId || 'ORG-HEAD'
+        }
+      }
+
+      const existing = findExisting(normalized)
+      if (existing) {
+        mergeInto(existing, normalized)
       } else {
-        // Merge enriched attributes
-        const existing = dedupeMap.get(key)
-        if (!existing.email && normalized.email) existing.email = normalized.email
-        if (!existing.phone && normalized.phone) existing.phone = normalized.phone
-        if (existing.assignedSites.length === 0 && normalized.assignedSites.length > 0) {
-          existing.assignedSites = normalized.assignedSites
-        }
-        if (normalized.roleCategory !== 'worker' && existing.roleCategory === 'worker') {
-          existing.roleCategory = normalized.roleCategory
-          existing.designation = normalized.designation
-        }
+        const key = (normalized.id || normalized.email || normalized.phone || normalized.fullName).toLowerCase().trim()
+        dedupeMap.set(key, normalized)
       }
     }
 
-      // A. Ingest Managers (from manager collection, props, and org users)
+      // A. Ingest Organization Head / Admin (from fetchedUsers, org users, or auth session)
+      ; (fetchedUsers || []).forEach((u) => {
+        const rLower = String(u.role || u.Role || '').toLowerCase()
+        if (rLower.includes('org') || rLower.includes('head') || rLower.includes('admin') || !u.role) {
+          register(u, 'org_admin')
+        } else {
+          register(u, null)
+        }
+      })
+
+      // Ensure logged-in Organization Head is always represented in the roster
+      if (authRole && (authRole.toLowerCase().includes('org') || authRole.toLowerCase().includes('admin'))) {
+        const orgHeadId = (userData?.username || orgId || 'ORG-HEAD').trim()
+        const currentOrgHead = {
+          id: orgHeadId,
+          fullName: userData?.fullName || user?.displayName || userData?.username || user?.email?.split('@')[0] || 'Organization Head',
+          username: userData?.username || orgId || '',
+          email: userData?.email || user?.email || '',
+          phone: userData?.phone || userData?.phoneNumber || '',
+          role: 'Organization Head',
+          status: 'Active',
+        }
+        register(currentOrgHead, 'org_admin')
+      }
+
+      // B. Ingest Managers (from manager collection, props)
       ; (propManagers || []).forEach((m) => register(m, 'manager'))
       ; (fetchedManagers || []).forEach((m) => register(m, 'manager'))
-      ; (fetchedUsers || []).forEach((u) => register(u, null))
 
-      // B. Ingest Supervisors
+      // C. Ingest Supervisors
       ; (propSupervisors || []).forEach((s) => register(s, 'supervisor'))
       ; (fetchedSupervisors || []).forEach((s) => register(s, 'supervisor'))
 
-      // C. Ingest Workers
+      // D. Ingest Workers
       ; (propWorkers || []).forEach((w) => register(w, 'worker'))
       ; (fetchedWorkers || []).forEach((w) => register(w, 'worker'))
 
     const list = Array.from(dedupeMap.values())
 
-    // Sort by role hierarchy (Managers -> Supervisors -> Workers), then by name
-    const roleRank = { manager: 1, supervisor: 2, worker: 3 }
+    // Sort by role hierarchy (Org Head -> Managers -> Supervisors -> Workers), then by name
+    const roleRank = { org_admin: 0, manager: 1, supervisor: 2, worker: 3 }
     return list.sort((a, b) => {
       const rankDiff = (roleRank[a.roleCategory] || 4) - (roleRank[b.roleCategory] || 4)
       if (rankDiff !== 0) return rankDiff
@@ -764,11 +922,16 @@ export default function TeamManagement({
     projects,
     workerSiteMap,
     supervisorSiteMap,
+    user,
+    authRole,
+    userData,
+    orgId,
   ])
 
   // 3. Metric Calculations
   const metrics = useMemo(() => {
     const total = allWorkforce.length
+    const orgHeadCount = allWorkforce.filter((w) => w.roleCategory === 'org_admin').length
     const managersCount = allWorkforce.filter((w) => w.roleCategory === 'manager').length
     const supervisorsCount = allWorkforce.filter((w) => w.roleCategory === 'supervisor').length
     const workersCount = allWorkforce.filter((w) => w.roleCategory === 'worker').length
@@ -776,6 +939,7 @@ export default function TeamManagement({
 
     return {
       total,
+      orgHeadCount,
       managersCount,
       supervisorsCount,
       workersCount,
@@ -1029,12 +1193,12 @@ export default function TeamManagement({
   const exportData = useMemo(() => {
     return filteredWorkforce.map((w) => ({
       name: w.fullName,
-      id: w.id,
-      category: w.roleCategory.toUpperCase(),
+      id: (isRawAuthUid(w.id) || w.id === user?.uid || w.id === userData?.uid) ? (w.username || orgId || 'ORG-HEAD') : w.id,
+      category: w.roleCategory === 'org_admin' ? 'ORGANIZATION HEAD' : w.roleCategory.toUpperCase(),
       designation: w.designation,
       email: w.email || 'N/A',
       phone: w.phone || 'N/A',
-      sites: w.assignedSites.length > 0 ? w.assignedSites.join('; ') : 'Unassigned',
+      sites: w.assignedSites.length > 0 ? w.assignedSites.join('; ') : (w.roleCategory === 'org_admin' ? 'All Portfolio Sites' : 'Unassigned'),
       status: w.status,
     }))
   }, [filteredWorkforce])
@@ -1173,7 +1337,7 @@ export default function TeamManagement({
       />
 
       {/* Interactive Metric Cards (Clickable quick filters) */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-3.5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3.5">
         <button
           type="button"
           onClick={() => handleRoleFilterChange('ALL')}
@@ -1191,6 +1355,26 @@ export default function TeamManagement({
           <div className="text-2xl font-black">{metrics.total}</div>
           <div className={`text-[11px] mt-1 ${activeRoleFilter === 'ALL' ? 'text-slate-300' : 'text-slate-400'}`}>
             Complete Roster
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => handleRoleFilterChange('ORG_ADMIN')}
+          className={`p-3.5 sm:p-4 rounded-2xl border text-left transition-all duration-200 ${activeRoleFilter === 'ORG_ADMIN'
+              ? 'bg-[#4c1d95] text-white border-[#4c1d95] shadow-md ring-2 ring-purple-500/20'
+              : 'bg-white text-slate-700 border-slate-200/90 hover:border-purple-200 shadow-xs hover:-translate-y-0.5'
+            }`}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className={`text-[10px] font-bold uppercase tracking-wider ${activeRoleFilter === 'ORG_ADMIN' ? 'text-purple-200' : 'text-purple-700'}`}>
+              Org Head
+            </span>
+            <Building2 className={`w-4 h-4 ${activeRoleFilter === 'ORG_ADMIN' ? 'text-purple-200' : 'text-purple-600'}`} />
+          </div>
+          <div className="text-xl sm:text-2xl font-black">{metrics.orgHeadCount}</div>
+          <div className={`text-[11px] mt-1 ${activeRoleFilter === 'ORG_ADMIN' ? 'text-purple-200' : 'text-slate-400'}`}>
+            Corporate Administration
           </div>
         </button>
 
@@ -1273,6 +1457,21 @@ export default function TeamManagement({
               <span>All Workforce</span>
               <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${activeRoleFilter === 'ALL' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'}`}>
                 {metrics.total}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleRoleFilterChange('ORG_ADMIN')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${activeRoleFilter === 'ORG_ADMIN'
+                  ? 'bg-[#4c1d95] text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+                }`}
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              <span>Org Head</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${activeRoleFilter === 'ORG_ADMIN' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                {metrics.orgHeadCount}
               </span>
             </button>
 
@@ -1447,6 +1646,7 @@ export default function TeamManagement({
                     : person.fullName.substring(0, 2).toUpperCase()
 
                   const avatarTheme = {
+                    org_admin: 'bg-purple-100 text-purple-900 border-purple-200 ring-purple-500/20',
                     manager: 'bg-blue-100 text-[#0B3470] border-blue-200 ring-blue-500/20',
                     supervisor: 'bg-emerald-100 text-emerald-800 border-emerald-200 ring-emerald-500/20',
                     worker: 'bg-amber-100 text-amber-900 border-amber-200 ring-amber-500/20',
@@ -1470,14 +1670,23 @@ export default function TeamManagement({
                               {person.fullName}
                             </strong>
                             <div className="flex items-center gap-1.5 mt-0.5">
-                              <span className="font-mono text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200/60" title={`Unique ID: ${person.id}`}>
-                                {person.id}
-                              </span>
-                              {person.username && person.username !== person.fullName && (
-                                <span className="text-[10px] text-slate-400 truncate max-w-[90px]">
-                                  @{person.username}
-                                </span>
-                              )}
+                              {(() => {
+                                const displayId = (isRawAuthUid(person.id) || person.id === user?.uid || person.id === userData?.uid)
+                                  ? (person.username || orgId || 'ORG-HEAD')
+                                  : person.id
+                                return (
+                                  <>
+                                    <span className="font-mono text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200/60" title={`Unique ID: ${displayId}`}>
+                                      {displayId}
+                                    </span>
+                                    {person.username && person.username !== person.fullName && person.username !== displayId && (
+                                      <span className="text-[10px] text-slate-400 truncate max-w-[90px]">
+                                        @{person.username}
+                                      </span>
+                                    )}
+                                  </>
+                                )
+                              })()}
                             </div>
                           </div>
                         </div>
@@ -1530,7 +1739,10 @@ export default function TeamManagement({
 
                       {/* Site / Project Assignment */}
                       <td className="p-3.5">
-                        <SiteAssignmentBadge sites={person.assignedSites} />
+                        <SiteAssignmentBadge
+                          sites={person.assignedSites}
+                          isOrgAdmin={person.roleCategory === 'org_admin'}
+                        />
                       </td>
 
                       {/* Status */}

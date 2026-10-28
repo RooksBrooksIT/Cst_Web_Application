@@ -39,6 +39,7 @@ import {
   Settings,
   Receipt,
   Award,
+  FolderTree,
 } from 'lucide-react'
 
 function value(record, fields, fallback = '') {
@@ -484,11 +485,18 @@ export default function OrganizationDashboard() {
   const stageNames = configuredStageNames.length > 0
     ? configuredStageNames
     : [...new Set(filteredSites.map((site) => value(site, ['projectStage', 'stage', 'currentStage'], '')).filter(Boolean))]
+  const [toastMessage, setToastMessage] = useState(null)
+  const showToast = (message, type = 'info') => {
+    setToastMessage({ message, type })
+    setTimeout(() => setToastMessage(null), 3500)
+  }
+
   const activeModule = location.pathname.split('/').filter(Boolean)[1] || 'dashboard'
 
   const navigation = [
     ['Dashboard', '/organization/dashboard', LayoutDashboard],
     ['Sites', '/organization/sites', Building2],
+    ['Project Configuration', '/organization/project-configs', FolderTree],
     ['Layout & Drawings', '/organization/drawings', Compass],
     ['Staff & Workforce', '/organization/team', Users],
     ['Inventory & Assets', '/organization/inventory', Boxes],
@@ -743,6 +751,7 @@ export default function OrganizationDashboard() {
               materialsAvailability={materialsAvailability}
               siteMaterialPool={siteMaterialPool}
               materialAllocations={materialAllocations}
+              onNotify={showToast}
               loading={loading}
               error={error}
             />
@@ -1006,6 +1015,20 @@ export default function OrganizationDashboard() {
       </div>
 
       <NotificationDrawer isOpen={isNotifOpen} onClose={() => setIsNotifOpen(false)} role="Organization" />
+
+      {toastMessage && (
+        <div
+          className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-2xl shadow-xl border text-xs font-bold flex items-center gap-2 animate-in slide-in-from-bottom-5 duration-200 ${
+            toastMessage.type === 'error'
+              ? 'bg-rose-900 text-white border-rose-800'
+              : toastMessage.type === 'success'
+              ? 'bg-emerald-900 text-white border-emerald-800'
+              : 'bg-slate-900 text-white border-slate-800'
+          }`}
+        >
+          <span>{toastMessage.message}</span>
+        </div>
+      )}
     </div>
   )
 }

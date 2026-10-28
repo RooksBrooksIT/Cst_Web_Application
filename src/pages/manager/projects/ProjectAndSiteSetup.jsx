@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom'
 import {
   Building2,
   MapPin,
@@ -39,6 +39,9 @@ import {
 import {
   fetchSupervisors,
 } from '../../../services/supervisorService'
+import {
+  fetchManagers,
+} from '../../../services/managerService'
 import { SubscriptionLimitService } from '../../../services/subscriptionLimitService'
 import SubscriptionLimitModal from '../../../components/common/SubscriptionLimitModal'
 import Modal from '../../../components/common/Modal'
@@ -51,9 +54,12 @@ function money(amount) {
   }).format(amount || 0)
 }
 
-export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
+export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify, baseRoute }) {
   const navigate = useNavigate()
+  const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
+
+  const resolvedBaseRoute = baseRoute || (location.pathname.startsWith('/organization') ? '/organization' : '/manager')
 
   // Active Tab: 'create' | 'update'
   const initialTab = searchParams.get('tab') === 'update' ? 'update' : 'create'
@@ -82,6 +88,7 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
 
   // Staff & Existing Projects
   const [supervisors, setSupervisors] = useState([])
+  const [managers, setManagers] = useState([])
   const [existingProjects, setExistingProjects] = useState([])
 
   // Subscribe to Master Dictionaries & Projects
@@ -103,6 +110,10 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
 
     fetchSupervisors(orgId).then((res) => {
       if (Array.isArray(res)) setSupervisors(res)
+    }).catch(console.error)
+
+    fetchManagers(orgId).then((res) => {
+      if (Array.isArray(res)) setManagers(res)
     }).catch(console.error)
 
     return () => {
@@ -173,10 +184,12 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
     contractorName: '',
     contractorBudget: '',
 
-    // Step 3: Supervisor Assignment & Terms
+    // Step 3: Supervisor & Manager Assignment & Terms
     skipSupervisor: false,
     supervisorId: '',
     supervisorName: '',
+    managerId: '',
+    managerName: '',
     joinedDate: new Date().toISOString().split('T')[0],
     siteComments: '',
     termsAgreed: false,
@@ -328,8 +341,9 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
       }
 
       const managerActor = {
-        id: currentUser?.uid || 'mgr_lead',
-        name: currentUser?.displayName || currentUser?.fullName || 'Operations Manager',
+        id: formData.managerId || currentUser?.uid || 'mgr_lead',
+        name: formData.managerName || currentUser?.displayName || currentUser?.fullName || 'Operations Manager',
+        role: 'Manager',
       }
 
       const result = await createProjectAndSiteAtomic(orgId, formData, managerActor)
@@ -385,6 +399,8 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
       skipSupervisor: false,
       supervisorId: '',
       supervisorName: '',
+      managerId: '',
+      managerName: '',
       joinedDate: new Date().toISOString().split('T')[0],
       siteComments: '',
       termsAgreed: false,
@@ -541,6 +557,7 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
       const managerActor = {
         id: currentUser?.uid || 'mgr_lead',
         name: currentUser?.displayName || currentUser?.fullName || 'Operations Manager',
+        role: 'Manager',
       }
 
       const updatePayload = {
@@ -638,6 +655,15 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
             >
               <span>✏️</span> Update Site
             </button>
+            <button
+              type="button"
+              onClick={() => navigate(`${resolvedBaseRoute === '/organization' ? '/organization/project-configs' : '/manager/project-configuration'}`)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-slate-600 hover:text-blue-900 hover:bg-white transition-all cursor-pointer"
+              title="Configure Categories, Stages, Contracts & Statuses"
+            >
+              <FolderTree className="w-3.5 h-3.5 text-blue-600" />
+              <span className="hidden sm:inline">Configurations</span>
+            </button>
           </div>
         </div>
       </div>
@@ -661,7 +687,7 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
               </div>
               <button
                 type="button"
-                onClick={() => navigate('/manager/project-configuration')}
+                onClick={() => navigate(`${resolvedBaseRoute === '/organization' ? '/organization/project-configs' : '/manager/project-configuration'}`)}
                 className="px-3.5 py-1.5 bg-amber-700 hover:bg-amber-800 text-white rounded-xl font-bold text-xs shrink-0 flex items-center gap-1.5 cursor-pointer shadow-xs"
               >
                 <FolderTree className="w-3.5 h-3.5" />
@@ -1019,7 +1045,18 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
 
                   {/* Master Dictionaries Dropdowns */}
                   <div className="space-y-1.5">
-                    <label className="block text-xs font-bold text-slate-700">Project Category</label>
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-bold text-slate-700">Project Category</label>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`${resolvedBaseRoute === '/organization' ? '/organization/project-configs' : '/manager/project-configuration'}`)}
+                        className="text-[11px] font-bold text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1 cursor-pointer"
+                        title="Manage project categories and sub-categories"
+                      >
+                        <FolderTree className="w-3 h-3" />
+                        <span>Manage Categories</span>
+                      </button>
+                    </div>
                     <select
                       value={formData.projectCategory}
                       onChange={(e) => setFormData({ ...formData, projectCategory: e.target.value })}
@@ -1057,7 +1094,18 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="block text-xs font-bold text-slate-700">Contract Type</label>
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-bold text-slate-700">Contract Type</label>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`${resolvedBaseRoute === '/organization' ? '/organization/project-configs' : '/manager/project-configuration'}`)}
+                        className="text-[11px] font-bold text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1 cursor-pointer"
+                        title="Manage contract models"
+                      >
+                        <FolderTree className="w-3 h-3" />
+                        <span>Manage Contracts</span>
+                      </button>
+                    </div>
                     <select
                       value={formData.projectContract}
                       onChange={(e) => setFormData({ ...formData, projectContract: e.target.value })}
@@ -1079,7 +1127,18 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="block text-xs font-bold text-slate-700">Initial Project Stage</label>
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-bold text-slate-700">Initial Project Stage</label>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`${resolvedBaseRoute === '/organization' ? '/organization/project-configs' : '/manager/project-configuration'}`)}
+                        className="text-[11px] font-bold text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1 cursor-pointer"
+                        title="Manage construction milestone stages"
+                      >
+                        <FolderTree className="w-3 h-3" />
+                        <span>Manage Stages</span>
+                      </button>
+                    </div>
                     <select
                       value={formData.projectStage}
                       onChange={(e) => setFormData({ ...formData, projectStage: e.target.value })}
@@ -1243,6 +1302,44 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
                       </div>
                     </div>
                   )}
+
+                  {/* Dedicated Manager Assignment (Corporate & Operations Oversight) */}
+                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                    <label className="block text-xs font-bold text-slate-700">Designated Operations / Project Manager</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5 sm:col-span-2">
+                        <select
+                          value={formData.managerId}
+                          onChange={(e) => {
+                            const mId = e.target.value
+                            const mObj = managers.find((m) => (m.id || m.ManagerId || m.managerId) === mId)
+                            setFormData({
+                              ...formData,
+                              managerId: mId,
+                              managerName: mObj ? (mObj.fullName || mObj.FullName || mObj.name || mObj.username) : '',
+                            })
+                          }}
+                          className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900"
+                        >
+                          <option value="">-- Assign Operations Manager (Optional) --</option>
+                          {managers.map((m) => {
+                            const mId = m.id || m.ManagerId || m.managerId
+                            const mName = m.fullName || m.FullName || m.name || m.username
+                            return (
+                              <option key={mId} value={mId}>
+                                {mName} ({mId})
+                              </option>
+                            )
+                          })}
+                        </select>
+                        <span className="text-[10px] text-slate-500">
+                          {managers.length > 0
+                            ? 'Assign a corporate manager to oversee site activities, or leave blank to manage at organization level.'
+                            : 'No dedicated corporate managers created yet. The organization executive team will serve as primary authority.'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
 
                   {/* Architecture Summary Table */}
                   <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
@@ -2045,8 +2142,8 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
               </button>
               <button
                 type="button"
-                onClick={() => navigate('/manager/sites')}
-                className="px-5 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white"
+                onClick={() => navigate(`${resolvedBaseRoute}/sites`)}
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white cursor-pointer"
               >
                 View in Sites Directory →
               </button>
