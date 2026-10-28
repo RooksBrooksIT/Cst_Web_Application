@@ -330,6 +330,85 @@ describe('Expense Synchronization & Normalization Tests', () => {
       assert.equal(normalized.managerName, 'John Doe')
       assert.equal(normalized.remarks, 'Emergency steel reinforcement delivery')
     })
+
+    it('generates deterministic Organization Expenses Document ID matching ST001_newProject_28102026 format', async () => {
+      const {
+        generateOrganizationExpenseDocId,
+        resolveCanonicalSiteKey,
+      } = await import('../organizationExpenseService.js')
+
+      // 1. From short siteCode and projectName
+      const docId1 = generateOrganizationExpenseDocId({
+        siteId: 'ST001',
+        projectName: 'newProject',
+        expenseDate: '2026-10-28',
+      })
+      assert.equal(docId1, 'ST001_newProject_28102026')
+      assert.ok(!docId1.startsWith('OEXP_'), 'Must NOT start with OEXP_')
+      assert.ok(!docId1.includes('undefined'), 'Must not have undefined')
+
+      // 2. From compound project ID (must strip PR001_ prefix)
+      const docId2 = generateOrganizationExpenseDocId({
+        siteId: 'PR001_ST001_newProject',
+        expenseDate: '2026-10-28',
+      })
+      assert.equal(docId2, 'ST001_newProject_28102026')
+      assert.ok(!docId2.startsWith('PR001_'), 'Document ID must NOT include PR001_ project prefix')
+      assert.ok(!docId2.startsWith('OEXP_'), 'Document ID must NOT include OEXP_ prefix')
+
+      // 3. From already canonical siteDocId ST001_newProject
+      const docId3 = generateOrganizationExpenseDocId({
+        siteId: 'ST001_newProject',
+        expenseDate: '2026-10-28',
+      })
+      assert.equal(docId3, 'ST001_newProject_28102026')
+
+      // 4. Verify canonicalSiteKey for totalSiteExpensesPerDay remains exactly ST001_newProject (no date appended)
+      const totalSiteExpensesDocId = resolveCanonicalSiteKey({
+        siteId: 'PR001_ST001_newProject',
+        siteCode: 'ST001',
+        projectName: 'newProject',
+      })
+      assert.equal(totalSiteExpensesDocId, 'ST001_newProject', 'totalSiteExpensesPerDay docId must remain ST001_newProject')
+      assert.ok(!totalSiteExpensesDocId.includes('28102026'), 'totalSiteExpensesPerDay docId must NOT contain date stamp')
+      assert.ok(!totalSiteExpensesDocId.startsWith('PR001_'), 'totalSiteExpensesPerDay docId must NOT start with PR001_')
+    })
+
+    it('normalizes organization expense document with ST001_newProject_28102026 ID format to web schema', () => {
+      const rawOrgDoc = {
+        siteId: 'ST001_newProject',
+        projectName: 'newProject',
+        projectStage: 'Structure Work',
+        raiserId: 'org_admin',
+        raiserName: 'Organization Admin',
+        userRole: 'Organization',
+        expenseDate: { seconds: 1761652800 },
+        totalAmount: 25000,
+        remarks: 'Direct cement order',
+        bills: [
+          {
+            billNo: 'BILL-001',
+            billVendor: 'ACC Cement Depot',
+            vendor: 'ACC Cement Depot',
+            billAmount: 25000,
+            amount: 25000,
+            billCopy: 'https://firebasestorage.googleapis.com/org_bill1.jpg',
+            billUrl: 'https://firebasestorage.googleapis.com/org_bill1.jpg',
+            description: '100 Bags Cement',
+          },
+        ],
+      }
+
+      const normalized = normalizeExpenseRecord('ST001_newProject_28102026', rawOrgDoc, 'Organization')
+
+      assert.equal(normalized.id, 'ST001_newProject_28102026')
+      assert.equal(normalized.siteId, 'ST001_newProject')
+      assert.equal(normalized.totalAmount, 25000)
+      assert.equal(normalized.bills.length, 1)
+      assert.equal(normalized.bills[0].billNo, 'BILL-001')
+      assert.equal(normalized.bills[0].billAmount, 25000)
+      assert.equal(normalized.remarks, 'Direct cement order')
+    })
   })
 })
 

@@ -287,7 +287,9 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
         orgId,
         {
           siteId: formSiteId,
+          siteCode: site?.siteCode || site?.code || '',
           siteName: site?.siteName || site?.projectName || 'Project Site',
+          projectName: site?.projectName || site?.siteName || 'Project Site',
           projectStage: formStage,
           projectCategory: formStage,
           expenseDate: formDate || new Date().toISOString().split('T')[0],

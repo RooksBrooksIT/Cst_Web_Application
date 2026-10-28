@@ -11,12 +11,128 @@ import {
 } from 'firebase/firestore'
 import { db } from './firebase.js'
 import { normalizeExpenseRecord } from './expenseNormalizationService.js'
+import { recalcTotalsAndSyncProject } from './expenseService.js'
 
 /**
  * CST White Label / eBricks - Organization Direct Expenses Service
  * Scoped under: /organisation/{orgId}/organizationExpenses & organizationEntries
  * Fully synchronizes mobile and web expense records in real-time.
  */
+
+/**
+ * Converts any Date or date string to ddMMyyyy (e.g. 28102026).
+ * Matches Mobile App deterministic document ID: `${selectedSiteId}_${ddMMyyyy}`
+ */
+export function formatToDDMMYYYY(dateInput) {
+  if (!dateInput) return ''
+  let d = null
+  if (dateInput instanceof Date) {
+    d = dateInput
+  } else if (typeof dateInput === 'string') {
+    if (/^\d{4}-\d{2}-\d{2}/.test(dateInput)) {
+      const [y, m, day] = dateInput.split('T')[0].split('-').map(Number)
+      d = new Date(y, m - 1, day)
+    } else {
+      d = new Date(dateInput)
+    }
+  } else if (dateInput && typeof dateInput === 'object') {
+    if (typeof dateInput.toDate === 'function') {
+      d = dateInput.toDate()
+    } else if (typeof dateInput.seconds === 'number') {
+      d = new Date(dateInput.seconds * 1000)
+    }
+  }
+  if (!d || isNaN(d.getTime())) return ''
+  const day = String(d.getDate()).padStart(2, '0')
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const year = String(d.getFullYear())
+  return `${day}${month}${year}`
+}
+
+/**
+ * Resolves the canonical site key without project prefix (format: ST001_newProject).
+ * Strips any "PR001_" or project prefix while preserving "ST001_projectName".
+ *
+ * @param {Object|string} input - Either siteId string or object { siteId, siteCode, projectName, siteName }
+ * @returns {string} Canonical site key, e.g. "ST001_newProject"
+ */
+export function resolveCanonicalSiteKey(input) {
+  let rawSiteId = ''
+  let rawSiteCode = ''
+  let rawProjectName = ''
+  let rawSiteName = ''
+
+  if (typeof input === 'string') {
+    rawSiteId = input.trim()
+  } else if (input && typeof input === 'object') {
+    rawSiteId = String(input.siteId || input.id || '').trim()
+    rawSiteCode = String(input.siteCode || input.code || '').trim()
+    rawProjectName = String(input.projectName || '').trim()
+    rawSiteName = String(input.siteName || '').trim()
+  }
+
+  const cleanProjectName = (rawProjectName || rawSiteName || '').replace(/\s+/g, '')
+
+  // 1. If rawSiteId has compound parts
+  if (rawSiteId.includes('_')) {
+    const parts = rawSiteId.split('_').filter(Boolean)
+
+    // Strip trailing 8-digit date stamp if accidentally included (e.g. 28102026)
+    if (parts.length >= 2 && /^\d{8}$/.test(parts[parts.length - 1])) {
+      parts.pop()
+    }
+
+    // If starts with PR prefix (e.g. ['PR001', 'ST001', 'newProject'])
+    if (parts.length >= 3 && /^PR\d+/i.test(parts[0])) {
+      const codePart = /^ST/i.test(parts[1]) ? parts[1] : (rawSiteCode || `ST${parts[0].replace(/^PR/i, '')}`)
+      const namePart = parts.slice(2).join('_')
+      return `${codePart}_${namePart}`
+    }
+
+    // If it's PR001_newProject (only 2 parts, first is PR)
+    if (parts.length === 2 && /^PR\d+/i.test(parts[0])) {
+      const codePart = rawSiteCode || `ST${parts[0].replace(/^PR/i, '')}`
+      return `${codePart}_${parts[1]}`
+    }
+
+    // If it's already ST001_newProject (no PR prefix)
+    if (!/^PR\d+/i.test(parts[0])) {
+      return parts.join('_')
+    }
+  }
+
+  // 2. If rawSiteId is just a code like "ST001" or we have siteCode & projectName
+  const code = rawSiteCode || (rawSiteId && !rawSiteId.includes('_') ? (rawSiteId.toUpperCase().startsWith('PR') ? `ST${rawSiteId.substring(2)}` : rawSiteId) : 'ST001')
+  if (cleanProjectName) {
+    return `${code}_${cleanProjectName}`
+  }
+
+  return rawSiteId || code
+}
+
+/**
+ * Generates the deterministic document ID for Organization Expenses in format:
+ * ${siteId}_${projectName}_${ddMMyyyy} -> e.g. "ST001_newProject_28102026"
+ * Ensures no project ID prefix (PR001_) or OEXP_ timestamp is included.
+ *
+ * @param {Object} params
+ * @param {string} [params.siteId] - e.g. "ST001" or "PR001_ST001_newProject" or "ST001_newProject"
+ * @param {string} [params.siteCode] - e.g. "ST001"
+ * @param {string} [params.projectName] - e.g. "newProject"
+ * @param {string} [params.siteName] - e.g. "newProject"
+ * @param {Date|string|Object} [params.expenseDate] - Expense date
+ * @param {Date|string|Object} [params.date] - Alternate date
+ * @returns {string} e.g. "ST001_newProject_28102026"
+ */
+export function generateOrganizationExpenseDocId(input) {
+  let dateInput = null
+  if (input && typeof input === 'object') {
+    dateInput = input.expenseDate || input.date || input.entryDate || null
+  }
+  const canonicalSiteKey = resolveCanonicalSiteKey(input)
+  const ddmmyyyy = formatToDDMMYYYY(dateInput || new Date())
+  return `${canonicalSiteKey}_${ddmmyyyy}`
+}
 
 export async function fetchOrganizationExpenses(orgId) {
   if (!orgId) return []
@@ -123,17 +239,75 @@ export async function recordOrganizationExpense(orgId, expenseData, orgActor) {
   if (!orgId) throw new Error('orgId is required')
   if (!expenseData.siteId) throw new Error('Site selection is required')
 
-  const timestamp = Date.now()
+  // Resolve canonical site key without project ID prefix (e.g. ST001_newProject)
+  const canonicalSiteKey = resolveCanonicalSiteKey({
+    siteId: expenseData.siteId,
+    siteCode: expenseData.siteCode,
+    projectName: expenseData.projectName,
+    siteName: expenseData.siteName,
+  })
+
+  // Calculate deterministic Document ID matching: ${siteId}_${projectName}_${ddMMyyyy}
+  // e.g. ST001_newProject_28102026 (never includes OEXP_, timestamp, random suffix, or PR001_ prefix)
   const expenseId =
     expenseData.expenseId ||
-    `OEXP_${timestamp}_${Math.random().toString(36).substring(2, 6)}`
+    generateOrganizationExpenseDocId({
+      siteId: canonicalSiteKey,
+      siteCode: expenseData.siteCode,
+      projectName: expenseData.projectName,
+      siteName: expenseData.siteName,
+      expenseDate: expenseData.expenseDate || expenseData.date,
+    })
+
+  // Check if document already exists to merge bills and prevent silent overwrite (Constraint 7)
+  const primaryDocRef = doc(db, 'organisation', orgId, 'organizationExpenses', expenseId)
+  let existingData = null
+  let existingBills = []
+
+  try {
+    const existingSnap = await getDoc(primaryDocRef)
+    if (existingSnap.exists()) {
+      existingData = existingSnap.data()
+      existingBills = Array.isArray(existingData.bills) ? existingData.bills : []
+    }
+  } catch (lookupErr) {
+    console.warn(`[recordOrganizationExpense] Existing doc lookup note for ${expenseId}:`, lookupErr?.message)
+  }
 
   const bills = Array.isArray(expenseData.bills) ? expenseData.bills : []
+  const raiserId = orgActor?.id || orgActor?.uid || existingData?.raiserId || 'org_admin'
+  const raiserName =
+    orgActor?.fullName ||
+    orgActor?.name ||
+    orgActor?.displayName ||
+    existingData?.raiserName ||
+    'Organization Administrator'
+  const raiserRole = orgActor?.userRole || orgActor?.role || existingData?.raiserRole || 'Organization'
+
+  const normalizedNewBills = bills.map((b, idx) => ({
+    billNo: b.billNo || (existingBills.length + idx + 1).toString().padStart(3, '0'),
+    billVendor: b.vendor || b.billVendor || 'Vendor',
+    vendor: b.vendor || b.billVendor || 'Vendor',
+    billAmount: Number(b.amount || b.billAmount) || 0,
+    amount: Number(b.amount || b.billAmount) || 0,
+    billCopy: b.billUrl || b.imageUrl || b.billCopy || 'billURL',
+    billUrl: b.billUrl || b.imageUrl || b.billCopy || '',
+    imageUrl: b.billUrl || b.imageUrl || b.billCopy || '',
+    storagePath: b.storagePath || '',
+    description: b.description || b.purpose || '',
+    raisedBy: raiserId,
+    raisedByName: raiserName,
+    userRole: raiserRole,
+    createdAt: new Date(),
+  }))
+
+  // Merge bills: [...existingBills, ...normalizedNewBills]
+  const allBills = [...existingBills, ...normalizedNewBills]
   const totalAmount =
-    bills.reduce((acc, b) => acc + (Number(b.amount || b.billAmount) || 0), 0) ||
+    allBills.reduce((acc, b) => acc + (Number(b.amount || b.billAmount) || 0), 0) ||
     (Number(expenseData.totalAmount || expenseData.amount) || 0)
 
-  const primaryBill = bills.find((b) => b.billUrl || b.imageUrl || b.billCopy) || {}
+  const primaryBill = allBills.find((b) => b.billUrl || b.imageUrl || b.billCopy) || {}
   const primaryBillUrl =
     expenseData.billUrl ||
     expenseData.imageUrl ||
@@ -144,56 +318,45 @@ export async function recordOrganizationExpense(orgId, expenseData, orgActor) {
   const primaryStoragePath =
     expenseData.storagePath || primaryBill.storagePath || null
 
-  const normalizedBills = bills.map((b, idx) => ({
-    billNo: b.billNo || (idx + 1).toString().padStart(3, '0'),
-    billVendor: b.vendor || b.billVendor || 'Vendor',
-    vendor: b.vendor || b.billVendor || 'Vendor',
-    billAmount: Number(b.amount || b.billAmount) || 0,
-    amount: Number(b.amount || b.billAmount) || 0,
-    billCopy: b.billUrl || b.imageUrl || b.billCopy || 'billURL',
-    billUrl: b.billUrl || b.imageUrl || b.billCopy || '',
-    imageUrl: b.billUrl || b.imageUrl || b.billCopy || '',
-    storagePath: b.storagePath || '',
-    description: b.description || b.purpose || '',
-  }))
+  const remarks = existingData?.remarks
+    ? (expenseData.remarks && !existingData.remarks.includes(expenseData.remarks)
+        ? `${existingData.remarks} | ${expenseData.remarks}`
+        : existingData.remarks)
+    : (expenseData.remarks || '')
 
   const payload = {
     expenseId,
     id: expenseId,
-    siteId: expenseData.siteId,
-    siteName: expenseData.siteName || '',
-    projectName: expenseData.projectName || expenseData.siteName || '',
-    projectStage: expenseData.projectStage || 'Central Administration',
+    siteId: canonicalSiteKey,
+    rawSiteId: expenseData.siteId,
+    siteName: expenseData.siteName || existingData?.siteName || '',
+    projectName: expenseData.projectName || expenseData.siteName || existingData?.projectName || '',
+    projectStage: expenseData.projectStage || existingData?.projectStage || 'Central Administration',
     expenseDate: expenseData.expenseDate
       ? new Date(expenseData.expenseDate)
-      : serverTimestamp(),
+      : (existingData?.expenseDate || serverTimestamp()),
     entryDate: expenseData.expenseDate
       ? new Date(expenseData.expenseDate)
-      : serverTimestamp(),
-    date: expenseData.expenseDate || new Date().toISOString(),
-    raiserId: orgActor?.id || orgActor?.uid || 'org_admin',
-    raiserName:
-      orgActor?.fullName ||
-      orgActor?.name ||
-      orgActor?.displayName ||
-      'Organization Administrator',
-    raiserRole: 'Organization',
+      : (existingData?.entryDate || serverTimestamp()),
+    date: expenseData.expenseDate || existingData?.date || new Date().toISOString(),
+    raiserId,
+    raiserName,
+    raiserRole,
     category: 'Organization Bill',
-    bills: normalizedBills,
+    bills: allBills,
     totalAmount,
     amount: totalAmount,
     billUrl: primaryBillUrl,
     imageUrl: primaryBillUrl,
     storagePath: primaryStoragePath,
-    remarks: expenseData.remarks || '',
+    remarks,
     status: 'recorded',
-    createdAt: serverTimestamp(),
+    createdAt: existingData?.createdAt || serverTimestamp(),
     updatedAt: serverTimestamp(),
   }
 
   // 1. Primary write to organizationExpenses
-  const docRef = doc(db, 'organisation', orgId, 'organizationExpenses', expenseId)
-  await setDoc(docRef, payload)
+  await setDoc(primaryDocRef, payload)
 
   // 2. Dual-sync to organizationEntries for existing mobile & reporting compatibility
   try {
@@ -207,7 +370,7 @@ export async function recordOrganizationExpense(orgId, expenseData, orgActor) {
   try {
     const summaryRef = doc(db, 'organisation', orgId, 'organizationExpenseSummary', expenseId)
     await setDoc(summaryRef, {
-      siteId: expenseData.siteId,
+      siteId: canonicalSiteKey,
       projectName: payload.projectName,
       projectStage: payload.projectStage,
       orgExpenseTotalAmount: totalAmount,
@@ -216,15 +379,19 @@ export async function recordOrganizationExpense(orgId, expenseData, orgActor) {
     }, { merge: true })
   } catch (err) {}
 
-  // 4. Auto-update project site cumulative expenditure
+  // 4. Auto-update project site cumulative expenditure (delta only if existing)
+  const previousDocAmount = Number(existingData?.totalAmount || existingData?.amount || 0)
+  const deltaSpent = totalAmount - previousDocAmount
+
   try {
-    const siteRef = doc(db, 'organisation', orgId, 'projects', expenseData.siteId)
+    const targetSiteId = expenseData.siteId
+    const siteRef = doc(db, 'organisation', orgId, 'projects', targetSiteId)
     const siteSnap = await getDoc(siteRef)
     if (siteSnap.exists()) {
       const currentSpent = Number(
         siteSnap.data().totalAmountSpent || siteSnap.data().spentAmount || 0
       )
-      const nextSpent = currentSpent + totalAmount
+      const nextSpent = currentSpent + deltaSpent
       await updateDoc(siteRef, {
         totalAmountSpent: nextSpent,
         spentAmount: nextSpent,
@@ -236,11 +403,33 @@ export async function recordOrganizationExpense(orgId, expenseData, orgActor) {
     console.warn('Could not auto-sync organization expense to site spent:', err)
   }
 
+  // 5. Sync totalSiteExpensesPerDay with STRICT format ST001_newProject (no date appended)
+  try {
+    await recalcTotalsAndSyncProject(orgId, canonicalSiteKey)
+  } catch (syncErr) {
+    console.warn('[recordOrganizationExpense] recalcTotalsAndSyncProject warning:', syncErr?.message)
+  }
+
   return normalizeExpenseRecord(expenseId, payload, 'Organization')
 }
 
-export async function deleteOrganizationExpense(orgId, expenseId) {
+export async function deleteOrganizationExpense(orgId, expenseId, siteId = null) {
   if (!orgId || !expenseId) throw new Error('orgId and expenseId are required')
+
+  let targetSiteId = siteId
+  let expenseAmount = 0
+
+  try {
+    const snap = await getDoc(doc(db, 'organisation', orgId, 'organizationExpenses', expenseId))
+    if (snap.exists()) {
+      const data = snap.data()
+      if (!targetSiteId) targetSiteId = data.siteId || data.rawSiteId
+      expenseAmount = Number(data.totalAmount || data.amount || 0)
+    }
+  } catch (_) {}
+
+  const canonicalSiteKey = targetSiteId ? resolveCanonicalSiteKey(targetSiteId) : null
+
   try {
     await deleteDoc(doc(db, 'organisation', orgId, 'organizationExpenses', expenseId))
   } catch (e) {}
@@ -250,4 +439,31 @@ export async function deleteOrganizationExpense(orgId, expenseId) {
   try {
     await deleteDoc(doc(db, 'organisation', orgId, 'organizationExpenseSummary', expenseId))
   } catch (e) {}
+
+  // Adjust site cumulative expenditure
+  if (targetSiteId && expenseAmount > 0) {
+    try {
+      const siteRef = doc(db, 'organisation', orgId, 'projects', targetSiteId)
+      const siteSnap = await getDoc(siteRef)
+      if (siteSnap.exists()) {
+        const currentSpent = Number(
+          siteSnap.data().totalAmountSpent || siteSnap.data().spentAmount || 0
+        )
+        const nextSpent = Math.max(0, currentSpent - expenseAmount)
+        await updateDoc(siteRef, {
+          totalAmountSpent: nextSpent,
+          spentAmount: nextSpent,
+          amountSpent: nextSpent,
+          updatedAt: serverTimestamp(),
+        })
+      }
+    } catch (_) {}
+  }
+
+  // Re-sync totalSiteExpensesPerDay under ST001_newProject
+  if (canonicalSiteKey) {
+    try {
+      await recalcTotalsAndSyncProject(orgId, canonicalSiteKey)
+    } catch (_) {}
+  }
 }
