@@ -1254,19 +1254,7 @@ export default function TeamManagement({
           </div>
         </button>
 
-        <div className="col-span-2 sm:col-span-1 p-3.5 sm:p-4 rounded-2xl border border-slate-200/90 bg-white text-slate-700 shadow-xs flex flex-col justify-between">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-purple-600">Site Deployments</span>
-            <Building2 className="w-4 h-4 text-purple-600" />
-          </div>
-          <div className="text-xl sm:text-2xl font-black text-slate-900">
-            {metrics.assignedCount}
-            <span className="text-xs font-medium text-slate-400 ml-1.5">/ {metrics.total}</span>
-          </div>
-          <div className="text-[11px] text-slate-400 mt-1">
-            {metrics.total > 0 ? `${Math.round((metrics.assignedCount / metrics.total) * 100)}% deployed to sites` : 'No members'}
-          </div>
-        </div>
+       
       </div>
 
       {/* Filter and Search Bar */}
