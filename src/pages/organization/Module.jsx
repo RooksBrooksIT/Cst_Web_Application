@@ -30,6 +30,7 @@ import IncentiveCalculation from './incentives/IncentiveCalculation'
 import { SubscriptionLimitService, isFeatureAllowedForPlan, isSubscriptionExpired } from '../../services/subscriptionLimitService'
 import SubscriptionLimitModal from '../../components/common/SubscriptionLimitModal'
 import { ShieldAlert, ArrowUpRight, Eye } from 'lucide-react'
+import { matchesSite } from '../../services/reportService'
 
 export { OrgFinancePage, SiteFinancialDetailsPage, OrganizationExpenses, PettyCashGovernance, OrganizationApprovalsCenter, TeamManagement, BlueprintsDrawings, ConstructionDocuments, IncentiveCalculation }
 
@@ -63,51 +64,7 @@ export function amountValue(record, fields) {
   return 0
 }
 
-export function matchesSite(record, site) {
-  if (!record || !site) return false
-  const siteKeys = [
-    site.id,
-    site.siteId,
-    site.siteid,
-    site.code,
-    site.siteCode,
-    site.projectId,
-  ].filter(Boolean).map((k) => String(k).trim().toLowerCase())
-
-  const siteNames = [
-    site.siteName,
-    site.sitename,
-    site.projectName,
-    site.name,
-  ].filter(Boolean).map((n) => String(n).trim().toLowerCase())
-
-  const recKeys = [
-    record.id,
-    record.siteId,
-    record.siteid,
-    record.code,
-    record.siteCode,
-    record.projectId,
-    record.projectID,
-  ].filter(Boolean).map((k) => String(k).trim().toLowerCase())
-
-  const recNames = [
-    record.siteName,
-    record.sitename,
-    record.projectName,
-    record.name,
-  ].filter(Boolean).map((n) => String(n).trim().toLowerCase())
-
-  for (const sKey of siteKeys) {
-    if (recKeys.includes(sKey)) return true
-  }
-
-  for (const sName of siteNames) {
-    if (recNames.includes(sName)) return true
-  }
-
-  return false
-}
+export { matchesSite }
 
 function money(amount) {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount || 0)
@@ -244,10 +201,10 @@ export function SiteManagement({ sites = [], managers = [], subscription, loadin
       }
       setIsModalOpen(false)
     } catch (err) {
-      if (err.code === 'SITE_LIMIT_REACHED' || err.code === 'SUBSCRIPTION_EXPIRED') {
+      if (err.code === 'SITE_LIMIT_REACHED' || err.code === 'FREE_TRIAL_LIMIT_REACHED' || err.code === 'SUBSCRIPTION_EXPIRED') {
         setIsModalOpen(false)
         setLimitModalData({
-          title: err.code === 'SUBSCRIPTION_EXPIRED' ? 'Subscription Expired' : 'Site Quota Reached',
+          title: err.code === 'SUBSCRIPTION_EXPIRED' ? 'Subscription Expired' : (err.code === 'FREE_TRIAL_LIMIT_REACHED' ? 'Free Trial Limit Reached' : 'Site Quota Reached'),
           message: err.message,
           planName,
           currentCount: sites.length,

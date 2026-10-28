@@ -1,4 +1,4 @@
-import { doc, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp, Timestamp } from 'firebase/firestore'
+import { doc, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp, Timestamp, writeBatch, collection, getDocs } from 'firebase/firestore'
 import { db } from './firebase.js'
 import { generateTxnId } from './payuService.js'
 
@@ -403,13 +403,7 @@ export async function checkAndPromoteQueuedSubscription(orgId, subscription) {
       }
 
       try {
-        const subRef = doc(db, 'organisation', orgId, 'data', 'subscription')
-        await setDoc(subRef, payload, { merge: true })
-        await setDoc(
-          doc(db, 'organisation', orgId),
-          { subscription: payload, updatedAt: serverTimestamp() },
-          { merge: true }
-        )
+        await syncSubscriptionAcrossDocs(orgId, payload)
       } catch (err) {
         console.warn('Error promoting queued subscription:', err)
       }
@@ -418,19 +412,236 @@ export async function checkAndPromoteQueuedSubscription(orgId, subscription) {
     } else if (subscription.isSubscriptionActive) {
       // Revert to inactive status upon expiration without queue
       try {
-        const subRef = doc(db, 'organisation', orgId, 'data', 'subscription')
-        await setDoc(subRef, { isSubscriptionActive: false, updatedAt: serverTimestamp() }, { merge: true })
-        await setDoc(
-          doc(db, 'organisation', orgId),
-          { 'subscription.isSubscriptionActive': false, updatedAt: serverTimestamp() },
-          { merge: true }
-        )
+        await syncSubscriptionAcrossDocs(orgId, {
+          ...subscription,
+          isSubscriptionActive: false,
+          updatedAt: serverTimestamp(),
+        })
       } catch (e) {}
       return { ...subscription, isSubscriptionActive: false }
     }
   }
 
   return subscription
+}
+
+/**
+ * Resolves the authoritative subscription for an organization from Firestore.
+ * Authoritative primary source: /organisation/{orgId}/data/subscription
+ * Reconciles conflicting records towards verified active and paid records.
+ *
+ * @param {string} orgId - Organization ID
+ * @returns {Promise<Object|null>}
+ */
+export async function resolveAuthoritativeSubscription(orgId) {
+  if (!orgId) return null
+
+  try {
+    const subRef = doc(db, 'organisation', orgId, 'data', 'subscription')
+    const rootRef = doc(db, 'organisation', orgId)
+
+    const [subSnap, rootSnap] = await Promise.all([
+      getDoc(subRef).catch(() => null),
+      getDoc(rootRef).catch(() => null),
+    ])
+
+    const subData = subSnap?.exists?.() ? subSnap.data() : null
+    const rootData = rootSnap?.exists?.() ? rootSnap.data() : null
+    const rootNestedSub = rootData?.subscription || rootData?.data?.subscription || null
+
+    // 1. If authoritative subData exists with a verified plan
+    if (subData && subData.subscriptionPlan && !String(subData.subscriptionPlan).toLowerCase().includes('pending')) {
+      const isSubPaid =
+        !String(subData.subscriptionPlan).toLowerCase().includes('free') &&
+        !String(subData.subscriptionPlan).toLowerCase().includes('trial')
+      if (isSubPaid && (subData.paymentStatus === 'SUCCESS' || subData.isSubscriptionActive)) {
+        return { id: 'subscription', ...subData }
+      }
+    }
+
+    // 2. If root doc's nested subscription has an active paid plan
+    if (rootNestedSub && rootNestedSub.subscriptionPlan) {
+      const isRootPaid =
+        !String(rootNestedSub.subscriptionPlan).toLowerCase().includes('free') &&
+        !String(rootNestedSub.subscriptionPlan).toLowerCase().includes('trial')
+      if (isRootPaid && (rootNestedSub.paymentStatus === 'SUCCESS' || rootNestedSub.isSubscriptionActive)) {
+        return { id: 'subscription', ...rootNestedSub }
+      }
+    }
+
+    // 3. Fallback: subData > rootNestedSub > rootData
+    if (subData && Object.keys(subData).length > 0) {
+      return { id: 'subscription', ...subData }
+    }
+    if (rootNestedSub && Object.keys(rootNestedSub).length > 0) {
+      return { id: 'subscription', ...rootNestedSub }
+    }
+    if (rootData && (rootData.subscriptionPlan || rootData.isSubscriptionActive !== undefined)) {
+      return { id: 'subscription', ...rootData }
+    }
+  } catch (err) {
+    console.warn(`[resolveAuthoritativeSubscription] Error resolving subscription for ${orgId}:`, err)
+  }
+
+  return null
+}
+
+/**
+ * Synchronizes subscription state atomically across all related Firestore documents.
+ * Authoritative target: /organisation/{orgId}/data/subscription
+ * Backward-compatibility mirror: /organisation/{orgId} (root doc top-level and nested subscription)
+ * Legacy synchronization: /organisation/{orgId}/data/admin, admin/data, data/data (if existing)
+ *
+ * @param {string} orgId - Organization ID
+ * @param {Object} subscriptionPayload - Authoritative subscription payload
+ * @returns {Promise<Object>}
+ */
+function removeUndefinedFields(obj) {
+  if (!obj || typeof obj !== 'object') return obj
+  const clean = {}
+  for (const [key, val] of Object.entries(obj)) {
+    if (val !== undefined) {
+      if (val && typeof val === 'object' && !val.toDate && !val._seconds && !(val instanceof Date)) {
+        clean[key] = removeUndefinedFields(val)
+      } else {
+        clean[key] = val
+      }
+    }
+  }
+  return clean
+}
+
+export async function syncSubscriptionAcrossDocs(orgId, subscriptionPayload) {
+  if (!orgId) throw new Error('Organization ID is required for subscription synchronization.')
+  if (!subscriptionPayload || typeof subscriptionPayload !== 'object') {
+    throw new Error('Valid subscription payload is required for synchronization.')
+  }
+
+  const batch = writeBatch(db)
+
+  // 1. Authoritative primary doc: /organisation/{orgId}/data/subscription
+  const subRef = doc(db, 'organisation', orgId, 'data', 'subscription')
+  batch.set(subRef, removeUndefinedFields(subscriptionPayload), { merge: true })
+
+  // 2. Synchronize to root organisation doc /organisation/{orgId}
+  const rootRef = doc(db, 'organisation', orgId)
+  const rootSyncFields = {
+    subscriptionPlan: subscriptionPayload.subscriptionPlan,
+    subscriptionType: subscriptionPayload.subscriptionType,
+    subscriptionStartDate: subscriptionPayload.subscriptionStartDate,
+    subscriptionEndDate: subscriptionPayload.subscriptionEndDate,
+    isSubscriptionActive: subscriptionPayload.isSubscriptionActive,
+    onboardingStep: subscriptionPayload.onboardingStep || 'COMPLETED',
+    registrationStatus: subscriptionPayload.registrationStatus || 'COMPLETED',
+    maxProjects: subscriptionPayload.maxProjects,
+    maxUsers: subscriptionPayload.maxUsers,
+    maxManagers: subscriptionPayload.maxManagers,
+    maxSupervisors: subscriptionPayload.maxSupervisors,
+    paymentGateway: subscriptionPayload.paymentGateway || 'PayU',
+    paymentTxnId: subscriptionPayload.paymentTxnId || '',
+    payuMoneyId: subscriptionPayload.payuMoneyId || '',
+    paymentStatus: subscriptionPayload.paymentStatus || 'SUCCESS',
+    paymentAmount: subscriptionPayload.paymentAmount !== undefined ? subscriptionPayload.paymentAmount : 0,
+    paymentMethod: subscriptionPayload.paymentMethod || 'PayU Gateway',
+    platinumProjects: subscriptionPayload.platinumProjects || null,
+    isUpgradeQueued: subscriptionPayload.isUpgradeQueued || false,
+    subscription: subscriptionPayload,
+    updatedAt: serverTimestamp(),
+    updated_at: serverTimestamp(),
+  }
+  batch.set(rootRef, removeUndefinedFields(rootSyncFields), { merge: true })
+
+  // 3. Synchronize existing legacy subcollection documents (preserving all credentials & admin profile fields)
+  const legacySubdocs = [
+    ['data', 'admin'],
+    ['admin', 'data'],
+    ['data', 'data'],
+  ]
+
+  const legacySyncFields = {
+    subscriptionPlan: subscriptionPayload.subscriptionPlan,
+    isSubscriptionActive: subscriptionPayload.isSubscriptionActive,
+    paymentStatus: subscriptionPayload.paymentStatus,
+    onboardingStep: subscriptionPayload.onboardingStep || 'COMPLETED',
+    registrationStatus: subscriptionPayload.registrationStatus || 'COMPLETED',
+    updatedAt: serverTimestamp(),
+    updated_at: serverTimestamp(),
+  }
+
+  await Promise.all(
+    legacySubdocs.map(async ([subCol, docName]) => {
+      try {
+        const legacyRef = doc(db, 'organisation', orgId, subCol, docName)
+        const snap = await getDoc(legacyRef)
+        if (snap.exists()) {
+          batch.set(legacyRef, removeUndefinedFields(legacySyncFields), { merge: true })
+        }
+      } catch (err) {
+        console.warn(`[syncSubscriptionAcrossDocs] Warning reading legacy doc ${subCol}/${docName}:`, err.message)
+      }
+    })
+  )
+
+  await batch.commit()
+  return { success: true, orgId, payload: subscriptionPayload }
+}
+
+/**
+ * Safe, idempotent migration function for an individual organization.
+ * Resolves the verified authoritative subscription and synchronizes all paths.
+ *
+ * @param {string} orgId - Organization ID
+ * @returns {Promise<Object>}
+ */
+export async function synchronizeOrganizationSubscription(orgId) {
+  if (!orgId) throw new Error('orgId is required')
+
+  const authoritative = await resolveAuthoritativeSubscription(orgId)
+  if (!authoritative) {
+    return { success: false, orgId, message: 'No subscription data found' }
+  }
+
+  const planName = authoritative.subscriptionPlan || 'Free Trial'
+  const quotas = calculatePlanQuotas(planName, authoritative.platinumProjects || 10)
+
+  const payload = {
+    ...authoritative,
+    subscriptionPlan: planName,
+    subscriptionType: authoritative.subscriptionType || (planName.toLowerCase().includes('trial') ? 'Free Trial' : 'Monthly'),
+    maxProjects: authoritative.maxProjects || quotas.maxProjects,
+    maxUsers: authoritative.maxUsers || quotas.maxUsers,
+    maxManagers: authoritative.maxManagers || quotas.maxManagers,
+    maxSupervisors: authoritative.maxSupervisors || quotas.maxSupervisors,
+    isSubscriptionActive: authoritative.isSubscriptionActive !== undefined ? authoritative.isSubscriptionActive : true,
+    paymentStatus: authoritative.paymentStatus || 'SUCCESS',
+    updatedAt: serverTimestamp(),
+  }
+
+  await syncSubscriptionAcrossDocs(orgId, payload)
+  return { success: true, orgId, plan: planName, payload }
+}
+
+/**
+ * Safe, idempotent batch migration for all existing organizations in Firestore.
+ *
+ * @returns {Promise<Object>}
+ */
+export async function syncAllOrganizationSubscriptions() {
+  const orgsSnap = await getDocs(collection(db, 'organisation'))
+  const results = []
+
+  for (const orgDoc of orgsSnap.docs) {
+    const orgId = orgDoc.id
+    try {
+      const res = await synchronizeOrganizationSubscription(orgId)
+      results.push({ orgId, ...res })
+    } catch (err) {
+      console.warn(`[syncAllOrganizationSubscriptions] Error syncing ${orgId}:`, err.message)
+      results.push({ orgId, success: false, error: err.message })
+    }
+  }
+
+  return { total: orgsSnap.docs.length, results }
 }
 
 /**
@@ -445,13 +656,10 @@ export async function fetchSubscription(orgId) {
       const sub = { id: snap.id, ...snap.data() }
       return await checkAndPromoteQueuedSubscription(orgId, sub)
     }
-    // Fallback check on root org doc
-    const orgRef = doc(db, 'organisation', orgId)
-    const orgSnap = await getDoc(orgRef)
-    if (orgSnap.exists()) {
-      const data = orgSnap.data()
-      const sub = data.subscription || data.data?.subscription || null
-      return sub ? await checkAndPromoteQueuedSubscription(orgId, sub) : null
+    // Fallback: resolve from authoritative resolver
+    const resolved = await resolveAuthoritativeSubscription(orgId)
+    if (resolved) {
+      return await checkAndPromoteQueuedSubscription(orgId, resolved)
     }
   } catch (err) {
     console.error('Error fetching subscription:', err)
@@ -473,12 +681,10 @@ export function subscribeSubscription(orgId, onData, onError) {
         const verified = await checkAndPromoteQueuedSubscription(orgId, sub)
         onData(verified)
       } else {
-        // Check root doc fallback
-        getDoc(doc(db, 'organisation', orgId)).then(async (orgSnap) => {
-          if (orgSnap.exists()) {
-            const data = orgSnap.data()
-            const sub = data.subscription || data.data?.subscription || null
-            const verified = sub ? await checkAndPromoteQueuedSubscription(orgId, sub) : null
+        // Fallback check on authoritative resolver
+        resolveAuthoritativeSubscription(orgId).then(async (resolved) => {
+          if (resolved) {
+            const verified = await checkAndPromoteQueuedSubscription(orgId, resolved)
             onData(verified)
           } else {
             onData(null)
@@ -494,6 +700,8 @@ export function subscribeSubscription(orgId, onData, onError) {
 
 /**
  * Update or Activate Subscription in Firestore
+ * Enforces payment verification before activating paid plans
+ * Synchronizes atomically across /data/subscription, root doc, and legacy documents
  */
 export async function activateSubscription({
   orgId,
@@ -503,11 +711,26 @@ export async function activateSubscription({
   paymentMethod = 'PayU UPI',
   paymentTxnId = null,
   payuMoneyId = null,
+  paymentStatus = 'SUCCESS',
   isUpgradeQueued = false,
   platinumProjects = 10,
   currentSubscription = null,
 }) {
   if (!orgId) throw new Error('Organization ID is required.')
+  if (!planName) throw new Error('Subscription plan name is required.')
+
+  const isTrial = planName.toLowerCase().includes('trial') || planName.toLowerCase().includes('free')
+  const numAmount = Number(amount) || 0
+
+  // 1. Payment Confirmation & Verification
+  if (!isTrial) {
+    if (paymentStatus === 'FAILED') {
+      throw new Error('Payment verification failed. Cannot activate subscription with FAILED payment status.')
+    }
+    if (numAmount <= 0) {
+      throw new Error(`Paid plan "${planName}" requires confirmed payment with non-zero amount.`)
+    }
+  }
 
   const quotas = calculatePlanQuotas(planName, platinumProjects)
   const txnId = paymentTxnId || generateTxnId('TXN')
@@ -517,9 +740,7 @@ export async function activateSubscription({
   let durationDays = 30
   if (billingCycle === '6 Months') durationDays = 180
   else if (billingCycle === 'Yearly') durationDays = 365
-  else if (planName.toLowerCase().includes('trial')) durationDays = 14
-
-  const subRef = doc(db, 'organisation', orgId, 'data', 'subscription')
+  else if (isTrial) durationDays = 14
 
   if (isUpgradeQueued && currentSubscription?.subscriptionEndDate) {
     const curEnd = currentSubscription.subscriptionEndDate.toDate
@@ -534,12 +755,12 @@ export async function activateSubscription({
       queuedStartDate: Timestamp.fromDate(curEnd),
       queuedEndDate: Timestamp.fromDate(queuedEnd),
       queuedPaymentTxnId: txnId,
-      queuedPaymentAmount: Number(amount) || 0,
+      queuedPaymentAmount: numAmount,
       queuedPlatinumProjects: platinumProjects,
       updatedAt: serverTimestamp(),
     }
 
-    await setDoc(subRef, payload, { merge: true })
+    await syncSubscriptionAcrossDocs(orgId, payload)
     return { status: 'QUEUED', payload, txnId }
   }
 
@@ -554,34 +775,24 @@ export async function activateSubscription({
     subscriptionEndDate: Timestamp.fromDate(endDate),
     isSubscriptionActive: true,
     onboardingStep: 'COMPLETED',
+    registrationStatus: 'COMPLETED',
     maxProjects: quotas.maxProjects,
     maxUsers: quotas.maxUsers,
     maxManagers: quotas.maxManagers,
     maxSupervisors: quotas.maxSupervisors,
-    paymentGateway: 'PayU',
+    paymentGateway: isTrial ? 'None' : 'PayU',
     paymentTxnId: txnId,
     payuMoneyId: pMoneyId,
     paymentStatus: 'SUCCESS',
-    paymentAmount: Number(amount) || 0,
+    paymentAmount: numAmount,
     paymentMethod,
     platinumProjects: planName.toLowerCase().includes('platinum') ? platinumProjects : null,
     isUpgradeQueued: false,
     updatedAt: serverTimestamp(),
   }
 
-  await setDoc(subRef, payload, { merge: true })
-
-  // Mirror to root organisation doc for backward compatibility
-  try {
-    await setDoc(
-      doc(db, 'organisation', orgId),
-      {
-        subscription: payload,
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true }
-    )
-  } catch (e) {}
+  // Atomically synchronize across data/subscription, root doc, and legacy docs
+  await syncSubscriptionAcrossDocs(orgId, payload)
 
   return { status: 'ACTIVATED', payload, txnId }
 }
@@ -608,10 +819,10 @@ export function checkQuotaLimits({
   const canAddTrialSupervisor = !isExpired && currentSupervisors < 1 && eligibleUsers < 3
 
   const quotas = calculatePlanQuotas(plan, subscription?.platinumProjects || 10)
-  const maxSites = isTrialActive ? 999999 : (subscription?.maxProjects || quotas.maxProjects)
-  const maxManagers = isTrialActive ? 1 : (subscription?.maxManagers || quotas.maxManagers)
-  const maxSupervisors = isTrialActive ? 1 : (subscription?.maxSupervisors || quotas.maxSupervisors)
-  const maxUsers = isTrialActive ? 3 : (subscription?.maxUsers || quotas.maxUsers)
+  const maxSites = subscription?.maxProjects !== undefined ? Number(subscription.maxProjects) : quotas.maxProjects
+  const maxManagers = subscription?.maxManagers !== undefined ? Number(subscription.maxManagers) : (isTrialActive ? 1 : quotas.maxManagers)
+  const maxSupervisors = subscription?.maxSupervisors !== undefined ? Number(subscription.maxSupervisors) : (isTrialActive ? 1 : quotas.maxSupervisors)
+  const maxUsers = subscription?.maxUsers !== undefined ? Number(subscription.maxUsers) : (isTrialActive ? 3 : quotas.maxUsers)
 
   return {
     isExpired,

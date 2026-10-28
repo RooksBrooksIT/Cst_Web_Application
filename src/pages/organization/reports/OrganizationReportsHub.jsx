@@ -164,7 +164,19 @@ export default function OrganizationReportsHub(props) {
     return [...new Set(names)]
   }, [projectStages, stagesFromConfig])
 
-  const allSites = sites.length > 0 ? sites : projects
+  const allSites = useMemo(() => {
+    const raw = sites.length > 0 ? sites : projects
+    const seen = new Set()
+    return (raw || []).filter((s) => {
+      const code = (s.siteId || s.id || '').toString().match(/ST\d+/i)?.[0]?.toUpperCase()
+      const name = (s.siteName || s.name || s.projectName || '').trim().toLowerCase()
+      const key = code || name || s.id
+      if (!key) return true
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }, [sites, projects])
   const normalizedAllSites = useMemo(() => getNormalizedSiteOptions(allSites), [allSites])
 
   const categories = [
@@ -334,17 +346,21 @@ export default function OrganizationReportsHub(props) {
   }, [allSites])
 
   const totalReceived = useMemo(() => {
-    return sitePayments.reduce(
+    const paymentsSum = sitePayments.reduce(
       (sum, p) => sum + parseAmount(p.amountPaid || p.amount || p.totalAmount || 0),
-      allSites.reduce((sum, s) => sum + parseAmount(s.amountPaid || 0), 0)
+      0
     )
+    const sitesPaidSum = allSites.reduce((sum, s) => sum + parseAmount(s.amountPaid || 0), 0)
+    return paymentsSum > 0 ? paymentsSum : sitesPaidSum
   }, [sitePayments, allSites])
 
   const totalSpent = useMemo(() => {
-    return allSites.reduce(
-      (sum, s) => sum + parseAmount(s.amountSpent || s.spentAmount || 0),
-      totalSiteExpensesPerDay.reduce((sum, r) => sum + parseAmount(r.totalAllExpenses || r.totalAmount || 0), 0)
+    const rollupsSum = totalSiteExpensesPerDay.reduce(
+      (sum, r) => sum + parseAmount(r.totalAllExpenses || r.totalAmount || 0),
+      0
     )
+    const sitesSpentSum = allSites.reduce((sum, s) => sum + parseAmount(s.amountSpent || s.spentAmount || 0), 0)
+    return rollupsSum > 0 ? rollupsSum : sitesSpentSum
   }, [allSites, totalSiteExpensesPerDay])
 
   const cashInHand = totalReceived - totalSpent

@@ -6,7 +6,7 @@
  */
 
 import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firestore'
-import { db } from './firebase'
+import { db } from './firebase.js'
 
 // ------------------------------------------------------------------------------------------------
 // UTILITIES: Currency, Numbers, Dates, Canonical Matching
@@ -105,12 +105,39 @@ export function matchesSite(record, site) {
   const recSiteName = String(record.siteName || record.site_name || record.projectName || record.project_name || record.name || '').trim().toLowerCase()
   const recSiteCode = String(record.siteCode || record.code || '').trim().toLowerCase()
 
+  // Exact matches
   if (targetId && (recSiteId === targetId || recSiteName === targetId)) return true
   if (targetName && (recSiteName === targetName || recSiteId === targetName)) return true
   if (targetCode && (recSiteCode === targetCode || recSiteId === targetCode)) return true
 
+  // Site code extraction (e.g. ST001)
+  const extractCode = (s) => {
+    const m = String(s || '').match(/st\d+/i)
+    return m ? m[0].toLowerCase() : ''
+  }
+  const tCode = targetCode || extractCode(targetId) || extractCode(targetName)
+  const rCode = recSiteCode || extractCode(recSiteId) || extractCode(recSiteName)
+  if (tCode && rCode && tCode === rCode) return true
+
+  // Strip PR\d+_ prefix (e.g. PR001_ST001_Alpha -> ST001_Alpha)
+  const stripPr = (s) => String(s || '').replace(/^pr\d+_/i, '').trim().toLowerCase()
+  const strippedTarget = stripPr(targetId)
+  const strippedRec = stripPr(recSiteId)
+  if (strippedTarget && strippedRec && strippedTarget === strippedRec) return true
+
+  // Substring containment for compound IDs (ensure at least 4 chars to avoid false positives)
+  if (strippedTarget && strippedRec && strippedTarget.length >= 4 && strippedRec.length >= 4) {
+    if (strippedTarget.includes(strippedRec) || strippedRec.includes(strippedTarget)) return true
+  }
+
+  // Normalized alphanumeric name match
+  const normTargetName = targetName.replace(/[^a-z0-9]/g, '')
+  const normRecName = recSiteName.replace(/[^a-z0-9]/g, '')
+  if (normTargetName && normRecName && normTargetName === normRecName) return true
+
   return false
 }
+
 
 // ------------------------------------------------------------------------------------------------
 // 1. SITE / PROJECT EXPENSES REPORT HUB
@@ -144,8 +171,8 @@ export function calculateDailySiteExpenses({
     return isThisSite && matchesDate && matchesStage
   })
 
-  // Find daily log / manager entry
-  const managerEntry = managerExpenses.find((entry) => {
+  // Find daily log / manager entries
+  const managerEntriesForDay = managerExpenses.filter((entry) => {
     const isThisSite = site ? matchesSite(entry, site) : true
     const entryDateKey = entry.dateKey || formatDateToKey(entry.date || entry.createdAt)
     const entryDateISO = formatDateToISO(entry.date || entry.createdAt)
@@ -155,7 +182,7 @@ export function calculateDailySiteExpenses({
   // Find direct org expenses
   const orgBillsForDay = organizationEntries.filter((entry) => {
     const isThisSite = site ? matchesSite(entry, site) : true
-    const entryDateISO = formatDateToISO(entry.date || entry.createdAt)
+    const entryDateISO = formatDateToISO(entry.date || entry.entryDate || entry.expenseDate || entry.createdAt)
     return isThisSite && entryDateISO === targetDateISO
   })
 
@@ -175,7 +202,9 @@ export function calculateDailySiteExpenses({
         amount: parseAmount(item.totalAmount || item.amount || (parseAmount(item.count || 1) * parseAmount(item.rate || item.dailyWage || 0))),
       }))
     : []
-  const totalLabour = labours.reduce((acc, curr) => acc + curr.amount, parseAmount(supervisorEntry?.totalLabourAmount || supervisorEntry?.labourTotal || 0))
+  const totalLabour = labours.length > 0
+    ? labours.reduce((acc, curr) => acc + curr.amount, 0)
+    : parseAmount(supervisorEntry?.totalLabourAmount || supervisorEntry?.labourTotal || 0)
 
   // 2. Material breakdown
   const materials = Array.isArray(supervisorEntry?.materials)
@@ -187,7 +216,9 @@ export function calculateDailySiteExpenses({
         amount: parseAmount(item.totalAmount || item.amount || (parseAmount(item.quantity || 0) * parseAmount(item.unitPrice || 0))),
       }))
     : []
-  const totalMaterial = materials.reduce((acc, curr) => acc + curr.amount, parseAmount(supervisorEntry?.totalMaterialAmount || supervisorEntry?.materialTotal || 0))
+  const totalMaterial = materials.length > 0
+    ? materials.reduce((acc, curr) => acc + curr.amount, 0)
+    : parseAmount(supervisorEntry?.totalMaterialAmount || supervisorEntry?.materialTotal || 0)
 
   // 3. Food allowance
   const foodAmount = parseAmount(supervisorEntry?.foodAllowance || supervisorEntry?.foodExpense || supervisorEntry?.food || 0)
@@ -195,44 +226,85 @@ export function calculateDailySiteExpenses({
   // 4. Transport & Fuel
   const transportAmount = parseAmount(supervisorEntry?.transportAmount || supervisorEntry?.fuelExpense || supervisorEntry?.transport || 0)
 
-  // 5. Manager & Org Bills
+  // 5. Manager & Org Bills (deduplicated by unique voucher/item key)
   const bills = []
-  if (managerEntry) {
-    if (Array.isArray(managerEntry.bills)) {
-      managerEntry.bills.forEach((b) => {
+  const seenBillKeys = new Set()
+
+  managerEntriesForDay.forEach((managerEntry) => {
+    if (Array.isArray(managerEntry.bills) && managerEntry.bills.length > 0) {
+      managerEntry.bills.forEach((b, idx) => {
+        const amt = parseAmount(b.amount || b.totalAmount || b.billAmount)
+        const desc = b.description || b.category || 'Manager Approved Expense'
+        const billKey = `${managerEntry.id || 'mgr'}_${b.id || b.billId || idx}_${amt}_${desc}`
+        if (seenBillKeys.has(billKey)) return
+        seenBillKeys.add(billKey)
         bills.push({
           source: 'Manager Voucher',
-          description: b.description || b.category || 'Manager Approved Expense',
-          amount: parseAmount(b.amount || b.totalAmount),
+          description: desc,
+          amount: amt,
           vendor: b.vendor || b.vendorName || 'Voucher',
         })
       })
     } else if (managerEntry.amount || managerEntry.totalAmount) {
-      bills.push({
-        source: 'Manager Voucher',
-        description: managerEntry.description || 'Manager Expense Entry',
-        amount: parseAmount(managerEntry.amount || managerEntry.totalAmount),
-        vendor: managerEntry.vendorName || 'Manager Approved',
-      })
+      const amt = parseAmount(managerEntry.amount || managerEntry.totalAmount)
+      const desc = managerEntry.description || 'Manager Expense Entry'
+      const billKey = `${managerEntry.id || 'mgr'}_${amt}_${desc}`
+      if (!seenBillKeys.has(billKey)) {
+        seenBillKeys.add(billKey)
+        bills.push({
+          source: 'Manager Voucher',
+          description: desc,
+          amount: amt,
+          vendor: managerEntry.vendorName || 'Manager Approved',
+        })
+      }
     }
-  }
+  })
 
   orgBillsForDay.forEach((b) => {
-    bills.push({
-      source: 'Direct Org Bill',
-      description: b.description || b.title || 'Central Office Expense',
-      amount: parseAmount(b.amount || b.totalAmount),
-      vendor: b.vendorName || b.partyName || 'Direct Bill',
-    })
+    if (Array.isArray(b.bills) && b.bills.length > 0) {
+      b.bills.forEach((subBill, idx) => {
+        const amt = parseAmount(subBill.amount || subBill.totalAmount || subBill.billAmount)
+        const desc = subBill.description || subBill.category || b.description || 'Central Office Expense'
+        const billKey = `${b.id || 'org'}_${subBill.id || subBill.billId || idx}_${amt}_${desc}`
+        if (seenBillKeys.has(billKey)) return
+        seenBillKeys.add(billKey)
+        bills.push({
+          source: 'Direct Org Bill',
+          description: desc,
+          amount: amt,
+          vendor: subBill.vendor || subBill.vendorName || b.vendorName || b.partyName || 'Direct Bill',
+        })
+      })
+    } else {
+      const amt = parseAmount(b.amount || b.totalAmount)
+      const desc = b.description || b.title || 'Central Office Expense'
+      const billKey = `${b.id || 'org'}_${amt}_${desc}`
+      if (!seenBillKeys.has(billKey)) {
+        seenBillKeys.add(billKey)
+        bills.push({
+          source: 'Direct Org Bill',
+          description: desc,
+          amount: amt,
+          vendor: b.vendorName || b.partyName || 'Direct Bill',
+        })
+      }
+    }
   })
 
   contractorBillsForDay.forEach((b) => {
-    bills.push({
-      source: 'Contractor Payout',
-      description: `${b.contractorName || 'Contractor'} - ${b.category || b.workDescription || 'Contract Works'}`,
-      amount: parseAmount(b.totalAmount || b.amount || b.paidAmount),
-      vendor: b.contractorName || 'Contractor',
-    })
+    const amt = parseAmount(b.totalAmount || b.amount || b.paidAmount)
+    const desc = `${b.contractorName || 'Contractor'} - ${b.category || b.workDescription || 'Contract Works'}`
+    const billKey = `${b.id || 'cont'}_${amt}_${desc}`
+    if (!seenBillKeys.has(billKey)) {
+      seenBillKeys.add(billKey)
+      bills.push({
+        source: 'Contractor Payout',
+        description: desc,
+        amount: amt,
+        vendor: b.contractorName || 'Contractor',
+      })
+    }
   })
 
   const totalBills = bills.reduce((acc, curr) => acc + curr.amount, 0)
@@ -390,9 +462,11 @@ export function calculateSiteLifetimeSummary({
 
   const budget = parseAmount(site.projectBudget || site.budget || site.estimatedBudget || 0)
   
-  // Received payments
+  // Received payments (deduplicated against direct site amountPaid)
   const matchingPayments = sitePayments.filter((p) => matchesSite(p, site))
-  const totalReceived = matchingPayments.reduce((acc, p) => acc + parseAmount(p.amountPaid || p.amount || p.totalAmount || 0), parseAmount(site.amountPaid || site.receivedAmount || 0))
+  const paymentsSum = matchingPayments.reduce((acc, p) => acc + parseAmount(p.amountPaid || p.amount || p.totalAmount || 0), 0)
+  const directReceived = parseAmount(site.amountPaid || site.receivedAmount || site.advancePaid || 0)
+  const totalReceived = matchingPayments.length > 0 && paymentsSum > 0 ? paymentsSum : directReceived
 
   // Calculate spent from totalSiteExpensesPerDay or rolled-up entries
   const matchingDayRollups = totalSiteExpensesPerDay.filter((r) => matchesSite(r, site))
@@ -422,7 +496,9 @@ export function calculateSiteLifetimeSummary({
   const matchingIncentives = siteSupervisorIncentives.filter((inc) => matchesSite(inc, site))
   totalIncentives = matchingIncentives.reduce((acc, inc) => acc + parseAmount(inc.incentiveAmount || inc.amount || 0), 0)
 
-  const totalSpent = parseAmount(site.amountSpent || site.spentAmount) || (totalLabour + totalMaterial + totalFoodTransport + totalBills + totalIncentives)
+  const rollupsTotal = totalLabour + totalMaterial + totalFoodTransport + totalBills + totalIncentives
+  const directSpent = parseAmount(site.amountSpent || site.spentAmount || 0)
+  const totalSpent = rollupsTotal > 0 ? rollupsTotal : directSpent
   const cashInHand = totalReceived - totalSpent
   const budgetRemaining = budget - totalSpent
   const utilizationRate = budget > 0 ? parseFloat(((totalSpent / budget) * 100).toFixed(1)) : 0
@@ -434,6 +510,7 @@ export function calculateSiteLifetimeSummary({
     cashInHand,
     budgetRemaining,
     usagePercent: utilizationRate,
+    utilizationPercent: utilizationRate,
   }
 
   return {
@@ -486,9 +563,26 @@ export function calculateProjectStageReport({
     return c1 === c2 || s1.includes(s2) || s2.includes(s1) || (c1 && c2 && (c1.includes(c2) || c2.includes(c1)))
   }
 
+  // Deduplicate sites by canonical site identifier
+  const deduplicatedSites = []
+  const seenSites = new Set()
+  sites.forEach((s) => {
+    if (!s) return
+    const extractCode = (str) => {
+      const m = String(str || '').match(/st\d+/i)
+      return m ? m[0].toLowerCase() : ''
+    }
+    const code = (s.siteCode || extractCode(s.id) || extractCode(s.siteId) || '').toLowerCase()
+    const name = (s.projectName || s.siteName || s.name || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '')
+    const key = code || name || s.id
+    if (seenSites.has(key)) return
+    seenSites.add(key)
+    deduplicatedSites.push(s)
+  })
+
   // Filter sites currently in this stage
   const sitesInStage = targetStage
-    ? sites.filter((s) => {
+    ? deduplicatedSites.filter((s) => {
         return stageMatches(s.projectStage || s.stage, targetStage)
       })
     : []
@@ -517,10 +611,10 @@ export function calculateProjectStageReport({
   const matchingSchedules = siteSupervisorProjectStageSchedule.filter((sch) =>
     stageMatches(sch.projectStage || sch.stage, targetStage)
   )
-  const stageEstimatedBudget = matchingSchedules.reduce(
-    (sum, sch) => sum + parseAmount(sch.estimatedStageBudget || sch.stageBudget || sch.budget || 0),
-    sitesInStage.reduce((sum, s) => sum + parseAmount(s.projectBudget || s.budget || 0) * 0.15, 0)
-  )
+  const fallbackBudget = sitesInStage.reduce((sum, s) => sum + parseAmount(s.projectBudget || s.budget || 0) * 0.15, 0)
+  const stageEstimatedBudget = matchingSchedules.length > 0
+    ? matchingSchedules.reduce((sum, sch) => sum + parseAmount(sch.estimatedStageBudget || sch.stageBudget || sch.budget || 0), 0)
+    : fallbackBudget
 
   const stageVariance = stageEstimatedBudget - grandStageSpend
   const stageCompletionPct = stageEstimatedBudget > 0 ? Math.min(100, Math.round((grandStageSpend / stageEstimatedBudget) * 100)) : 0
@@ -535,7 +629,7 @@ export function calculateProjectStageReport({
     alertTone = 'blue'
   }
 
-  const stageSiteSummary = sites.map((s) => {
+  const stageSiteSummary = deduplicatedSites.map((s) => {
     const isCurrentlyInStage = stageMatches(s.projectStage || s.stage, targetStage)
     const entriesForSiteAndStage = siteSupervisorEntries.filter((e) => matchesSite(e, s) && stageMatches(e.projectStage || e.stage || e.workStage, targetStage))
     
@@ -579,6 +673,23 @@ export function calculateProjectStageReport({
 // ------------------------------------------------------------------------------------------------
 
 export function calculateSiteStatusReport(sites = []) {
+  // Deduplicate sites by canonical site identifier
+  const deduplicatedSites = []
+  const seenSites = new Set()
+  sites.forEach((s) => {
+    if (!s) return
+    const extractCode = (str) => {
+      const m = String(str || '').match(/st\d+/i)
+      return m ? m[0].toLowerCase() : ''
+    }
+    const code = (s.siteCode || extractCode(s.id) || extractCode(s.siteId) || '').toLowerCase()
+    const name = (s.projectName || s.siteName || s.name || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '')
+    const key = code || name || s.id
+    if (seenSites.has(key)) return
+    seenSites.add(key)
+    deduplicatedSites.push(s)
+  })
+
   const statusCounts = {
     live: 0,
     in_progress: 0,
@@ -592,7 +703,7 @@ export function calculateSiteStatusReport(sites = []) {
   let totalBudgetAllocated = 0
   let totalSpent = 0
 
-  const siteList = sites.map((s) => {
+  const siteList = deduplicatedSites.map((s) => {
     const statusRaw = String(s.currentStatus || s.status || s.projectStatus || 'in_progress').toLowerCase().replace(/\s+/g, '_')
     if (statusCounts[statusRaw] !== undefined) {
       statusCounts[statusRaw] += 1
@@ -665,7 +776,7 @@ export function calculateSiteStatusReport(sites = []) {
   const overallSpendingPct = totalBudgetAllocated > 0 ? Math.round((totalSpent / totalBudgetAllocated) * 100) : 0
 
   return {
-    totalSites: sites.length,
+    totalSites: deduplicatedSites.length,
     totalActiveSites,
     totalCompletedSites,
     totalDelayedSites,
@@ -682,27 +793,48 @@ export function calculateSiteStatusReport(sites = []) {
 // ------------------------------------------------------------------------------------------------
 
 export function calculateFinancialStatusReport({ sites = [], sitePayments = [], totalSiteExpensesPerDay = [] }) {
+  // Deduplicate sites by canonical site identifier
+  const deduplicatedSites = []
+  const seenSites = new Set()
+  sites.forEach((s) => {
+    if (!s) return
+    const extractCode = (str) => {
+      const m = String(str || '').match(/st\d+/i)
+      return m ? m[0].toLowerCase() : ''
+    }
+    const code = (s.siteCode || extractCode(s.id) || extractCode(s.siteId) || '').toLowerCase()
+    const name = (s.projectName || s.siteName || s.name || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '')
+    const key = code || name || s.id
+    if (seenSites.has(key)) return
+    seenSites.add(key)
+    deduplicatedSites.push(s)
+  })
+
   let totalContractBudget = 0
   let totalClientReceived = 0
   let totalActualSpent = 0
 
-  const statements = sites.map((s) => {
+  const statements = deduplicatedSites.map((s) => {
     const budget = parseAmount(s.projectBudget || s.budget || s.estimatedBudget || 0)
     
-    // Payments received for site
+    // Payments received for site (deduplicated against direct site amountPaid)
     const matchingPayments = sitePayments.filter((p) => matchesSite(p, s))
-    const received = matchingPayments.reduce((acc, p) => acc + parseAmount(p.amountPaid || p.amount || p.totalAmount || 0), parseAmount(s.amountPaid || s.receivedAmount || 0))
+    const paymentsSum = matchingPayments.reduce((acc, p) => acc + parseAmount(p.amountPaid || p.amount || p.totalAmount || 0), 0)
+    const siteDirectPaid = parseAmount(s.amountPaid || s.receivedAmount || s.advancePaid || 0)
+    const received = matchingPayments.length > 0 && paymentsSum > 0 ? paymentsSum : siteDirectPaid
 
     // Real-time spent
     const matchingDayRollups = totalSiteExpensesPerDay.filter((r) => matchesSite(r, s))
     let spent = parseAmount(s.amountSpent || s.spentAmount || 0)
     if (matchingDayRollups.length > 0) {
-      spent = matchingDayRollups.reduce((acc, r) => acc + parseAmount(r.totalAllExpenses || r.totalAmount || r.totalSpend || 0), 0)
+      const rollupsSum = matchingDayRollups.reduce((acc, r) => acc + parseAmount(r.totalAllExpenses || r.totalAmount || r.totalSpend || 0), 0)
+      if (rollupsSum > 0) spent = rollupsSum
     }
 
     const cashInHand = received - spent
     const budgetRemaining = budget - spent
     const utilizationRate = budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : 0
+    const receivedRatio = budget > 0 ? Math.min(100, Math.round((received / budget) * 100)) : 0
 
     totalContractBudget += budget
     totalClientReceived += received
@@ -713,12 +845,15 @@ export function calculateFinancialStatusReport({ sites = [], sitePayments = [], 
       siteName: s.projectName || s.siteName || s.name || 'Site',
       location: s.siteLocation || s.location || 'Location',
       stage: s.projectStage || s.stage || 'Foundation',
+      status: s.currentStatus || s.status || s.projectStatus || 'In Progress',
       budget,
       received,
+      receivedRatio,
       spent,
       cashInHand,
       budgetRemaining,
       utilizationRate,
+      utilizationPercent: utilizationRate,
       health: utilizationRate > 95 ? 'Critical' : utilizationRate > 80 ? 'Warning' : 'Healthy',
     }
   })
@@ -727,16 +862,24 @@ export function calculateFinancialStatusReport({ sites = [], sitePayments = [], 
   const totalBudgetRemaining = totalContractBudget - totalActualSpent
   const overallUtilization = totalContractBudget > 0 ? ((totalActualSpent / totalContractBudget) * 100).toFixed(1) : '0.0'
   const pendingCustomerAmount = Math.max(0, totalContractBudget - totalClientReceived)
+  const receivedRatio = totalContractBudget > 0 ? Math.min(100, Math.round((totalClientReceived / totalContractBudget) * 100)) : 0
 
   return {
     kpis: {
       totalContractBudget,
+      totalBudget: totalContractBudget,
       totalClientReceived,
+      totalReceived: totalClientReceived,
       totalActualSpent,
+      totalSpent: totalActualSpent,
       totalCashInHand,
+      cashInHand: totalCashInHand,
       totalBudgetRemaining,
+      remainingBudget: totalBudgetRemaining,
+      budgetRemaining: totalBudgetRemaining,
       overallUtilization,
       pendingCustomerAmount,
+      receivedRatio,
     },
     statements,
   }
@@ -770,13 +913,32 @@ export function calculatePettyCashInsights({
     admin: 0,
   }
 
+  // Deduplicate sites
+  const deduplicatedSites = []
+  const seenSites = new Set()
+  sites.forEach((s) => {
+    if (!s) return
+    const extractCode = (str) => {
+      const m = String(str || '').match(/st\d+/i)
+      return m ? m[0].toLowerCase() : ''
+    }
+    const code = (s.siteCode || extractCode(s.id) || extractCode(s.siteId) || '').toLowerCase()
+    const name = (s.projectName || s.siteName || s.name || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '')
+    const key = code || name || s.id
+    if (seenSites.has(key)) return
+    seenSites.add(key)
+    deduplicatedSites.push(s)
+  })
+
   // Site Audit List
-  const siteAuditList = sites.map((s) => {
+  const siteAuditList = deduplicatedSites.map((s) => {
     const acc = pettyCashAccounts.find((a) => matchesSite(a, s))
     const matchingExpenses = pettyCashExpenses.filter((e) => matchesSite(e, s))
     
-    const disbursed = parseAmount(acc?.totalDisbursed || acc?.openingBalance || acc?.totalPettyCashReceived || 0)
-    const spent = matchingExpenses.reduce((sum, e) => sum + parseAmount(e.amount || e.totalAmount || 0), parseAmount(acc?.pettyCashSpent || acc?.totalSpent || 0))
+    const disbursed = parseAmount(acc?.totalDisbursed || acc?.openingBalance || acc?.totalPettyCashReceived || acc?.pettyCashGiven || acc?.amountDisbursed || 0)
+    const expensesSum = matchingExpenses.reduce((sum, e) => sum + parseAmount(e.amount || e.totalAmount || 0), 0)
+    const accSpent = parseAmount(acc?.pettyCashSpent || acc?.totalSpent || 0)
+    const spent = matchingExpenses.length > 0 && expensesSum > 0 ? expensesSum : accSpent
     const floatBalance = parseAmount(acc?.remainingPettyCash || acc?.balance || (disbursed - spent))
 
     totalDisbursed += disbursed
@@ -795,25 +957,32 @@ export function calculatePettyCashInsights({
     }
   })
 
-  // If there are accounts without sites
+  // If there are accounts without matching sites
   pettyCashAccounts.forEach((acc) => {
-    const alreadyIncluded = siteAuditList.some((item) => item.siteId === acc.id || item.siteName === acc.projectName)
+    const cleanAccName = (acc.projectName || acc.siteName || acc.id || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '')
+    const alreadyIncluded = siteAuditList.some((item) => {
+      const cleanItemName = (item.siteName || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '')
+      return matchesSite(item, acc) || item.siteId === acc.id || item.siteId === acc.siteId || (cleanAccName && cleanItemName === cleanAccName)
+    })
     if (!alreadyIncluded) {
-      const disbursed = parseAmount(acc.totalDisbursed || acc.openingBalance || acc.totalPettyCashReceived || 0)
-      const spent = parseAmount(acc.pettyCashSpent || acc.totalSpent || 0)
+      const disbursed = parseAmount(acc.totalDisbursed || acc.openingBalance || acc.totalPettyCashReceived || acc.pettyCashGiven || acc.amountDisbursed || 0)
+      const matchingExpenses = pettyCashExpenses.filter((e) => matchesSite(e, acc))
+      const expensesSum = matchingExpenses.reduce((sum, e) => sum + parseAmount(e.amount || e.totalAmount || 0), 0)
+      const accSpent = parseAmount(acc.pettyCashSpent || acc.totalSpent || 0)
+      const spent = matchingExpenses.length > 0 && expensesSum > 0 ? expensesSum : accSpent
       const balance = parseAmount(acc.remainingPettyCash || acc.balance || (disbursed - spent))
       totalDisbursed += disbursed
       totalSpent += spent
       siteAuditList.push({
-        siteId: acc.id,
+        siteId: acc.siteId || acc.id,
         siteName: acc.projectName || acc.siteName || acc.id,
         supervisor: acc.supervisorName || 'Supervisor',
         disbursed,
         spent,
         balance,
-        isOverspent: spent > disbursed,
+        isOverspent: spent > disbursed && disbursed > 0,
         status: spent > disbursed ? 'Overspent' : 'Healthy',
-        expensesCount: 0,
+        expensesCount: matchingExpenses.length,
       })
     }
   })
@@ -838,6 +1007,7 @@ export function calculatePettyCashInsights({
   // Itemized transactions list
   const itemizedLedger = pettyCashExpenses.map((exp) => ({
     id: exp.id,
+    siteId: exp.siteId || exp.projectId || exp.id,
     date: formatDateDisplay(exp.date || exp.createdAt),
     rawDate: exp.date || exp.createdAt,
     siteName: exp.projectName || exp.siteName || exp.siteId || 'Site',
@@ -855,7 +1025,8 @@ export function calculatePettyCashInsights({
       totalDisbursed,
       totalSpent,
       netFloatInHand,
-      remainingPettyCash: (totalApproved || totalDisbursed) - totalSpent,
+      totalRemaining: netFloatInHand,
+      remainingPettyCash: netFloatInHand,
     },
     categoryBreakdown: [
       { name: 'Material Expenses', amount: categories.materials, desc: 'Cement, steel, bricks, sand' },
@@ -901,6 +1072,7 @@ export function calculateDomainReports({
         const paidAmount = parseAmount(entry.paidAmount || entry.amountPaid || entry.totalPaid || 0)
         const balanceAmount = parseAmount(entry.balanceAmount || entry.pendingBalance || (billAmount - paidAmount))
         return {
+          siteId: entry.siteId || entry.site_id || entry.projectId || entry.project_id || entry.id || '',
           contractorName: entry.contractorName || entry.name || 'Contractor',
           siteName: entry.siteName || entry.projectName || entry.siteId || 'Site',
           trade: entry.category || entry.trade || entry.workType || 'General Civil',
@@ -1273,6 +1445,7 @@ export function calculateDomainReports({
 
     case 'tools': {
       const list = tools.map((t) => ({
+        siteId: t.currentProjectId || t.currentProject || t.projectId || t.siteId || t.location || t.id || '',
         toolName: t.name || t.toolName || 'Tool Asset',
         assetTag: t.assetTag || t.serialNo || t.id,
         category: t.category || 'Power Tools',
@@ -1286,6 +1459,7 @@ export function calculateDomainReports({
 
     case 'workers': {
       const list = (workerAttendance.length > 0 ? workerAttendance : workers).map((w) => ({
+        siteId: w.siteId || w.site_id || w.projectId || w.id || '',
         workerName: w.name || w.workerName || 'Worker',
         trade: w.roleCategory || w.trade || w.skillType || 'Mason',
         siteName: w.projectName || w.siteName || w.siteId || 'Site',
@@ -1302,6 +1476,7 @@ export function calculateDomainReports({
 
     case 'vehicles': {
       const list = vehicles.map((v) => ({
+        siteId: v.assignedSiteId || v.assignedSite || v.currentProjectId || v.siteId || v.id || '',
         vehicleName: v.name || v.vehicleName || v.model || 'Commercial Vehicle',
         regNumber: v.registrationNumber || v.regNo || v.plateNumber || 'Reg Pending',
         assignedSite: v.assignedSite || v.projectName || 'Central Fleet',
@@ -1314,6 +1489,7 @@ export function calculateDomainReports({
 
     case 'incentives': {
       const list = siteSupervisorIncentives.map((inc) => ({
+        siteId: inc.siteId || inc.site_id || inc.projectId || inc.id || '',
         supervisorName: inc.supervisorName || inc.name || 'Supervisor',
         siteName: inc.siteName || inc.projectName || inc.siteId || 'Site',
         stage: inc.milestoneStage || inc.stage || 'Milestone Completed',

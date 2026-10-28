@@ -143,24 +143,50 @@ export async function _sumSupervisorExpenses(orgId, siteId) {
 }
 
 /**
- * Sums Manager Expenses ('managerExpenses' where siteId == siteId -> sums bills/amount)
+ * Sums Manager Expenses (queries 'managerExpenses' & 'managerEntries' -> sums bills/amount)
  * Section 4.2 Write 3 Step 1.b
  */
 export async function _sumManagerExpenses(orgId, siteId) {
   if (!orgId || !siteId) return 0
   try {
-    const colRef = collection(db, 'organisation', orgId, 'managerExpenses')
-    const q = query(colRef, where('siteId', '==', siteId))
-    const snap = await getDocs(q)
+    const collectionsToQuery = ['managerExpenses', 'managerEntries']
+    const dedupedDocs = new Map()
+
+    for (const colName of collectionsToQuery) {
+      try {
+        const colRef = collection(db, 'organisation', orgId, colName)
+        const snap = await getDocs(colRef)
+        snap.forEach((d) => {
+          if (!dedupedDocs.has(d.id)) {
+            dedupedDocs.set(d.id, d.data())
+          }
+        })
+      } catch (_) {}
+    }
+
     let total = 0
-    snap.forEach((d) => {
-      const data = d.data()
-      if (Array.isArray(data.bills) && data.bills.length > 0) {
-        total += data.bills.reduce((acc, b) => acc + parseNum(b.amount), 0)
-      } else {
-        total += parseNum(data.totalAmount ?? data.amount)
+    const targetClean = String(siteId).toLowerCase().trim()
+
+    dedupedDocs.forEach((data, docId) => {
+      const sId = String(data.siteId || data.site || '').toLowerCase().trim()
+      const pName = String(data.projectName || data.siteName || '').toLowerCase().trim()
+      const dId = String(docId).toLowerCase().trim()
+
+      const isMatch =
+        sId === targetClean ||
+        (sId && (targetClean.includes(sId) || sId.includes(targetClean))) ||
+        (pName && (targetClean.includes(pName) || pName.includes(targetClean))) ||
+        dId.startsWith(targetClean)
+
+      if (isMatch) {
+        if (Array.isArray(data.bills) && data.bills.length > 0) {
+          total += data.bills.reduce((acc, b) => acc + parseNum(b.billAmount ?? b.amount), 0)
+        } else {
+          total += parseNum(data.totalAmount ?? data.amount ?? data.managerExpenseTotalAmount)
+        }
       }
     })
+
     return total
   } catch (err) {
     console.warn(`[_sumManagerExpenses] Error aggregating for site ${siteId}:`, err)
@@ -169,20 +195,50 @@ export async function _sumManagerExpenses(orgId, siteId) {
 }
 
 /**
- * Sums Organization Expenses ('organizationExpenses' where siteId == siteId -> sums amount)
+ * Sums Organization Expenses (queries 'organizationExpenses' & 'organizationEntries' -> sums bills/amount)
  * Section 4.2 Write 3 Step 1.c
  */
 export async function _sumOrganizationExpenses(orgId, siteId) {
   if (!orgId || !siteId) return 0
   try {
-    const colRef = collection(db, 'organisation', orgId, 'organizationExpenses')
-    const q = query(colRef, where('siteId', '==', siteId))
-    const snap = await getDocs(q)
+    const collectionsToQuery = ['organizationExpenses', 'organizationEntries']
+    const dedupedDocs = new Map()
+
+    for (const colName of collectionsToQuery) {
+      try {
+        const colRef = collection(db, 'organisation', orgId, colName)
+        const snap = await getDocs(colRef)
+        snap.forEach((d) => {
+          if (!dedupedDocs.has(d.id)) {
+            dedupedDocs.set(d.id, d.data())
+          }
+        })
+      } catch (_) {}
+    }
+
     let total = 0
-    snap.forEach((d) => {
-      const data = d.data()
-      total += parseNum(data.amount ?? data.totalAmount)
+    const targetClean = String(siteId).toLowerCase().trim()
+
+    dedupedDocs.forEach((data, docId) => {
+      const sId = String(data.siteId || data.site || '').toLowerCase().trim()
+      const pName = String(data.projectName || data.siteName || '').toLowerCase().trim()
+      const dId = String(docId).toLowerCase().trim()
+
+      const isMatch =
+        sId === targetClean ||
+        (sId && (targetClean.includes(sId) || sId.includes(targetClean))) ||
+        (pName && (targetClean.includes(pName) || pName.includes(targetClean))) ||
+        dId.startsWith(targetClean)
+
+      if (isMatch) {
+        if (Array.isArray(data.bills) && data.bills.length > 0) {
+          total += data.bills.reduce((acc, b) => acc + parseNum(b.billAmount ?? b.amount), 0)
+        } else {
+          total += parseNum(data.totalAmount ?? data.amount ?? data.orgExpenseTotalAmount)
+        }
+      }
     })
+
     return total
   } catch (err) {
     console.warn(`[_sumOrganizationExpenses] Error aggregating for site ${siteId}:`, err)

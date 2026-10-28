@@ -4,6 +4,7 @@ import {
   money,
   parseAmount,
   calculateDomainReports,
+  matchesSite,
 } from '../../../services/reportService'
 import { exportToCSV, printReport } from '../../../services/exportService'
 
@@ -112,7 +113,15 @@ export default function DomainInventoryReportsHub({
   const filteredRecords = useMemo(() => {
     let list = reportData.records || []
     if (activeDomain !== 'materials' && selectedSiteId && selectedSiteId !== 'all') {
-      list = list.filter((r) => r.siteId === selectedSiteId || r.site === selectedSiteId || r.projectId === selectedSiteId)
+      const selectedSiteObj = sites.find(
+        (s) => s.id === selectedSiteId || matchesSite(s, { id: selectedSiteId })
+      ) || { id: selectedSiteId }
+      list = list.filter((r) =>
+        matchesSite(r, selectedSiteObj) ||
+        r.siteId === selectedSiteId ||
+        r.site === selectedSiteId ||
+        r.projectId === selectedSiteId
+      )
     }
     const query = searchQuery.trim().toLowerCase()
     if (!query) return list
@@ -121,7 +130,7 @@ export default function DomainInventoryReportsHub({
         String(val).toLowerCase().includes(query)
       )
     )
-  }, [reportData, searchQuery, selectedSiteId, activeDomain])
+  }, [reportData, searchQuery, selectedSiteId, activeDomain, sites])
 
   const formatHeader = (h) => {
     if (h === 'materialName') return 'Material Name'

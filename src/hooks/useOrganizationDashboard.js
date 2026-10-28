@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { collection, doc, onSnapshot } from 'firebase/firestore'
 import { db } from '../services/firebase'
 import { COLLECTION_ALIASES } from '../services/firestoreService'
+import { normalizeExpenseRecord } from '../services/expenseNormalizationService'
 
 const initialData = {
   projects: [],
@@ -69,7 +70,7 @@ const sources = [
   { key: 'contractorBills', col: 'contractor_bills', legacy: 'mb_bills' },
   { key: 'contractorEntries', col: 'contractorEntries', legacy: 'contractor_entries' },
   { key: 'siteSupervisorEntries', col: 'siteSupervisorEntries', legacy: 'supervisor_entries' },
-  { key: 'managerExpenses', col: 'managerExpenses', legacy: 'manager_expenses' },
+  { key: 'managerExpenses', col: 'managerExpenses', legacy: 'managerEntries' },
   { key: 'organizationEntries', col: 'organizationExpenses', legacy: 'organizationEntries' },
   { key: 'siteSupervisorIncentives', col: 'siteSupervisorIncentives', legacy: 'incentives' },
   { key: 'workersConfig', col: 'workersConfig', legacy: 'workers' },
@@ -109,7 +110,46 @@ export function useOrganizationDashboard(orgId) {
     const nextData = { ...initialData }
     let completed = 0
 
+    // Store primary and legacy results per source key to avoid listener leaks and race conditions
+    const store = {}
+    sources.forEach(({ key }) => {
+      store[key] = { primary: [], legacy: [] }
+    })
+
+    const updateSourceData = (key) => {
+      if (cancelled) return
+      const isExpenseKey = key === 'organizationEntries' || key === 'managerExpenses'
+      let items = []
+
+      if (isExpenseKey) {
+        const mergedMap = new Map()
+        ;(store[key].primary || []).forEach((item) => mergedMap.set(item.id, item))
+        ;(store[key].legacy || []).forEach((item) => {
+          if (!mergedMap.has(item.id)) mergedMap.set(item.id, item)
+        })
+        items = Array.from(mergedMap.values())
+      } else {
+        const primaryItems = store[key].primary || []
+        const legacyItems = store[key].legacy || []
+        items = primaryItems.length > 0 ? primaryItems : legacyItems
+      }
+
+      if (key === 'projectStages') {
+        items.sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0))
+      }
+
+      nextData[key] = items
+      if (key === 'projects') nextData.sites = items
+      if (key === 'pettyCashAccounts' || key === 'pettyCashExpenses') nextData.pettyCash = items
+      if (key === 'pettyCashExpenses') nextData.expenses = items
+
+      setData({ ...nextData })
+    }
+
     sources.forEach(({ key, col, legacy }) => {
+      const isExpenseKey = key === 'organizationEntries' || key === 'managerExpenses'
+
+      // Primary listener
       try {
         const unsubscribe = onSnapshot(
           collection(db, 'organisation', orgId, col),
@@ -124,47 +164,15 @@ export function useOrganizationDashboard(orgId) {
               }
             }
             let items = uniqueDocs
-
-            // If empty, try legacy alias once
-            if (items.length === 0 && legacy) {
-              const legacyUnsub = onSnapshot(
-                collection(db, 'organisation', orgId, legacy),
-                (legacySnap) => {
-                  if (cancelled) return
-                  const legacySeen = new Set()
-                  const uniqueLegacyDocs = []
-                  for (const d of legacySnap.docs) {
-                    if (!legacySeen.has(d.id)) {
-                      legacySeen.add(d.id)
-                      uniqueLegacyDocs.push({ ...d.data(), id: d.id })
-                    }
-                  }
-                  const legacyItems = uniqueLegacyDocs
-                  if (legacyItems.length > 0) {
-                    nextData[key] = legacyItems
-                    // Aliases
-                    if (key === 'projects') nextData.sites = legacyItems
-                    if (key === 'pettyCashAccounts' || key === 'pettyCashExpenses') nextData.pettyCash = legacyItems
-                    if (key === 'pettyCashExpenses') nextData.expenses = legacyItems
-                    setData({ ...nextData })
-                  }
-                },
-                () => {}
+            if (isExpenseKey) {
+              items = items.map((d) =>
+                normalizeExpenseRecord(d.id, d, key === 'managerExpenses' ? 'Manager' : 'Organization')
               )
-              cleanups.push(legacyUnsub)
             }
-
-            if (key === 'projectStages') {
-              items.sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0))
-            }
-
-            nextData[key] = items
-            if (key === 'projects') nextData.sites = items
-            if (key === 'pettyCashAccounts' || key === 'pettyCashExpenses') nextData.pettyCash = items
-            if (key === 'pettyCashExpenses') nextData.expenses = items
+            store[key].primary = items
+            updateSourceData(key)
 
             completed += 1
-            setData({ ...nextData })
             if (completed >= sources.length) setState({ loading: false, error: '' })
           },
           (err) => {
@@ -176,6 +184,34 @@ export function useOrganizationDashboard(orgId) {
         cleanups.push(unsubscribe)
       } catch (err) {
         completed += 1
+      }
+
+      // Legacy listener registered once at top-level if legacy collection exists
+      if (legacy) {
+        try {
+          const legacyUnsub = onSnapshot(
+            collection(db, 'organisation', orgId, legacy),
+            (legacySnap) => {
+              if (cancelled) return
+              const legacySeen = new Set()
+              const uniqueLegacyDocs = []
+              for (const d of legacySnap.docs) {
+                if (!legacySeen.has(d.id)) {
+                  legacySeen.add(d.id)
+                  const rawDoc = { ...d.data(), id: d.id }
+                  const normalized = isExpenseKey
+                    ? normalizeExpenseRecord(d.id, rawDoc, key === 'managerExpenses' ? 'Manager' : 'Organization')
+                    : rawDoc
+                  uniqueLegacyDocs.push(normalized)
+                }
+              }
+              store[key].legacy = uniqueLegacyDocs
+              updateSourceData(key)
+            },
+            () => {}
+          )
+          cleanups.push(legacyUnsub)
+        } catch (err) {}
       }
     })
 

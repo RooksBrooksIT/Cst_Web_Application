@@ -340,13 +340,14 @@ export default function ProjectAndSiteSetup({ orgId, currentUser, onNotify }) {
       }
     } catch (err) {
       console.error(err)
-      if (err.code === 'SUBSCRIPTION_LIMIT_REACHED' || err.code === 'SITE_LIMIT_REACHED' || err.code === 'SUBSCRIPTION_EXPIRED' || err.details) {
+      if (err.code === 'SUBSCRIPTION_LIMIT_REACHED' || err.code === 'SITE_LIMIT_REACHED' || err.code === 'FREE_TRIAL_LIMIT_REACHED' || err.code === 'SUBSCRIPTION_EXPIRED' || err.details) {
         setLimitModalData(err.details || {
-          reason: err.code === 'SUBSCRIPTION_EXPIRED' ? 'SUBSCRIPTION_EXPIRED' : 'SITE_LIMIT_REACHED',
+          reason: err.code === 'SUBSCRIPTION_EXPIRED' ? 'SUBSCRIPTION_EXPIRED' : (err.code || 'SITE_LIMIT_REACHED'),
           planName: planLimits?.planName || 'Current Plan',
           currentCount: existingProjects.length,
           maxLimit: planLimits?.quotas?.maxProjects || planLimits?.maxProjects,
           message: err.message,
+          upgradePlan: 'Silver',
         })
         setLimitModalOpen(true)
       } else {

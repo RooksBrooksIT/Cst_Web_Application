@@ -4,6 +4,7 @@ import {
   parseAmount,
   calculateFinancialStatusReport,
   formatDateDisplay,
+  matchesSite,
 } from '../../../services/reportService'
 import { exportToCSV, printReport } from '../../../services/exportService'
 import StatusBadge from '../../../components/common/StatusBadge'
@@ -34,10 +35,16 @@ export default function FinancialStatusReportHub({
     return calculateFinancialStatusReport({ sites, sitePayments, totalSiteExpensesPerDay })
   }, [sites, sitePayments, totalSiteExpensesPerDay])
 
+  const selectedSiteObj = useMemo(() => {
+    return selectedSiteId !== 'all' ? sites.find((s) => s.id === selectedSiteId || matchesSite(s, { id: selectedSiteId })) : null
+  }, [sites, selectedSiteId])
+
   const filteredStatements = useMemo(() => {
     if (selectedSiteId === 'all') return reportData.statements
-    return reportData.statements.filter((s) => s.siteId === selectedSiteId)
-  }, [reportData, selectedSiteId])
+    return reportData.statements.filter((s) =>
+      s.siteId === selectedSiteId || (selectedSiteObj && matchesSite(s, selectedSiteObj))
+    )
+  }, [reportData, selectedSiteId, selectedSiteObj])
 
   // Weekly Cash Flow Rollup (inflows vs outflows grouped by week)
   const weeklyFlow = useMemo(() => {
@@ -45,6 +52,7 @@ export default function FinancialStatusReportHub({
 
     // Process Inflows (SitePayment)
     sitePayments.forEach((p) => {
+      if (selectedSiteId !== 'all' && !matchesSite(p, selectedSiteObj || { id: selectedSiteId })) return
       const d = new Date(p.paymentDate || p.date || p.createdAt || new Date())
       if (!isNaN(d.getTime())) {
         const year = d.getFullYear()
@@ -62,6 +70,7 @@ export default function FinancialStatusReportHub({
 
     // Process Outflows (totalSiteExpensesPerDay / siteSupervisorEntries)
     totalSiteExpensesPerDay.forEach((r) => {
+      if (selectedSiteId !== 'all' && !matchesSite(r, selectedSiteObj || { id: selectedSiteId })) return
       const d = new Date(r.date || r.createdAt || new Date())
       if (!isNaN(d.getTime())) {
         const year = d.getFullYear()
@@ -83,7 +92,7 @@ export default function FinancialStatusReportHub({
     })
 
     return sortedWeeks
-  }, [sitePayments, totalSiteExpensesPerDay])
+  }, [sitePayments, totalSiteExpensesPerDay, selectedSiteId, selectedSiteObj])
 
   const handleExportCSV = () => {
     if (activeTab === 'statement') {

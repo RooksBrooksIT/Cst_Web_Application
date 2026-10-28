@@ -220,7 +220,7 @@ export function getDrawingLimitsForPlan(planName = '', subscription = null) {
  * Resolves full active plan limits, quotas, and expiration status for an organization
  * Complies with Section 1, 2, 3, and 5 of SUBSCRIPTION_PLAN_LIMITATIONS.txt
  */
-export async function getActivePlanLimits(orgId) {
+export async function getActivePlanLimits(orgId, subscription = null) {
   const trialQuotas = calculatePlanQuotas('Free Trial')
   const trialDrawing = getDrawingLimitsForPlan('Free Trial')
   const defaultLimits = {
@@ -228,34 +228,35 @@ export async function getActivePlanLimits(orgId) {
     isTrial: true,
     isTrialActive: true,
     isExpired: false,
-    maxProjects: 999999,
-    maxUsers: 3,
-    maxManagers: 1,
-    maxSupervisors: 1,
+    maxProjects: trialQuotas.maxProjects,
+    maxUsers: trialQuotas.maxUsers,
+    maxManagers: trialQuotas.maxManagers,
+    maxSupervisors: trialQuotas.maxSupervisors,
     quotas: {
-      maxProjects: 999999,
-      maxUsers: 3,
-      maxManagers: 1,
-      maxSupervisors: 1,
+      maxProjects: trialQuotas.maxProjects,
+      maxUsers: trialQuotas.maxUsers,
+      maxManagers: trialQuotas.maxManagers,
+      maxSupervisors: trialQuotas.maxSupervisors,
     },
     subscription: null,
     ...trialDrawing,
   }
 
-  if (!orgId) return defaultLimits
+  let subData = subscription || null
 
   try {
-    const subRef = doc(db, 'organisation', orgId, 'data', 'subscription')
-    const subSnap = await getDoc(subRef)
-    let subData = null
-    if (subSnap.exists()) {
-      subData = subSnap.data()
-    } else {
-      const orgRef = doc(db, 'organisation', orgId)
-      const orgSnap = await getDoc(orgRef)
-      if (orgSnap.exists()) {
-        const orgData = orgSnap.data()
-        subData = orgData?.subscription || orgData?.data?.subscription || null
+    if (!subData && orgId) {
+      const subRef = doc(db, 'organisation', orgId, 'data', 'subscription')
+      const subSnap = await getDoc(subRef)
+      if (subSnap.exists()) {
+        subData = subSnap.data()
+      } else {
+        const orgRef = doc(db, 'organisation', orgId)
+        const orgSnap = await getDoc(orgRef)
+        if (orgSnap.exists()) {
+          const orgData = orgSnap.data()
+          subData = orgData?.subscription || orgData?.data?.subscription || null
+        }
       }
     }
 
@@ -269,45 +270,30 @@ export async function getActivePlanLimits(orgId) {
       const isExpired = subData.isSubscriptionActive === false || (endDate && endDate < now)
       const isTrialActive = isTrial && !isExpired
 
-      if (isTrialActive) {
-        const drawingLimits = getDrawingLimitsForPlan(planName, subData)
-        return {
-          planName: 'Free Trial',
-          isTrial: true,
-          isTrialActive: true,
-          isExpired: false,
-          maxProjects: 999999,
-          maxUsers: 3,
-          maxManagers: 1,
-          maxSupervisors: 1,
-          quotas: {
-            maxProjects: 999999,
-            maxUsers: 3,
-            maxManagers: 1,
-            maxSupervisors: 1,
-          },
-          subscription: subData,
-          endDate,
-          ...drawingLimits,
-        }
-      }
-
       const platinumProjects = subData.platinumProjects || subData.queuedPlatinumProjects || 10
       const quotas = calculatePlanQuotas(planName, platinumProjects)
       const drawingLimits = getDrawingLimitsForPlan(planName, subData)
 
       // Single source of truth: calculatePlanQuotas defines limits for standard plans (Free Trial, Silver, Gold, Platinum).
-      // Only custom Enterprise tier falls back to custom Firestore numbers.
+      // Only custom Enterprise tier falls back to custom Firestore numbers, or explicit subData override if present.
       const isCustomEnterprise = planName.toLowerCase().includes('enterprise') || planName.toLowerCase().includes('custom')
-      const effectiveMaxProjects = isCustomEnterprise ? (subData.maxProjects || quotas.maxProjects) : quotas.maxProjects
-      const effectiveMaxUsers = isCustomEnterprise ? (subData.maxUsers || quotas.maxUsers) : quotas.maxUsers
-      const effectiveMaxManagers = isCustomEnterprise ? (subData.maxManagers || quotas.maxManagers) : quotas.maxManagers
-      const effectiveMaxSupervisors = isCustomEnterprise ? (subData.maxSupervisors || quotas.maxSupervisors) : quotas.maxSupervisors
+      const effectiveMaxProjects = subData.maxProjects !== undefined
+        ? Number(subData.maxProjects)
+        : (isCustomEnterprise ? (subData.maxProjects || quotas.maxProjects) : quotas.maxProjects)
+      const effectiveMaxUsers = subData.maxUsers !== undefined
+        ? Number(subData.maxUsers)
+        : (isCustomEnterprise ? (subData.maxUsers || quotas.maxUsers) : quotas.maxUsers)
+      const effectiveMaxManagers = subData.maxManagers !== undefined
+        ? Number(subData.maxManagers)
+        : (isCustomEnterprise ? (subData.maxManagers || quotas.maxManagers) : quotas.maxManagers)
+      const effectiveMaxSupervisors = subData.maxSupervisors !== undefined
+        ? Number(subData.maxSupervisors)
+        : (isCustomEnterprise ? (subData.maxSupervisors || quotas.maxSupervisors) : quotas.maxSupervisors)
 
       return {
         planName,
         isTrial,
-        isTrialActive: false,
+        isTrialActive,
         isExpired,
         maxProjects: effectiveMaxProjects,
         maxUsers: effectiveMaxUsers,
@@ -412,9 +398,19 @@ export async function canCreateSite({ orgId, currentPlanName = '', currentSitesC
         isExpired: isSubscriptionExpired(subscription),
         isTrialActive: !isSubscriptionExpired(subscription) && (String(subscription.subscriptionPlan || currentPlanName || 'Free Trial').toLowerCase().includes('trial') || String(subscription.subscriptionPlan || currentPlanName || 'Free Trial').toLowerCase().includes('free')),
         planName: subscription.subscriptionPlan || currentPlanName || 'Free Trial',
+        maxProjects: subscription.maxProjects !== undefined
+          ? Number(subscription.maxProjects)
+          : calculatePlanQuotas(subscription.subscriptionPlan || currentPlanName || 'Free Trial', 10).maxProjects,
       }
-    : (currentPlanName && !currentPlanName.toLowerCase().includes('trial') && !currentPlanName.toLowerCase().includes('free'))
-    ? { ...calculatePlanQuotas(currentPlanName), ...getDrawingLimitsForPlan(currentPlanName), isExpired: false }
+    : (currentPlanName && !orgId)
+    ? {
+        ...calculatePlanQuotas(currentPlanName),
+        ...getDrawingLimitsForPlan(currentPlanName),
+        isExpired: false,
+        isTrialActive: String(currentPlanName).toLowerCase().includes('trial') || String(currentPlanName).toLowerCase().includes('free'),
+        planName: currentPlanName,
+        maxProjects: calculatePlanQuotas(currentPlanName).maxProjects,
+      }
     : await getActivePlanLimits(orgId)
 
   const isTrial = String(planLimits.planName || '').toLowerCase().includes('trial') || String(planLimits.planName || '').toLowerCase().includes('free')
@@ -440,30 +436,26 @@ export async function canCreateSite({ orgId, currentPlanName = '', currentSitesC
     ? currentSitesCount
     : await getActiveSitesCount(orgId)
 
-  // Full Unrestricted Access during active 14-day Free Trial
-  if (planLimits.isTrialActive) {
-    return {
-      isAllowed: true,
-      allowed: true,
-      currentCount: activeCount,
-      maxLimit: planLimits.maxProjects,
-      limits: planLimits,
-    }
-  }
-
+  // Enforce configured project and site limits for all plans (including Free Trial)
   if (activeCount >= planLimits.maxProjects) {
     let nextTier = 'Silver'
-    const cur = planLimits.planName.toLowerCase()
-    if (cur.includes('silver')) nextTier = 'Gold'
+    const cur = String(planLimits.planName || '').toLowerCase()
+    if (cur.includes('trial') || cur.includes('free')) nextTier = 'Silver'
+    else if (cur.includes('silver')) nextTier = 'Gold'
     else if (cur.includes('gold')) nextTier = 'Platinum'
     else if (cur.includes('platinum')) nextTier = 'Enterprise'
+
+    const title = isTrial ? 'Free Trial Limit Reached' : 'Active Site Limit Reached'
+    const message = isTrial
+      ? `You have reached the maximum allowed limit of ${planLimits.maxProjects} project and site on your 14-day Free Trial. Upgrade to ${nextTier} to create and manage more construction sites.`
+      : `You have reached your limit of ${planLimits.maxProjects} active site(s) on the ${planLimits.planName} plan. Upgrade to ${nextTier} to create more construction sites.`
 
     return {
       isAllowed: false,
       allowed: false,
-      reason: 'SITE_LIMIT_REACHED',
-      title: 'Active Site Limit Reached',
-      message: `You have reached your limit of ${planLimits.maxProjects} active site(s) on the ${planLimits.planName} plan. Upgrade to ${nextTier} to create more construction sites.`,
+      reason: isTrial ? 'FREE_TRIAL_LIMIT_REACHED' : 'SITE_LIMIT_REACHED',
+      title,
+      message,
       currentCount: activeCount,
       maxLimit: planLimits.maxProjects,
       planName: planLimits.planName,

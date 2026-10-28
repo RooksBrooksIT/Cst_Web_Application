@@ -1,0 +1,461 @@
+================================================================================
+EBRICKS / CST WHITE LABEL APPLICATION
+MANAGER EXPENSES ENTRY PAGE FLOW & BACKEND ARCHITECTURE FLOW
+================================================================================
+
+TABLE OF CONTENTS
+--------------------------------------------------------------------------------
+1. EXECUTIVE SUMMARY & ARCHITECTURE OVERVIEW
+2. MOBILE APP (FLUTTER) ENTRY PAGE FLOW
+   2.1 Initialization & Identity Hydration
+   2.2 Site & Project Stage Selection
+   2.3 Multi-Bill Itemization & Receipt Capture
+   2.4 Client-Side Validation & Confirmation
+   2.5 Offline Execution Mode (OfflineSyncService)
+   2.6 Online Execution Mode
+3. WEB APPLICATION (REACT) ENTRY PAGE FLOW
+   3.1 State Initialization & Real-Time Subscription
+   3.2 Modal Expense Voucher Builder
+   3.3 Multi-Bill Line Items & Document Upload
+   3.4 Submission & Dual-Sync Execution
+4. BACKEND & FIRESTORE DATA FLOW
+   4.1 Primary Transaction Write: managerExpenses
+   4.2 Cross-Platform Mirroring: managerEntries
+   4.3 Mobile Aggregate Summary: managerExpenseSummary
+   4.4 Multi-Category Financial Aggregation: totalSiteExpensesPerDay
+   4.5 Project Financial Sync: projects & Site collections
+5. OFFLINE SYNC & RECONCILIATION ENGINE
+   5.1 Queue Persistence
+   5.2 Idempotency & Conflict Resolution
+   5.3 Automatic Network Resumption
+6. DETAILED DATA SCHEMAS
+   6.1 managerExpenses Document Schema
+   6.2 Bill Item Object Schema
+   6.3 totalSiteExpensesPerDay Schema
+7. SECURITY, ROLE PERMISSIONS & ATTRIBUTION
+--------------------------------------------------------------------------------
+
+
+================================================================================
+1. EXECUTIVE SUMMARY & ARCHITECTURE OVERVIEW
+================================================================================
+
+The Manager Expenses module in eBricks / CST White Label allows Operations 
+Managers to log operational and site-related expenditures (procurements, vendor 
+bills, emergency site purchases, transport, equipment rentals) with itemized 
+bills and photo vouchers.
+
+The system is designed with dual-platform parity:
+- Mobile Application (Flutter): Supports full offline caching, camera/gallery receipt
+  uploads, local transaction queues, and automatic background synchronization.
+- Web Application (React): Supports high-density voucher management, real-time 
+  listeners, dual collection mirroring, and universal document previewing.
+
+Both platforms route their financial transactions into Firestore, automatically 
+updating daily site summaries, canonical cumulative expenditures, and project 
+budget balances in real time.
+
+
+================================================================================
+2. MOBILE APP (FLUTTER) ENTRY PAGE FLOW
+================================================================================
+
+Source File: lib/screens/manager/manager_expenses.dart
+Related Services:
+- AuthService (lib/services/auth_service.dart)
+- FirestoreService (lib/services/firestore_service.dart)
+- ExpenseService (lib/services/expense_service.dart)
+- AppStorageService (lib/services/app_storage_service.dart)
+- OfflineSyncService (lib/services/offline_sync_service.dart)
+
+2.1 Initialization & Identity Hydration
+---------------------------------------
+1. User navigates to Manager Expenses screen via navigation drawer or router.
+2. `initState()` triggers:
+   a. `_loadManagerData()`:
+      - Reads `AuthService().userData`.
+      - Extracts `managerId`, `managerName`, and `managerRole`.
+   b. `_loadSiteIds()`:
+      - Fetches assigned active site IDs and site metadata.
+      - Populates `siteNameMap` and internal site metadata cache.
+   c. Pre-fills date controller with current date (`dd/MM/yyyy`).
+   d. Initializes dual tab controller:
+      - Tab 0: "Expense Entry"
+      - Tab 1: "Expense Logs / History"
+
+2.2 Site & Project Stage Selection
+----------------------------------
+1. User selects a Site from the dropdown.
+2. `_loadSiteDetails(siteId)` executes:
+   - Queries `projects` and `Site` collections for canonical metadata.
+   - Auto-resolves and locks `selectedProjectName`, `selectedSupervisorId`, 
+     and default `selectedProjectStage`.
+   - Fetches any already-logged manager bills for the selected site on the 
+     selected date from `managerExpenses/{siteId}_{ddMMyyyy}`.
+   - If previous bills exist, displays the existing day total so the manager 
+     sees ongoing daily totals.
+
+2.3 Multi-Bill Itemization & Receipt Capture
+--------------------------------------------
+1. Instead of single flat entries, the page allows adding multiple bills to 
+   a single daily session before final submission.
+2. For each bill, the manager enters:
+   - Bill Number (`billNoController`)
+   - Vendor Name (`billVendorController`)
+   - Bill Amount (`billAmountController`)
+   - Bill Date (defaults to selected site expense date)
+   - Optional Receipt Photo:
+     * User clicks camera or gallery icon.
+     * `ImagePicker` compresses image and prepares for upload.
+3. User taps "ADD BILL":
+   - If an image was selected, `_uploadBillImage` uploads the file to Firebase 
+     Storage under:
+     `manager_expenses/{orgId}/{siteId}/{timestamp}_{billNo}.jpg`
+   - Bill is added to local state list `bills`:
+     {
+       'billNo': billNo,
+       'billVendor': vendor,
+       'billAmount': amount,
+       'billCopy': billUrl,
+       'billDate': Timestamp,
+       'raisedBy': managerId,
+       'raisedByName': managerName,
+       'userRole': managerRole,
+       'createdAt': Timestamp.now()
+     }
+   - Form fields reset, and bill card is displayed in the active list with a 
+     Delete button.
+
+2.4 Client-Side Validation & Confirmation
+-----------------------------------------
+1. User taps "SUBMIT ALL EXPENSES":
+2. Client-side checks:
+   - Site ID != null
+   - Supervisor ID != null
+   - Project Stage != null
+   - `bills.isNotEmpty`
+3. A confirmation popup (`AlertDialog`) renders:
+   - Site Code & Site Name
+   - Selected Expense Date
+   - Count of bills to commit
+   - Calculated session total: ₹ (sum of all pending bills)
+4. User confirms submission.
+
+2.5 Offline Execution Mode (OfflineSyncService)
+-----------------------------------------------
+If `OfflineSyncService().isOnline == false`:
+1. Constructs payload with all bills, site metadata, manager actor, and date.
+2. Generates an idempotency key: `${docId}_${timestamp}`.
+3. Calls `OfflineSyncService().enqueueEntry(type: 'manager_expense', ...)`.
+4. Saves record in local device storage (`SharedPreferences`).
+5. Displays offline confirmation dialog:
+   "Your manager expense entry has been saved locally... It will automatically 
+   sync once network connectivity is restored."
+6. Clears local bills list and resets UI.
+
+2.6 Online Execution Mode
+-------------------------
+If device is online:
+1. `isSubmitting = true` (shows progress spinner).
+2. Calculates deterministic Document ID: `${selectedSiteId}_${ddMMyyyy}`.
+3. Reads existing document at `managerExpenses/{docId}`:
+   - If doc exists: Merges existing bills with new bills `[...existingBills, ...bills]`, 
+     recalculates new `totalAmount`.
+   - If doc does not exist: Creates new document with `bills` and session `totalAmount`.
+4. Writes daily summary to `managerExpenseSummary/{docId}`.
+5. Invokes backend financial sync: `ExpenseService.updateTotalMgrExpenseForSite(selectedSiteId)`.
+6. Shows success modal dialog ("Expenses Submitted!").
+7. User taps "View Logs" -> switches `TabController` to Tab 1 (Expense Logs).
+
+
+================================================================================
+3. WEB APPLICATION (REACT) ENTRY PAGE FLOW
+================================================================================
+
+Source Files:
+- UI: src/pages/manager/operations/ManagerExpenses.jsx
+- Service: src/services/managerExpenseService.js
+- Normalization: src/services/expenseNormalizationService.js
+- Storage: src/services/appStorageService.js
+
+3.1 State Initialization & Real-Time Subscription
+-------------------------------------------------
+1. `ManagerExpenses` component mounts.
+2. Runs `subscribeManagerExpenses(orgId, onData, onError)`:
+   - Attaches real-time Firestore listeners (`onSnapshot`) to both:
+     * `/organisation/{orgId}/managerExpenses`
+     * `/organisation/{orgId}/managerEntries`
+   - Normalizes fields using `normalizeExpenseRecord(...)`.
+   - Merges and deduplicates records by `expenseId`.
+   - Sorts records in descending order by expense date.
+3. Computes KPI metrics:
+   - Total Manager Expenses Recorded
+   - This Month's Expenses
+   - Active Sites Managed
+   - Pending Receipts / Vouchers Count
+
+3.2 Modal Expense Voucher Builder
+---------------------------------
+1. User clicks "+ Record Manager Expense" button.
+2. Modal opens with form state:
+   - Site Selector (dropdown of organization's active sites)
+   - Project Name & Stage (auto-populated upon site selection)
+   - Expense Date (HTML date picker, defaults to today)
+   - Manager Notes / Remarks (text area)
+   - Dynamic Bill Line Items List
+
+3.3 Multi-Bill Line Items & Document Upload
+-------------------------------------------
+1. User can add 1 to N bills inside the modal.
+2. For each line item:
+   - Vendor Name (text)
+   - Bill / Invoice Number (text)
+   - Amount in ₹ (numeric)
+   - Purpose / Description (text)
+   - Bill Attachment: File input accepting images (PNG, JPG, WEBP) or PDF.
+3. When files are attached:
+   - Uses `AppStorageService.uploadManagerBillFile(file, orgId, siteId)` to upload 
+     directly to Firebase Storage.
+   - Generates download URL and storage path.
+4. Live summary box calculates `totalCalculatedAmount` across all rows.
+
+3.4 Submission & Dual-Sync Execution
+------------------------------------
+1. User clicks "Record Voucher & Sync Spent".
+2. Calls `recordManagerExpense(orgId, expenseData, currentUser)`.
+3. Validates required parameters (`orgId`, `siteId`, `totalAmount > 0`).
+4. Executes atomic backend writes (see Section 4).
+5. Closes modal, triggers success toast notification, and real-time listener 
+   instantly renders the new voucher in the data table/cards.
+
+
+================================================================================
+4. BACKEND & FIRESTORE DATA FLOW
+================================================================================
+
+When a manager expense is submitted from either Mobile or Web, the following 
+cascade of Firestore writes occurs:
+
+┌─────────────────────────────────────────────────────────────┐
+│                 MANAGER EXPENSE SUBMISSION                  │
+│              (Mobile App or Web Application)                │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+            ┌──────────────────┴──────────────────┐
+            ▼                                     ▼
+ ┌───────────────────────┐             ┌─────────────────────┐
+ │    managerExpenses    │             │   managerEntries    │
+ │ (Canonical Full Data) │             │  (Cross-App Mirror) │
+ └──────────┬────────────┘             └─────────────────────┘
+            │
+            ▼
+ ┌───────────────────────┐
+ │ managerExpenseSummary │
+ │  (Daily Aggregates)   │
+ └──────────┬────────────┘
+            │
+            ▼
+ ┌────────────────────────────────────────────────────────────┐
+ │ ExpenseService.recalcTotalsAndSyncProject(siteId)          │
+ │                                                            │
+ │ 1. Concurrent Parallel Sums:                              │
+ │    - _sumSupervisorExpenses()                              │
+ │    - _sumManagerExpenses()                                 │
+ │    - _sumOrganizationExpenses()                           │
+ │    - _sumContractorExpenses()                             │
+ │    - _sumIncentiveExpenses()                               │
+ │    - _sumPettyCashExpenses()                              │
+ │                                                            │
+ │ 2. Computes totalAllExpenses = sum(all 6 categories)       │
+ └──────────┬─────────────────────────────────────────────────┘
+            │
+            ├─────────────────────────────────────┐
+            ▼                                     ▼
+ ┌────────────────────────────────────┐ ┌───────────────────────────────────┐
+ │     totalSiteExpensesPerDay        │ │         projects / Site           │
+ │       /{canonicalDocId}            │ │        /{canonicalDocId}          │
+ │                                    │ │                                   │
+ │ - totalMgrExpense                  │ │ - amountSpent = totalAllExpenses  │
+ │ - totalSupervisorExpense           │ │ - amountSpend = totalAllExpenses  │
+ │ - totalOrgExpense                  │ │ - amountBalance = (Received -     │
+ │ - totalContractorExpense           │ │                    totalSpent)    │
+ │ - totalIncentiveExpenses           │ │ - updatedAt = serverTimestamp()   │
+ │ - totalPettyCashExpense            │ └───────────────────────────────────┘
+ │ - totalAllExpenses                 │
+ │ - remainingPettyCash               │
+ └────────────────────────────────────┘
+
+4.1 Primary Transaction Write: managerExpenses
+----------------------------------------------
+- Collection Path: 
+  * Mobile: `/managerExpenses/{siteId}_{ddMMyyyy}`
+  * Web: `/organisation/{orgId}/managerExpenses/{MEXP_id}`
+- Role: Authoritative transaction log containing full itemized bill list, 
+  receipt URLs, vendor details, and raiser attribution.
+
+4.2 Cross-Platform Mirroring: managerEntries
+--------------------------------------------
+- Collection Path: `/organisation/{orgId}/managerEntries/{expenseId}`
+- Role: Legacy and cross-platform compatibility collection. Ensures that 
+  mobile reports (Daily Site Report, Financial Status Report) and web 
+  accounting screens read uniform data regardless of where it was entered.
+
+4.3 Mobile Aggregate Summary: managerExpenseSummary
+---------------------------------------------------
+- Collection Path: `/managerExpenseSummary/{docId}`
+- Role: Lightweight document used by manager dashboards to render monthly and 
+  weekly expense charts without needing to download large bill photo metadata.
+
+4.4 Multi-Category Financial Aggregation: totalSiteExpensesPerDay
+-----------------------------------------------------------------
+- Collection Path: `/totalSiteExpensesPerDay/{canonicalDocId}`
+  (e.g., `ST001_AbineshHouse`)
+- Engine: `ExpenseService.recalcTotalsAndSyncProject`
+- Concurrently queries and aggregates:
+  1. Supervisor Expenses (`siteSupervisorEntries`)
+  2. Manager Expenses (`managerExpenses` + `managerExpenseSummary`)
+  3. Organization Expenses (`organizationExpenses` + `organizationEntries`)
+  4. Contractor Expenses (`contractorEntries`)
+  5. Incentives (`siteSupervisorIncentives`)
+  6. Petty Cash Expenses & Received (`petty_cash_transactions`)
+- Atomic Batch Write:
+  * Merges all 6 category totals into the canonical document.
+  * Cleans up legacy non-canonical documents (e.g., bare names like 'Abinesh House').
+
+4.5 Project Financial Sync: projects & Site collections
+-------------------------------------------------------
+- Collection Path: `/projects/{canonicalDocId}` and `/Site/{canonicalDocId}`
+- Sync Action:
+  * Reads customer amount received (`amountReceived`, `amountPaid`, or `receivedPayments`).
+  * Calculates `amountBalance = amountReceived - totalAllExpenses`.
+  * Updates `amountSpent`, `amountSpend`, and `amountBalance` via atomic batch write.
+  * Prevents budget drift between accounting dashboards and project managers.
+
+
+================================================================================
+5. OFFLINE SYNC & RECONCILIATION ENGINE
+================================================================================
+
+Engine: lib/services/offline_sync_service.dart
+
+5.1 Queue Persistence
+---------------------
+When offline:
+1. Every manager expense transaction is serialized into an `OfflineQueueItem`:
+   {
+     'localTxId': UUID,
+     'moduleName': 'Manager Expense',
+     'collectionPath': 'manager_expenses',
+     'documentId': '${siteId}_${ddMMyyyy}',
+     'payload': payload,
+     'createdAt': ISO8601,
+     'status': 'pending'
+   }
+2. Saved to device encrypted `SharedPreferences`.
+3. Survives app termination, phone reboot, or app updates.
+
+5.2 Idempotency & Conflict Resolution
+-------------------------------------
+To prevent duplicate financial charges upon reconnect:
+1. Each item includes a unique `idempotencyKey` (`localTxId`).
+2. Before writing to Firestore on sync, `OfflineSyncService` executes an 
+   idempotency query:
+   `collectionRef.where('idempotencyKey', '==', item.localTxId).limit(1)`
+3. If document with that key already exists, sync marks it as success and 
+   skips the write.
+4. If document exists on server with previous bills:
+   - The sync engine performs a merge update (`SetOptions(merge: true)`), 
+     appending bills rather than overwriting existing records.
+
+5.3 Automatic Network Resumption
+--------------------------------
+1. `OfflineSyncService` listens to `connectivity_plus` streams.
+2. When connectivity changes to WiFi or Cellular:
+   - Verifies real internet connectivity by reaching Firestore endpoints.
+   - Flushes pending queue sequentially in FIFO order.
+   - On completion, triggers `ExpenseService.recalcTotalsAndSyncProject(siteId)` 
+     so server totals match local calculations.
+   - Emits UI banner notification: "All offline data synced successfully!"
+
+
+================================================================================
+6. DETAILED DATA SCHEMAS
+================================================================================
+
+6.1 managerExpenses Document Schema
+-----------------------------------
+{
+  "siteId": "ST001_AbineshHouse",          // Canonical site ID
+  "projectName": "Abinesh House Project",  // Linked project name
+  "projectStage": "Superstructure & RCC",  // Construction milestone
+  "supervisorName": "SUP_002",             // Site supervisor identifier
+  "managerId": "MGR_001",                  // Manager user identifier
+  "managerName": "John Doe",               // Manager full name
+  "raisedBy": "MGR_001",                   // Audit actor ID
+  "raisedByName": "John Doe",              // Audit actor name
+  "userRole": "Manager",                   // Role level
+  "entryDate": Timestamp,                  // Expense date
+  "createdAt": Timestamp,                  // Document creation time
+  "updatedAt": Timestamp,                  // Last modified time
+  "totalAmount": 15450.00,                 // Sum of all bills in voucher
+  "remarks": "Cement procurement batch",   // Optional manager note
+  "bills": [ ... ]                         // Array of Bill Item Objects
+}
+
+6.2 Bill Item Object Schema
+---------------------------
+{
+  "billNo": "INV-2026-089",                // Invoice / voucher number
+  "billVendor": "Ultratech Cement Depot",  // Supplier / vendor
+  "billAmount": 15450.00,                  // Numeric expense amount
+  "billCopy": "https://firebasestorage...",// Cloud receipt URL (or 'billURL')
+  "billDate": Timestamp,                   // Date printed on bill
+  "description": "50 bags OPC 53 Grade",   // Material / expense description
+  "raisedBy": "MGR_001",                   // Attributed user ID
+  "raisedByName": "John Doe",              // Attributed user name
+  "userRole": "Manager",                   // Role identifier
+  "createdAt": Timestamp                   // Line item creation timestamp
+}
+
+6.3 totalSiteExpensesPerDay Document Schema
+-------------------------------------------
+{
+  "siteId": "ST001_AbineshHouse",          // Canonical site key
+  "siteCode": "ST001",                     // Site code
+  "siteName": "Abinesh House",             // Site name
+  "totalSiteExpense": 45200.00,            // Supervisor + Petty Cash Spent
+  "totalSupervisorExpense": 38200.00,      // Supervisor direct labour/materials
+  "totalMgrExpense": 28500.00,             // All cumulative manager expenses
+  "totalOrgExpense": 65000.00,             // Head office / organization expenses
+  "totalContractorExpense": 80000.00,      // Contractor payments
+  "totalIncentiveExpenses": 4500.00,       // Worker/supervisor incentives
+  "totalPettyCashExpense": 7000.00,        // Site petty cash disbursements
+  "totalPettyCashReceived": 15000.00,      // Total petty cash allocated
+  "remainingPettyCash": 8000.00,           // Remaining petty cash balance
+  "totalAllExpenses": 223200.00,           // Cumulative site expenditure
+  "updatedAt": Timestamp                   // Server timestamp
+}
+
+
+================================================================================
+7. SECURITY, ROLE PERMISSIONS & ATTRIBUTION
+================================================================================
+
+1. Authentication & Tenant Isolation:
+   - Users must be authenticated via Firebase Auth.
+   - Operations are strictly scoped to the active organization (`/organisation/{orgId}/`).
+   - Managers cannot record or read expenses belonging to another tenant.
+
+2. Role Verification:
+   - Only users with role `Manager`, `Admin`, or `OrgAdmin` can write to `managerExpenses`.
+   - Supervisor users can only raise petty cash requests or supervisor labour entries.
+
+3. Immutability & Audit Trail:
+   - Every bill item retains immutable metadata: `raisedBy`, `raisedByName`, `userRole`, 
+     and `createdAt`.
+   - Edits or bill additions preserve earlier bills and update `updatedAt` with 
+     server timestamps.
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

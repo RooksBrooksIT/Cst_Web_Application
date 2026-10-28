@@ -138,26 +138,26 @@ describe('14-Day Free Trial Full Access & Lifecycle Unit Tests', () => {
   // ---------------------------------------------------------------------------------------------
   // Requirement 3: Quota Checks & Creation Actions During Active Trial
   // ---------------------------------------------------------------------------------------------
-  describe('Requirement 3: Quotas & Unrestricted Evaluation Capacity During Active Trial', () => {
+  describe('Requirement 3: Quotas & Configured Resource Limits During Active Trial', () => {
     const activeTrialSubscription = {
       subscriptionPlan: 'Free Trial',
       subscriptionType: 'Free Trial',
       isSubscriptionActive: true,
       subscriptionStartDate: new Date(Date.now() - 1 * ONE_DAY_MS),
       subscriptionEndDate: new Date(Date.now() + 13 * ONE_DAY_MS),
-      maxProjects: 999999,
-      maxUsers: 999999,
-      maxManagers: 999999,
-      maxSupervisors: 999999,
+      maxProjects: 1,
+      maxUsers: 3,
+      maxManagers: 1,
+      maxSupervisors: 1,
     }
 
     it('checkQuotaLimits allows site, manager, supervisor, and user additions during active trial when within limits', () => {
       const result = checkQuotaLimits({
         subscription: activeTrialSubscription,
-        currentSites: 5,
+        currentSites: 0,
         currentManagers: 0,
         currentSupervisors: 0,
-        currentUsers: 10,
+        currentUsers: 1,
       })
 
       assert.equal(result.isExpired, false)
@@ -168,15 +168,31 @@ describe('14-Day Free Trial Full Access & Lifecycle Unit Tests', () => {
       assert.equal(result.canAddUser, true)
     })
 
-    it('canCreateSite allows creating multiple sites during active trial', async () => {
+    it('canCreateSite allows creating 1 site during active trial when within quota', async () => {
       const check = await canCreateSite({
         orgId: null,
-        currentSitesCount: 3,
+        currentSitesCount: 0,
         subscription: activeTrialSubscription,
       })
 
       assert.equal(check.isAllowed, true)
       assert.equal(check.allowed, true)
+      assert.equal(check.maxLimit, 1)
+    })
+
+    it('canCreateSite blocks creating an additional site once Free Trial limit is reached', async () => {
+      const check = await canCreateSite({
+        orgId: null,
+        currentSitesCount: 1,
+        subscription: activeTrialSubscription,
+      })
+
+      assert.equal(check.isAllowed, false)
+      assert.equal(check.allowed, false)
+      assert.equal(check.reason, 'FREE_TRIAL_LIMIT_REACHED')
+      assert.equal(check.title, 'Free Trial Limit Reached')
+      assert.equal(check.upgradePlan, 'Silver')
+      assert.match(check.message, /limit of 1 project and site/i)
     })
 
     it('canCreateManager allows adding a manager during active trial when within quota', async () => {

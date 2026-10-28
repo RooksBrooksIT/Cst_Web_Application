@@ -16,7 +16,7 @@ import { createUserWithEmailAndPassword } from 'firebase/auth'
 import { httpsCallable } from 'firebase/functions'
 import { auth, db, functions } from './firebase.js'
 import { isGlobalUsernameUnique, addTakenUsernameToCache } from './usernameValidationService.js'
-import { calculatePlanQuotas } from './subscriptionService.js'
+import { calculatePlanQuotas, syncSubscriptionAcrossDocs } from './subscriptionService.js'
 
 // CST Namespace constants
 export const CST_NAMESPACE_PREFIX = 'cst_'
@@ -593,26 +593,8 @@ export async function completeFreeTrialActivation({
     updatedAt: serverTimestamp(),
   }
 
-  const batch = writeBatch(db)
-
-  // 1. Update /organisation/{orgId}/data/subscription
-  batch.set(doc(db, 'organisation', orgId, 'data', 'subscription'), subscriptionPayload, { merge: true })
-
-  // 2. Update root /organisation/{orgId}
-  batch.set(
-    doc(db, 'organisation', orgId),
-    {
-      ...subscriptionPayload,
-      subscription: subscriptionPayload,
-      isSubscriptionActive: true,
-      onboardingStep: 'COMPLETED',
-      registrationStatus: 'COMPLETED',
-      updated_at: serverTimestamp(),
-    },
-    { merge: true }
-  )
-
-  await batch.commit()
+  // Atomically synchronize subscription across data/subscription, root doc, and legacy docs
+  await syncSubscriptionAcrossDocs(orgId, subscriptionPayload)
 
   // Cloud Function: Send Free Trial activation invoice/welcome email (Non-blocking)
   try {
@@ -700,26 +682,17 @@ export async function completePaidPlanActivation({
     updatedAt: serverTimestamp(),
   }
 
-  const batch = writeBatch(db)
+  // Verify payment confirmation before activating paid subscription
+  const isPaymentConfirmed =
+    (Number(amount) > 0 || (rawData && rawData.status === 'success')) &&
+    rawData?.status !== 'failure'
 
-  // 1. Update /organisation/{orgId}/data/subscription
-  batch.set(doc(db, 'organisation', orgId, 'data', 'subscription'), subscriptionPayload, { merge: true })
+  if (!isPaymentConfirmed) {
+    throw new Error('Payment confirmation failed. Paid subscription cannot be activated without verified payment.')
+  }
 
-  // 2. Update root /organisation/{orgId}
-  batch.set(
-    doc(db, 'organisation', orgId),
-    {
-      ...subscriptionPayload,
-      subscription: subscriptionPayload,
-      isSubscriptionActive: true,
-      onboardingStep: 'COMPLETED',
-      registrationStatus: 'COMPLETED',
-      updated_at: serverTimestamp(),
-    },
-    { merge: true }
-  )
-
-  await batch.commit()
+  // Atomically synchronize subscription across data/subscription, root doc, and legacy docs
+  await syncSubscriptionAcrossDocs(orgId, subscriptionPayload)
 
   // Cloud Function: Verify subscription & send tax invoice email (Non-blocking)
   try {

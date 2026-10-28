@@ -4,6 +4,7 @@ import {
   parseAmount,
   calculatePettyCashInsights,
   formatDateDisplay,
+  matchesSite,
 } from '../../../services/reportService'
 import { exportToCSV, printReport } from '../../../services/exportService'
 
@@ -42,15 +43,24 @@ export default function PettyCashInsightsReportHub({
     })
   }, [sites, pettyCashAccounts, pettyCashExpenses, pettyCashRequests])
 
+  const selectedSiteObj = useMemo(() => {
+    return selectedSiteId !== 'all' ? sites.find((s) => s.id === selectedSiteId || matchesSite(s, { id: selectedSiteId })) : null
+  }, [sites, selectedSiteId])
+
   const filteredSiteAuditList = useMemo(() => {
     if (selectedSiteId === 'all') return reportData.siteAuditList
-    return reportData.siteAuditList.filter((s) => s.siteId === selectedSiteId)
-  }, [reportData, selectedSiteId])
+    return reportData.siteAuditList.filter((s) =>
+      s.siteId === selectedSiteId || (selectedSiteObj && matchesSite(s, selectedSiteObj))
+    )
+  }, [reportData, selectedSiteId, selectedSiteObj])
 
   // Filtered monthly ledger
   const filteredLedger = useMemo(() => {
     return reportData.itemizedLedger.filter((item) => {
-      const matchesSite = selectedSiteId === 'all' || item.siteId === selectedSiteId
+      const matchesSiteFilter =
+        selectedSiteId === 'all' ||
+        item.siteId === selectedSiteId ||
+        (selectedSiteObj && matchesSite(item, selectedSiteObj))
       const matchesMonth = item.rawDate ? String(item.rawDate).startsWith(selectedMonth) : true
       const matchesCategory = categoryFilter === 'all' || item.category.toLowerCase().includes(categoryFilter.toLowerCase())
       const q = searchQuery.trim().toLowerCase()
@@ -60,9 +70,9 @@ export default function PettyCashInsightsReportHub({
         item.supervisor?.toLowerCase().includes(q) ||
         item.vendor?.toLowerCase().includes(q) ||
         item.description?.toLowerCase().includes(q)
-      return matchesSite && matchesMonth && matchesCategory && matchesSearch
+      return matchesSiteFilter && matchesMonth && matchesCategory && matchesSearch
     })
-  }, [reportData, selectedSiteId, selectedMonth, categoryFilter, searchQuery])
+  }, [reportData, selectedSiteId, selectedSiteObj, selectedMonth, categoryFilter, searchQuery])
 
   const handleExportCSV = () => {
     if (activeTab === 'audit') {

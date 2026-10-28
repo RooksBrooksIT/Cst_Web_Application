@@ -44,9 +44,20 @@ export default function SubscriptionLimitModal(props) {
     )
   }
 
-  const isExpired = title?.toLowerCase().includes('expired') || message?.toLowerCase().includes('expired')
-  const isTrial = String(planName || '').toLowerCase().includes('trial') || String(planName || '').toLowerCase().includes('free')
-  const upgradeLabel = isExpired ? (isTrial ? 'Select a Plan' : 'Renew Subscription') : `Upgrade to ${recommendedPlan}`
+  const data = limitData ? { ...props, ...limitData } : props
+  const modalTitle = data.title || title
+  const modalMessage = data.message || message
+  const modalPlanName = data.planName || planName
+  const modalCurrentCount = data.currentCount !== undefined ? data.currentCount : currentCount
+  const modalMaxLimit = data.maxLimit !== undefined ? data.maxLimit : maxLimit
+  const modalRecommendedPlan = data.upgradePlan || data.recommendedPlan || recommendedPlan
+  const modalResourceType = data.resourceType || resourceType || 'Site'
+
+  const isExpired = modalTitle?.toLowerCase().includes('expired') || modalMessage?.toLowerCase().includes('expired')
+  const isTrial = String(modalPlanName || '').toLowerCase().includes('trial') || String(modalPlanName || '').toLowerCase().includes('free')
+  const upgradeLabel = isExpired
+    ? (isTrial ? 'Select a Plan' : 'Renew Subscription')
+    : `Upgrade to ${modalRecommendedPlan}`
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 animate-fade-in">
@@ -73,10 +84,10 @@ export default function SubscriptionLimitModal(props) {
           >
             {isExpired ? 'Subscription Inactive' : 'Quota Limit Exceeded'}
           </span>
-          <h3 className="text-lg font-black text-slate-900 mt-2">{title}</h3>
+          <h3 className="text-lg font-black text-slate-900 mt-2">{modalTitle}</h3>
           <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-            {message ||
-              `You have reached the maximum allowed limit for ${resourceType.toLowerCase()}s on your current subscription plan.`}
+            {modalMessage ||
+              `You have reached the maximum allowed limit for ${modalResourceType.toLowerCase()}s on your current subscription plan.`}
           </p>
         </div>
 
@@ -85,22 +96,22 @@ export default function SubscriptionLimitModal(props) {
           <div className="flex justify-between items-center">
             <span className="text-slate-500">Current Plan:</span>
             <span className="font-bold text-slate-800 px-2 py-0.5 bg-slate-200/70 rounded-md text-[11px]">
-              {planName}
+              {modalPlanName}
             </span>
           </div>
 
-          {currentCount !== undefined && maxLimit !== undefined && (
+          {modalCurrentCount !== undefined && modalMaxLimit !== undefined && (
             <div className="flex justify-between items-center">
-              <span className="text-slate-500">{resourceType} Quota:</span>
+              <span className="text-slate-500">{modalResourceType} Quota:</span>
               <span className="font-semibold text-rose-600 font-mono text-[11px]">
-                {currentCount} / {maxLimit === 999999 ? 'Unlimited' : maxLimit} (Limit Reached)
+                {modalCurrentCount} / {modalMaxLimit === 999999 ? 'Unlimited' : modalMaxLimit} (Limit Reached)
               </span>
             </div>
           )}
 
           <div className="flex justify-between items-center pt-1 border-t border-slate-200/60">
             <span className="text-slate-500">Recommended Next Tier:</span>
-            <strong className="text-blue-700 font-bold">{recommendedPlan}</strong>
+            <strong className="text-blue-700 font-bold">{modalRecommendedPlan}</strong>
           </div>
         </div>
 

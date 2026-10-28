@@ -26,9 +26,15 @@ import {
 } from 'lucide-react'
 import {
   fetchOrganizationExpenses,
+  subscribeOrganizationExpenses,
   recordOrganizationExpense,
   deleteOrganizationExpense,
 } from '../../../services/organizationExpenseService.js'
+import {
+  isExpenseMatchingSite,
+  resolveProjectCategoryOrStage,
+} from '../../../services/expenseNormalizationService.js'
+import { fetchProjectDetails } from '../../../services/projectService.js'
 import AppStorageService from '../../../services/appStorageService.js'
 import BillImagePreviewModal from '../../../components/common/BillImagePreviewModal.jsx'
 
@@ -51,27 +57,82 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
     date: '',
   })
 
+  const createEmptyBill = () => ({
+    description: '',
+    vendor: '',
+    billNo: '',
+    amount: '',
+    file: null,
+    fileName: '',
+    billUrl: '',
+    storagePath: '',
+    previewUrl: '',
+    isUploading: false,
+  })
+
   // Create Modal State
   const [showModal, setShowModal] = useState(false)
   const [formSiteId, setFormSiteId] = useState('')
-  const [formStage, setFormStage] = useState('Central Administration')
-  const [formDate, setFormDate] = useState(new Date().toISOString().split('T')[0])
+  const [formStage, setFormStage] = useState('')
+  const [formDate, setFormDate] = useState('')
   const [formRemarks, setFormRemarks] = useState('')
-  const [bills, setBills] = useState([
-    {
-      description: 'Site Survey & Statutory Clearance Fee',
-      vendor: 'Urban Planning Consultants',
-      billNo: 'ORG-INV-102',
-      amount: '12000',
-      file: null,
-      fileName: '',
-      billUrl: '',
-      storagePath: '',
-      previewUrl: '',
-      isUploading: false,
-    },
-  ])
+  const [bills, setBills] = useState([createEmptyBill()])
   const [submitting, setSubmitting] = useState(false)
+
+  const resetCreateForm = () => {
+    setFormSiteId('')
+    setFormStage('')
+    setFormRemarks('')
+    setFormDate('')
+    setBills([createEmptyBill()])
+  }
+
+  const handleOpenCreateModal = () => {
+    resetCreateForm()
+    setShowModal(true)
+  }
+
+  const handleCloseCreateModal = () => {
+    setShowModal(false)
+    resetCreateForm()
+  }
+
+  // Handle Site / Project Selection & Dynamic Auto-fill from Backend
+  const handleSiteChange = async (e) => {
+    const selectedId = e.target.value
+    setFormSiteId(selectedId)
+
+    if (!selectedId) {
+      setFormStage('')
+      return
+    }
+
+    // 1. Immediately look up in loaded sites prop to provide instantaneous auto-fill
+    const matchedSite = sites.find(
+      (s) =>
+        s.id === selectedId ||
+        s.siteId === selectedId ||
+        s.projectId === selectedId ||
+        s.siteCode === selectedId
+    )
+    const immediateCategoryOrStage = resolveProjectCategoryOrStage(matchedSite)
+    setFormStage(immediateCategoryOrStage || '')
+
+    // 2. Fetch fresh project document directly from Firestore backend
+    if (orgId) {
+      try {
+        const backendProject = await fetchProjectDetails(orgId, selectedId)
+        if (backendProject) {
+          const backendVal = resolveProjectCategoryOrStage(backendProject)
+          if (backendVal) {
+            setFormStage(backendVal)
+          }
+        }
+      } catch (err) {
+        console.warn('Error fetching backend project details for auto-fill:', err?.message)
+      }
+    }
+  }
 
   const loadData = async () => {
     if (!orgId) return
@@ -88,7 +149,21 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
   };
 
   useEffect(() => {
+    if (!orgId) return
     loadData()
+    const unsubscribe = subscribeOrganizationExpenses(
+      orgId,
+      (liveData) => {
+        setExpenses(liveData || [])
+        setLoading(false)
+      },
+      (err) => {
+        console.warn('Real-time organization expenses error:', err?.message)
+      }
+    )
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe()
+    }
   }, [orgId])
 
   const totalCalculatedAmount = useMemo(() => {
@@ -98,18 +173,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
   const handleAddBill = () => {
     setBills([
       ...bills,
-      {
-        description: '',
-        vendor: '',
-        billNo: '',
-        amount: '',
-        file: null,
-        fileName: '',
-        billUrl: '',
-        storagePath: '',
-        previewUrl: '',
-        isUploading: false,
-      },
+      createEmptyBill(),
     ])
   }
 
@@ -225,7 +289,8 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
           siteId: formSiteId,
           siteName: site?.siteName || site?.projectName || 'Project Site',
           projectStage: formStage,
-          expenseDate: formDate,
+          projectCategory: formStage,
+          expenseDate: formDate || new Date().toISOString().split('T')[0],
           remarks: formRemarks,
           bills: processedBills,
           totalAmount: totalCalculatedAmount,
@@ -234,22 +299,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
       )
 
       onNotify?.('Organization expense recorded and synced to project accounts!', 'success')
-      setShowModal(false)
-      setFormRemarks('')
-      setBills([
-        {
-          description: '',
-          vendor: '',
-          billNo: '',
-          amount: '',
-          file: null,
-          fileName: '',
-          billUrl: '',
-          storagePath: '',
-          previewUrl: '',
-          isUploading: false,
-        },
-      ])
+      handleCloseCreateModal()
       await loadData()
     } catch (err) {
       console.error(err)
@@ -277,18 +327,23 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
     if (expenses.length === 0) return
     const rows = [
       ['Expense ID', 'Site Name', 'Stage', 'Date', 'Total Amount', 'Recorder', 'Remarks', 'Bill Attached'],
-      ...expenses.map((e) => [
-        e.expenseId || e.id,
-        e.siteName || '',
-        e.projectStage || '',
-        e.expenseDate?.seconds
-          ? new Date(e.expenseDate.seconds * 1000).toLocaleDateString()
-          : '',
-        e.totalAmount || 0,
-        e.raiserName || '',
-        `"${(e.remarks || '').replace(/"/g, '""')}"`,
-        e.billUrl || e.bills?.some((b) => b.billUrl) ? 'Yes' : 'No',
-      ]),
+      ...expenses.map((e) => {
+        const dStr = e.date instanceof Date
+          ? e.date.toLocaleDateString('en-IN')
+          : (e.expenseDate?.seconds
+              ? new Date(e.expenseDate.seconds * 1000).toLocaleDateString('en-IN')
+              : '')
+        return [
+          e.expenseId || e.id,
+          e.siteName || e.projectName || '',
+          e.projectStage || '',
+          dStr,
+          e.totalAmount || e.amount || 0,
+          e.raiserName || '',
+          `"${(e.remarks || '').replace(/"/g, '""')}"`,
+          e.billUrl || e.bills?.some((b) => b.billUrl || b.imageUrl || (b.billCopy && b.billCopy !== 'billURL')) ? 'Yes' : 'No',
+        ]
+      }),
     ]
     const csvContent =
       'data:text/csv;charset=utf-8,' + rows.map((r) => r.join(',')).join('\n')
@@ -306,17 +361,32 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
 
   // Filtered expenses
   const filteredExpenses = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim()
     return expenses.filter((e) => {
       const siteName = (e.siteName || '').toLowerCase()
+      const projectName = (e.projectName || '').toLowerCase()
+      const projectStage = (e.projectStage || '').toLowerCase()
       const remarks = (e.remarks || '').toLowerCase()
+      const raiser = (e.raiserName || e.supervisorName || '').toLowerCase()
+
       const matchesSearch =
-        siteName.includes(searchQuery.toLowerCase()) ||
-        remarks.includes(searchQuery.toLowerCase())
-      const matchesSite =
-        selectedSiteFilter === 'ALL' || e.siteId === selectedSiteFilter
+        !q ||
+        siteName.includes(q) ||
+        projectName.includes(q) ||
+        projectStage.includes(q) ||
+        remarks.includes(q) ||
+        raiser.includes(q) ||
+        (Array.isArray(e.bills) &&
+          e.bills.some((b) =>
+            (b.vendor || b.billVendor || '').toLowerCase().includes(q) ||
+            (b.billNo || '').toLowerCase().includes(q) ||
+            (b.description || '').toLowerCase().includes(q)
+          ))
+
+      const matchesSite = isExpenseMatchingSite(e, selectedSiteFilter, sites)
       return matchesSearch && matchesSite
     })
-  }, [expenses, searchQuery, selectedSiteFilter])
+  }, [expenses, searchQuery, selectedSiteFilter, sites])
 
   const totalSumSpent = useMemo(() => {
     return filteredExpenses.reduce(
@@ -357,10 +427,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
 
           <button
             type="button"
-            onClick={() => {
-              if (sites.length > 0 && !formSiteId) setFormSiteId(sites[0].id)
-              setShowModal(true)
-            }}
+            onClick={handleOpenCreateModal}
             className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-[#0B3470] hover:bg-[#082855] text-white text-sm font-semibold rounded-xl transition-all shadow-xs cursor-pointer"
           >
             <Plus className="w-4 h-4" />
@@ -499,22 +566,30 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs">
                 {filteredExpenses.map((item) => {
-                  const expenseDate = item.expenseDate?.seconds
-                    ? new Date(item.expenseDate.seconds * 1000).toLocaleDateString('en-IN', {
+                  const expenseDate = item.date instanceof Date
+                    ? item.date.toLocaleDateString('en-IN', {
                         day: 'numeric',
                         month: 'short',
                         year: 'numeric',
                       })
-                    : 'Recent'
+                    : (item.expenseDate?.seconds
+                        ? new Date(item.expenseDate.seconds * 1000).toLocaleDateString('en-IN', {
+                            day: 'numeric',
+                            month: 'short',
+                            year: 'numeric',
+                          })
+                        : 'Recent')
                   const billsCount = Array.isArray(item.bills) ? item.bills.length : 1
                   const totalAmt = Number(item.totalAmount || item.amount) || 0
 
                   const billWithDoc =
                     (Array.isArray(item.bills) &&
-                      item.bills.find((b) => b.billUrl || b.imageUrl)) ||
-                    (item.billUrl
+                      item.bills.find((b) => b.billUrl || b.imageUrl || (b.billCopy && b.billCopy !== 'billURL'))) ||
+                    (item.billUrl && item.billUrl !== 'billURL'
                       ? { billUrl: item.billUrl, description: item.remarks }
-                      : null)
+                      : (item.imageUrl && item.imageUrl !== 'billURL'
+                          ? { billUrl: item.imageUrl, description: item.remarks }
+                          : (item.billCopy && item.billCopy !== 'billURL' ? { billUrl: item.billCopy, description: item.remarks } : null)))
 
                   return (
                     <tr
@@ -528,7 +603,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
                           </div>
                           <div>
                             <strong className="block font-bold text-slate-900 text-sm">
-                              {item.siteName}
+                              {item.siteName || item.projectName}
                             </strong>
                             <span className="px-2 py-0.5 text-[10px] font-semibold bg-indigo-50 text-indigo-700 rounded-md inline-block mt-0.5">
                               {item.projectStage || 'Central'}
@@ -555,10 +630,10 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
                             onClick={() =>
                               setPreviewModal({
                                 isOpen: true,
-                                imageUrl: billWithDoc.billUrl || billWithDoc.imageUrl,
-                                title: billWithDoc.description || item.siteName,
-                                vendor: billWithDoc.vendor || 'Organization Expense',
-                                amount: billWithDoc.amount || totalAmt,
+                                imageUrl: billWithDoc.billUrl || billWithDoc.imageUrl || billWithDoc.billCopy,
+                                title: billWithDoc.description || item.siteName || item.projectName,
+                                vendor: billWithDoc.vendor || billWithDoc.billVendor || 'Organization Expense',
+                                amount: billWithDoc.amount || billWithDoc.billAmount || totalAmt,
                                 billNo: billWithDoc.billNo || '',
                                 date: expenseDate,
                               })
@@ -603,18 +678,26 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
         <div className="space-y-4">
           {filteredExpenses.map((item) => {
             const isExpanded = expandedId === (item.id || item.expenseId)
-            const expenseDate = item.expenseDate?.seconds
-              ? new Date(item.expenseDate.seconds * 1000).toLocaleDateString('en-IN', {
+            const expenseDate = item.date instanceof Date
+              ? item.date.toLocaleDateString('en-IN', {
                   day: 'numeric',
                   month: 'short',
                   year: 'numeric',
                 })
-              : 'Recent'
+              : (item.expenseDate?.seconds
+                  ? new Date(item.expenseDate.seconds * 1000).toLocaleDateString('en-IN', {
+                      day: 'numeric',
+                      month: 'short',
+                      year: 'numeric',
+                    })
+                  : 'Recent')
 
             const billsCount = Array.isArray(item.bills) ? item.bills.length : 1
             const hasBillsWithDoc =
-              item.billUrl ||
-              (Array.isArray(item.bills) && item.bills.some((b) => b.billUrl || b.imageUrl))
+              (item.billUrl && item.billUrl !== 'billURL') ||
+              (item.imageUrl && item.imageUrl !== 'billURL') ||
+              (Array.isArray(item.bills) &&
+                item.bills.some((b) => b.billUrl || b.imageUrl || (b.billCopy && b.billCopy !== 'billURL')))
 
             return (
               <div
@@ -634,7 +717,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="text-base font-bold text-slate-900 leading-snug">
-                          {item.siteName}
+                          {item.siteName || item.projectName}
                         </h3>
                         <span className="px-2 py-0.5 text-xs font-semibold bg-indigo-50 text-indigo-700 rounded-md">
                           {item.projectStage || 'Central'}
@@ -708,52 +791,58 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
                       Itemized Bills Breakdown
                     </h4>
                     <div className="bg-white rounded-xl border border-slate-200/80 overflow-hidden divide-y divide-slate-100 text-xs">
-                      {item.bills.map((bill, bIdx) => (
-                        <div
-                          key={bIdx}
-                          className="p-3 flex items-center justify-between gap-4"
-                        >
-                          <div className="min-w-0">
-                            <p className="font-semibold text-slate-900 truncate">
-                              {bill.description || 'Disbursement'}
-                            </p>
-                            <p className="text-slate-500 mt-0.5">
-                              Vendor:{' '}
-                              <span className="font-medium text-slate-700">
-                                {bill.vendor || 'Central Office'}
+                      {item.bills.map((bill, bIdx) => {
+                        const billDocUrl = bill.billUrl || bill.imageUrl || (bill.billCopy && bill.billCopy !== 'billURL' ? bill.billCopy : '')
+                        const billVendorName = bill.vendor || bill.billVendor || 'Central Office'
+                        const billAmt = Number(bill.amount || bill.billAmount) || 0
+
+                        return (
+                          <div
+                            key={bIdx}
+                            className="p-3 flex items-center justify-between gap-4"
+                          >
+                            <div className="min-w-0">
+                              <p className="font-semibold text-slate-900 truncate">
+                                {bill.description || `${billVendorName} Disbursement`}
+                              </p>
+                              <p className="text-slate-500 mt-0.5">
+                                Vendor:{' '}
+                                <span className="font-medium text-slate-700">
+                                  {billVendorName}
+                                </span>
+                                {bill.billNo && ` • Bill #${bill.billNo}`}
+                              </p>
+                            </div>
+
+                            <div className="flex items-center gap-3 shrink-0">
+                              {billDocUrl ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setPreviewModal({
+                                      isOpen: true,
+                                      imageUrl: billDocUrl,
+                                      title: bill.description || `${billVendorName} Receipt`,
+                                      vendor: billVendorName,
+                                      amount: billAmt,
+                                      billNo: bill.billNo || '',
+                                      date: expenseDate,
+                                    })
+                                  }
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 font-semibold cursor-pointer shadow-2xs"
+                                >
+                                  <ImageIcon className="w-3.5 h-3.5 text-emerald-600" />
+                                  <span>View Receipt</span>
+                                </button>
+                              ) : null}
+
+                              <span className="text-sm font-bold text-slate-900">
+                                ₹{billAmt.toLocaleString('en-IN')}
                               </span>
-                              {bill.billNo && ` • Bill #${bill.billNo}`}
-                            </p>
+                            </div>
                           </div>
-
-                          <div className="flex items-center gap-3 shrink-0">
-                            {bill.billUrl || bill.imageUrl ? (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setPreviewModal({
-                                    isOpen: true,
-                                    imageUrl: bill.billUrl || bill.imageUrl,
-                                    title: bill.description || 'Bill Receipt',
-                                    vendor: bill.vendor || '',
-                                    amount: bill.amount || '',
-                                    billNo: bill.billNo || '',
-                                    date: expenseDate,
-                                  })
-                                }
-                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 font-semibold cursor-pointer shadow-2xs"
-                              >
-                                <ImageIcon className="w-3.5 h-3.5 text-emerald-600" />
-                                <span>View Receipt</span>
-                              </button>
-                            ) : null}
-
-                            <span className="text-sm font-bold text-slate-900">
-                              ₹{(Number(bill.amount) || 0).toLocaleString('en-IN')}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   </div>
                 )}
@@ -777,7 +866,8 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
                 </p>
               </div>
               <button
-                onClick={() => setShowModal(false)}
+                type="button"
+                onClick={handleCloseCreateModal}
                 className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -796,7 +886,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
                   <select
                     required
                     value={formSiteId}
-                    onChange={(e) => setFormSiteId(e.target.value)}
+                    onChange={handleSiteChange}
                     className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
                   >
                     <option value="">Select Site...</option>
@@ -816,6 +906,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
                     type="text"
                     value={formStage}
                     onChange={(e) => setFormStage(e.target.value)}
+                    placeholder="Auto-filled from project details"
                     className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
                   />
                 </div>
@@ -996,7 +1087,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
               <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setShowModal(false)}
+                  onClick={handleCloseCreateModal}
                   className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
                 >
                   Cancel

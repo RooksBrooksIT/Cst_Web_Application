@@ -3,7 +3,10 @@ import {
   doc,
   collection,
   getDocs,
+  getDoc,
   setDoc,
+  query,
+  where,
   serverTimestamp,
   Timestamp,
 } from 'firebase/firestore'
@@ -161,6 +164,7 @@ export async function createProjectAndSiteAtomic(orgId, data, managerActor) {
     error.code = validation.reason
     error.upgradePlan = validation.upgradePlan
     error.limits = validation.limits
+    error.details = validation
     throw error
   }
 
@@ -525,4 +529,50 @@ export async function updateProject(orgId, projectId, updates, actor) {
 export async function deleteProject(orgId, projectId, actor) {
   verifyNotOrganizationUser(actor || { role: 'Organization' })
   return deleteStandardDoc(orgId, 'projects', projectId)
+}
+
+export { resolveProjectCategoryOrStage } from './expenseNormalizationService.js'
+
+/**
+ * Fetches a single project document from backend (/organisation/{orgId}/projects/{siteId})
+ */
+export async function fetchProjectDetails(orgId, projectIdOrSiteId) {
+  if (!orgId || !projectIdOrSiteId) return null
+  try {
+    const docRef = doc(db, 'organisation', orgId, 'projects', projectIdOrSiteId)
+    const snap = await getDoc(docRef)
+    if (snap.exists()) {
+      return { id: snap.id, ...snap.data() }
+    }
+
+    // Try query by siteId
+    const q1 = query(
+      collection(db, 'organisation', orgId, 'projects'),
+      where('siteId', '==', projectIdOrSiteId)
+    )
+    const snap1 = await getDocs(q1)
+    if (!snap1.empty) {
+      return { id: snap1.docs[0].id, ...snap1.docs[0].data() }
+    }
+
+    // Try query by projectId
+    const q2 = query(
+      collection(db, 'organisation', orgId, 'projects'),
+      where('projectId', '==', projectIdOrSiteId)
+    )
+    const snap2 = await getDocs(q2)
+    if (!snap2.empty) {
+      return { id: snap2.docs[0].id, ...snap2.docs[0].data() }
+    }
+
+    // Fallback: legacy sites collection
+    const sDocRef = doc(db, 'organisation', orgId, 'sites', projectIdOrSiteId)
+    const sSnap = await getDoc(sDocRef)
+    if (sSnap.exists()) {
+      return { id: sSnap.id, ...sSnap.data() }
+    }
+  } catch (err) {
+    console.warn('[fetchProjectDetails] Error fetching project:', err?.message)
+  }
+  return null
 }
