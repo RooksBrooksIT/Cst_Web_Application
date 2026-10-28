@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 .env
 *.zip
+release/
+*.msi
+*.exe
