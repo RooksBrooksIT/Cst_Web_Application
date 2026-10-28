@@ -44,6 +44,7 @@ import ManagerPettyCashHub from './pettycash/ManagerPettyCashHub'
 import ManagerNotificationsHub from './notifications/ManagerNotificationsHub'
 import ManagerSupportHub from './support/ManagerSupportHub'
 import IncentiveCalculation from '../organization/incentives/IncentiveCalculation'
+import SiteExpensesReportHub from '../organization/reports/SiteExpensesReportHub'
 
 import {
   Building2,
@@ -393,6 +394,23 @@ export default function ManagerModule() {
             sites={sites}
             user={currentUser}
             onNotify={showToast}
+          />
+        )
+
+      case 'reports':
+      case 'site-expenses':
+      case 'daily-expense-ledger':
+      case 'expenses-report':
+        return (
+          <SiteExpensesReportHub
+            sites={sites}
+            orgId={orgId}
+            role="Manager"
+            managerExpenses={dashboardData.managerExpenses || []}
+            managerEntries={dashboardData.managerEntries || []}
+            managerExpenseSummary={dashboardData.managerExpenseSummary || []}
+            siteSupervisorEntries={dashboardData.siteSupervisorEntries || []}
+            contractorEntries={dashboardData.contractorEntries || []}
           />
         )
 

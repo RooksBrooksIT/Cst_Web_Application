@@ -25,7 +25,11 @@ const initialData = {
   contractorEntries: [],
   siteSupervisorEntries: [],
   managerExpenses: [],
+  managerEntries: [],
+  managerExpenseSummary: [],
+  organizationExpenses: [],
   organizationEntries: [],
+  organizationExpenseSummary: [],
   siteSupervisorIncentives: [],
   workers: [],
   workersConfig: [],
@@ -71,7 +75,11 @@ const sources = [
   { key: 'contractorEntries', col: 'contractorEntries', legacy: 'contractor_entries' },
   { key: 'siteSupervisorEntries', col: 'siteSupervisorEntries', legacy: 'supervisor_entries' },
   { key: 'managerExpenses', col: 'managerExpenses', legacy: 'managerEntries' },
-  { key: 'organizationEntries', col: 'organizationExpenses', legacy: 'organizationEntries' },
+  { key: 'managerEntries', col: 'managerEntries', legacy: 'managerExpenses' },
+  { key: 'managerExpenseSummary', col: 'managerExpenseSummary' },
+  { key: 'organizationExpenses', col: 'organizationExpenses', legacy: 'organizationEntries' },
+  { key: 'organizationEntries', col: 'organizationEntries', legacy: 'organizationExpenses' },
+  { key: 'organizationExpenseSummary', col: 'organizationExpenseSummary' },
   { key: 'siteSupervisorIncentives', col: 'siteSupervisorIncentives', legacy: 'incentives' },
   { key: 'workersConfig', col: 'workersConfig', legacy: 'workers' },
   { key: 'workers', col: 'workersConfig', legacy: 'workers' },
@@ -118,7 +126,11 @@ export function useOrganizationDashboard(orgId) {
 
     const updateSourceData = (key) => {
       if (cancelled) return
-      const isExpenseKey = key === 'organizationEntries' || key === 'managerExpenses'
+      const isExpenseKey =
+        key === 'organizationEntries' ||
+        key === 'organizationExpenses' ||
+        key === 'managerExpenses' ||
+        key === 'managerEntries'
       let items = []
 
       if (isExpenseKey) {

@@ -260,6 +260,13 @@ export default function OrganizationDashboard() {
     siteToolsRequest,
     siteSupervisorProjectStageSchedule,
     siteSupervisorEntries,
+    managerExpenses,
+    managerEntries,
+    managerExpenseSummary,
+    organizationExpenses,
+    organizationEntries,
+    organizationExpenseSummary,
+    contractorEntries,
     vehicleMovements,
     projectStages,
     materialsAvailability,
@@ -720,6 +727,13 @@ export default function OrganizationDashboard() {
               approvals={approvals}
               supervisors={supervisors}
               managers={managers}
+              managerExpenses={managerExpenses}
+              managerEntries={managerEntries}
+              managerExpenseSummary={managerExpenseSummary}
+              organizationExpenses={organizationExpenses}
+              organizationEntries={organizationEntries}
+              organizationExpenseSummary={organizationExpenseSummary}
+              contractorEntries={contractorEntries}
               expenses={expenses}
               pettyCash={pettyCash}
               totalSiteExpensesPerDay={totalSiteExpensesPerDay}

@@ -84,7 +84,11 @@ export default function OrganizationReportsHub(props) {
     projects = [],
     siteSupervisorEntries = [],
     managerExpenses = [],
+    managerEntries = [],
+    managerExpenseSummary = [],
     organizationEntries = [],
+    organizationExpenses = [],
+    organizationExpenseSummary = [],
     contractorEntries = [],
     contractors = [],
     contractorBills = [],
@@ -101,14 +105,16 @@ export default function OrganizationReportsHub(props) {
     sitePayments = [],
     dailySiteLogs = [],
     orgId,
+    role,
     projectStages = [],
     materialsAvailability: propMaterialsAvailability = [],
     siteMaterialPool: propSiteMaterialPool = [],
     materialAllocations: propMaterialAllocations = [],
   } = props
 
-  const { orgId: authOrgId } = useAuth()
+  const { orgId: authOrgId, role: authRole } = useAuth()
   const activeOrgId = orgId || authOrgId
+  const activeRole = role || authRole || 'Organization'
   const location = useLocation()
   const navigate = useNavigate()
 
@@ -908,7 +914,11 @@ export default function OrganizationReportsHub(props) {
               sites={allSites}
               siteSupervisorEntries={siteSupervisorEntries}
               managerExpenses={managerExpenses}
+              managerEntries={managerEntries}
+              managerExpenseSummary={managerExpenseSummary}
               organizationEntries={organizationEntries}
+              organizationExpenses={organizationExpenses}
+              organizationExpenseSummary={organizationExpenseSummary}
               contractorEntries={contractorEntries}
               totalSiteExpensesPerDay={totalSiteExpensesPerDay}
               sitePayments={sitePayments}
@@ -922,6 +932,8 @@ export default function OrganizationReportsHub(props) {
               initialStage={filterStage}
               projectStages={configuredStageNames}
               hideHeaderFilters={true}
+              orgId={activeOrgId}
+              role={activeRole}
             />
           )}
 

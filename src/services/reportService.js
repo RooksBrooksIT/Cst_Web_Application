@@ -34,6 +34,22 @@ export function money(amount) {
 
 export function formatDateToKey(dateObj) {
   if (!dateObj) return ''
+  if (typeof dateObj === 'string') {
+    const s = dateObj.trim()
+    if (/^\d{8}$/.test(s)) return s
+    const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
+    if (isoMatch) return `${isoMatch[3]}${isoMatch[2]}${isoMatch[1]}`
+    const dmyMatch = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/)
+    if (dmyMatch) return `${dmyMatch[1].padStart(2, '0')}${dmyMatch[2].padStart(2, '0')}${dmyMatch[3]}`
+  }
+  if (typeof dateObj?.toDate === 'function') {
+    const d = dateObj.toDate()
+    if (isNaN(d.getTime())) return ''
+    const dd = String(d.getDate()).padStart(2, '0')
+    const mm = String(d.getMonth() + 1).padStart(2, '0')
+    const yyyy = d.getFullYear()
+    return `${dd}${mm}${yyyy}`
+  }
   const d = new Date(dateObj)
   if (isNaN(d.getTime())) return ''
   const dd = String(d.getDate()).padStart(2, '0')
@@ -94,14 +110,20 @@ export function getDayName(dateInput) {
 
 /**
  * Checks if a record matches a given site identifier across multiple potential fields.
+ * If site is 'all' or site.id is 'all' or empty, matches all records.
  */
 export function matchesSite(record, site) {
-  if (!record || !site) return false
-  const targetId = String(site.id || site.siteId || site.siteCode || '').trim().toLowerCase()
-  const targetName = String(site.projectName || site.siteName || site.name || '').trim().toLowerCase()
-  const targetCode = String(site.siteCode || site.code || '').trim().toLowerCase()
+  if (!record) return false
+  if (!site || site === 'all' || site?.id === 'all' || site?.siteId === 'all') return true
 
-  const recSiteId = String(record.siteId || record.site_id || record.projectId || record.project_id || record.id || '').trim().toLowerCase()
+  const targetSiteObj = typeof site === 'string' ? { id: site, siteId: site } : site
+  const targetId = String(targetSiteObj.id || targetSiteObj.siteId || targetSiteObj.siteCode || '').trim().toLowerCase()
+  const targetName = String(targetSiteObj.projectName || targetSiteObj.siteName || targetSiteObj.name || '').trim().toLowerCase()
+  const targetCode = String(targetSiteObj.siteCode || targetSiteObj.code || '').trim().toLowerCase()
+
+  if (targetId === 'all') return true
+
+  const recSiteId = String(record.siteId || record.rawSiteId || record.canonicalSiteKey || record.site_id || record.projectId || record.project_id || record.id || '').trim().toLowerCase()
   const recSiteName = String(record.siteName || record.site_name || record.projectName || record.project_name || record.name || '').trim().toLowerCase()
   const recSiteCode = String(record.siteCode || record.code || '').trim().toLowerCase()
 
@@ -138,6 +160,45 @@ export function matchesSite(record, site) {
   return false
 }
 
+/**
+ * Checks whether a record's project stage matches the target stage filter.
+ * Flexible: handles "01. Foundation", "Foundation Stage", "Foundation", and case/whitespace differences.
+ */
+export function stageMatches(rawStage, targetStage) {
+  if (!targetStage || targetStage === 'all' || String(targetStage).trim().toLowerCase() === 'all') return true
+  if (!rawStage) return false
+  const s1 = String(rawStage).trim().toLowerCase()
+  const s2 = String(targetStage).trim().toLowerCase()
+  if (s1 === s2) return true
+  const c1 = s1.replace(/^\d+[\.\s\-]+/, '').replace(/stage$/i, '').trim()
+  const c2 = s2.replace(/^\d+[\.\s\-]+/, '').replace(/stage$/i, '').trim()
+  return c1 === c2 || s1.includes(s2) || s2.includes(s1) || (c1 && c2 && (c1.includes(c2) || c2.includes(c1)))
+}
+
+/**
+ * Checks whether a record's date matches the selected filter date.
+ * Handles ISO strings, Date objects, Firestore timestamps, dateKey, and composite doc IDs.
+ */
+export function isDateMatch(record, targetDate) {
+  if (!record || !targetDate) return false
+  const targetISO = formatDateToISO(targetDate)
+  const targetKey = formatDateToKey(targetDate)
+  if (!targetISO && !targetKey) return false
+
+  const recDateISO = formatDateToISO(record.date || record.entryDate || record.expenseDate || record.createdAt)
+  const recDateKey = record.dateKey || formatDateToKey(record.date || record.entryDate || record.expenseDate || record.createdAt)
+
+  if (targetISO && recDateISO && targetISO === recDateISO) return true
+  if (targetKey && recDateKey && targetKey === recDateKey) return true
+
+  // Check document ID or entryId containing targetKey or targetISO
+  const recId = String(record.id || record.docId || record.entryId || record.expenseId || '')
+  if (targetKey && (recId.endsWith(targetKey) || recId.includes(`_${targetKey}`))) return true
+  if (targetISO && recId.includes(targetISO)) return true
+
+  return false
+}
+
 
 // ------------------------------------------------------------------------------------------------
 // 1. SITE / PROJECT EXPENSES REPORT HUB
@@ -146,6 +207,7 @@ export function matchesSite(record, site) {
 /**
  * Sub-Report 1A: Daily Site Expenses Calculation
  * Gathers 5 breakdown cards: Labour, Material, Food, Transport/Fuel, Manager & Org Bills
+ * Role-aware, multi-entry aggregation, with summary deduplication to prevent double-counting.
  */
 export function calculateDailySiteExpenses({
   site,
@@ -153,157 +215,295 @@ export function calculateDailySiteExpenses({
   selectedStage,
   siteSupervisorEntries = [],
   managerExpenses = [],
+  managerEntries = [],
+  managerExpenseSummary = [],
   organizationEntries = [],
+  organizationExpenses = [],
+  organizationExpenseSummary = [],
   contractorEntries = [],
   totalSiteExpensesPerDay = [],
   dailySiteLogs = [],
+  role = null,
 }) {
-  const targetDateKey = formatDateToKey(selectedDate)
-  const targetDateISO = formatDateToISO(selectedDate)
+  const isAllSites = !site || site === 'all' || site?.id === 'all' || site?.siteId === 'all'
 
-  // Find matching daily records for this site and date
-  const supervisorEntry = siteSupervisorEntries.find((entry) => {
-    const isThisSite = site ? matchesSite(entry, site) : true
-    const entryDateKey = entry.dateKey || formatDateToKey(entry.date || entry.createdAt)
-    const entryDateISO = formatDateToISO(entry.date || entry.createdAt)
-    const matchesDate = entryDateKey === targetDateKey || entryDateISO === targetDateISO || entry.id?.endsWith?.(targetDateKey)
-    const matchesStage = !selectedStage || selectedStage === 'all' || (entry.projectStage || entry.stage) === selectedStage
-    return isThisSite && matchesDate && matchesStage
+  // 1. Gather all matching supervisor entries for this site, date, and stage
+  const allSupervisorSources = [...siteSupervisorEntries, ...dailySiteLogs]
+  const seenSupEntryIds = new Set()
+  const matchingSupervisorEntries = []
+
+  allSupervisorSources.forEach((entry) => {
+    if (!entry) return
+    const entryId = entry.id || entry.entryId || `${entry.siteId}_${entry.date}`
+    if (seenSupEntryIds.has(entryId)) return
+
+    const matchesSiteCheck = matchesSite(entry, site)
+    const matchesDateCheck = isDateMatch(entry, selectedDate)
+    const matchesStageCheck = stageMatches(entry.projectStage || entry.stage, selectedStage)
+
+    if (matchesSiteCheck && matchesDateCheck && matchesStageCheck) {
+      seenSupEntryIds.add(entryId)
+      matchingSupervisorEntries.push(entry)
+    }
   })
 
-  // Find daily log / manager entries
-  const managerEntriesForDay = managerExpenses.filter((entry) => {
-    const isThisSite = site ? matchesSite(entry, site) : true
-    const entryDateKey = entry.dateKey || formatDateToKey(entry.date || entry.createdAt)
-    const entryDateISO = formatDateToISO(entry.date || entry.createdAt)
-    return isThisSite && (entryDateKey === targetDateKey || entryDateISO === targetDateISO || entry.id?.endsWith?.(targetDateKey))
+  // Aggregate Labour from all matching supervisor entries
+  const labours = []
+  let totalLabour = 0
+
+  matchingSupervisorEntries.forEach((supEntry) => {
+    if (Array.isArray(supEntry.labours) && supEntry.labours.length > 0) {
+      supEntry.labours.forEach((item) => {
+        const count = parseAmount(item.count || item.headcount || 1)
+        const rate = parseAmount(item.rate || item.unitRate || item.dailyWage || 0)
+        const amount = parseAmount(item.totalAmount || item.amount || (count * rate))
+        labours.push({
+          role: item.role || item.trade || item.name || item.labourType || 'Worker',
+          count,
+          rate,
+          amount,
+        })
+      })
+    } else if (supEntry.totalLabourAmount || supEntry.labourTotal) {
+      totalLabour += parseAmount(supEntry.totalLabourAmount || supEntry.labourTotal)
+    }
   })
 
-  // Find direct org expenses
-  const orgBillsForDay = organizationEntries.filter((entry) => {
-    const isThisSite = site ? matchesSite(entry, site) : true
-    const entryDateISO = formatDateToISO(entry.date || entry.entryDate || entry.expenseDate || entry.createdAt)
-    return isThisSite && entryDateISO === targetDateISO
+  if (labours.length > 0) {
+    totalLabour = labours.reduce((acc, curr) => acc + curr.amount, 0)
+  }
+
+  // Aggregate Materials from all matching supervisor entries
+  const materials = []
+  let totalMaterial = 0
+
+  matchingSupervisorEntries.forEach((supEntry) => {
+    if (Array.isArray(supEntry.materials) && supEntry.materials.length > 0) {
+      supEntry.materials.forEach((item) => {
+        const quantity = parseAmount(item.quantity || item.qty || 0)
+        const unit = item.unit || 'Units'
+        const unitPrice = parseAmount(item.unitPrice || item.rate || item.price || 0)
+        const amount = parseAmount(item.totalAmount || item.amount || (quantity * unitPrice))
+        materials.push({
+          name: item.materialName || item.name || 'Material Item',
+          quantity,
+          unit,
+          unitPrice,
+          amount,
+        })
+      })
+    } else if (supEntry.totalMaterialAmount || supEntry.materialTotal) {
+      totalMaterial += parseAmount(supEntry.totalMaterialAmount || supEntry.materialTotal)
+    }
   })
 
-  // Find contractor payouts for this day
-  const contractorBillsForDay = contractorEntries.filter((entry) => {
-    const isThisSite = site ? matchesSite(entry, site) : true
-    const entryDateISO = formatDateToISO(entry.date || entry.createdAt)
-    return isThisSite && entryDateISO === targetDateISO
+  if (materials.length > 0) {
+    totalMaterial = materials.reduce((acc, curr) => acc + curr.amount, 0)
+  }
+
+  // Food and Transport allowances across matching entries
+  let foodAmount = 0
+  let transportAmount = 0
+
+  matchingSupervisorEntries.forEach((supEntry) => {
+    foodAmount += parseAmount(supEntry.foodAllowance || supEntry.foodCost || supEntry.foodExpense || supEntry.food || 0)
+    transportAmount += parseAmount(supEntry.transportAmount || supEntry.transportCost || supEntry.fuelCost || supEntry.fuelExpense || supEntry.transport || supEntry.fuel || 0)
   })
 
-  // 1. Labour breakdown
-  const labours = Array.isArray(supervisorEntry?.labours)
-    ? supervisorEntry.labours.map((item) => ({
-        role: item.role || item.trade || item.name || 'Worker',
-        count: parseAmount(item.count || item.headcount || 1),
-        rate: parseAmount(item.rate || item.unitRate || item.dailyWage || 0),
-        amount: parseAmount(item.totalAmount || item.amount || (parseAmount(item.count || 1) * parseAmount(item.rate || item.dailyWage || 0))),
-      }))
-    : []
-  const totalLabour = labours.length > 0
-    ? labours.reduce((acc, curr) => acc + curr.amount, 0)
-    : parseAmount(supervisorEntry?.totalLabourAmount || supervisorEntry?.labourTotal || 0)
+  // Supervisor name & stage resolution
+  const resolvedSupervisorName =
+    matchingSupervisorEntries.map((e) => e.supervisorName || e.supervisor).filter(Boolean)[0] ||
+    site?.supervisor ||
+    site?.managerName ||
+    'Assigned Supervisor'
 
-  // 2. Material breakdown
-  const materials = Array.isArray(supervisorEntry?.materials)
-    ? supervisorEntry.materials.map((item) => ({
-        name: item.materialName || item.name || 'Material Item',
-        quantity: parseAmount(item.quantity || item.qty || 0),
-        unit: item.unit || 'Units',
-        unitPrice: parseAmount(item.unitPrice || item.rate || item.price || 0),
-        amount: parseAmount(item.totalAmount || item.amount || (parseAmount(item.quantity || 0) * parseAmount(item.unitPrice || 0))),
-      }))
-    : []
-  const totalMaterial = materials.length > 0
-    ? materials.reduce((acc, curr) => acc + curr.amount, 0)
-    : parseAmount(supervisorEntry?.totalMaterialAmount || supervisorEntry?.materialTotal || 0)
+  const resolvedProjectStage =
+    matchingSupervisorEntries.map((e) => e.projectStage || e.stage).filter(Boolean)[0] ||
+    (selectedStage && selectedStage !== 'all' ? selectedStage : (site?.projectStage || site?.stage || 'Foundation'))
 
-  // 3. Food allowance
-  const foodAmount = parseAmount(supervisorEntry?.foodAllowance || supervisorEntry?.foodExpense || supervisorEntry?.food || 0)
-
-  // 4. Transport & Fuel
-  const transportAmount = parseAmount(supervisorEntry?.transportAmount || supervisorEntry?.fuelExpense || supervisorEntry?.transport || 0)
-
-  // 5. Manager & Org Bills (deduplicated by unique voucher/item key)
+  // ----------------------------------------------------------------------------------------------
+  // 5. Manager & Direct Org Bills (Deduplicated with Summary Collections to Prevent Double-Counting)
+  // ----------------------------------------------------------------------------------------------
   const bills = []
   const seenBillKeys = new Set()
+  const seenManagerDocIds = new Set()
+  const seenOrgDocIds = new Set()
 
-  managerEntriesForDay.forEach((managerEntry) => {
-    if (Array.isArray(managerEntry.bills) && managerEntry.bills.length > 0) {
-      managerEntry.bills.forEach((b, idx) => {
-        const amt = parseAmount(b.amount || b.totalAmount || b.billAmount)
-        const desc = b.description || b.category || 'Manager Approved Expense'
-        const billKey = `${managerEntry.id || 'mgr'}_${b.id || b.billId || idx}_${amt}_${desc}`
-        if (seenBillKeys.has(billKey)) return
-        seenBillKeys.add(billKey)
-        bills.push({
-          source: 'Manager Voucher',
-          description: desc,
-          amount: amt,
-          vendor: b.vendor || b.vendorName || 'Voucher',
+  // 5A. Manager Expenses & Manager Entries
+  const allManagerEntrySources = [...managerExpenses, ...managerEntries]
+  allManagerEntrySources.forEach((entry) => {
+    if (!entry) return
+    const docId = entry.id || entry.docId || entry.expenseId
+    if (docId && seenManagerDocIds.has(docId)) return
+
+    const matchesSiteCheck = matchesSite(entry, site)
+    const matchesDateCheck = isDateMatch(entry, selectedDate)
+    const matchesStageCheck = stageMatches(entry.projectStage || entry.stage, selectedStage)
+
+    if (matchesSiteCheck && matchesDateCheck && matchesStageCheck) {
+      if (docId) seenManagerDocIds.add(docId)
+
+      if (Array.isArray(entry.bills) && entry.bills.length > 0) {
+        entry.bills.forEach((b, idx) => {
+          const amt = parseAmount(b.amount || b.totalAmount || b.billAmount)
+          const desc = b.description || b.category || entry.description || 'Manager Approved Expense'
+          const billKey = `${docId || 'mgr'}_${b.id || b.billId || b.billNumber || idx}_${amt}_${desc}`
+          if (seenBillKeys.has(billKey)) return
+          seenBillKeys.add(billKey)
+          bills.push({
+            source: 'Manager Voucher',
+            description: desc,
+            amount: amt,
+            vendor: b.vendor || b.vendorName || entry.vendorName || 'Voucher',
+            billNumber: b.billNumber || b.billId || `VOU-${idx + 1}`,
+          })
         })
-      })
-    } else if (managerEntry.amount || managerEntry.totalAmount) {
-      const amt = parseAmount(managerEntry.amount || managerEntry.totalAmount)
-      const desc = managerEntry.description || 'Manager Expense Entry'
-      const billKey = `${managerEntry.id || 'mgr'}_${amt}_${desc}`
-      if (!seenBillKeys.has(billKey)) {
-        seenBillKeys.add(billKey)
-        bills.push({
-          source: 'Manager Voucher',
-          description: desc,
-          amount: amt,
-          vendor: managerEntry.vendorName || 'Manager Approved',
-        })
+      } else if (entry.amount || entry.totalAmount) {
+        const amt = parseAmount(entry.amount || entry.totalAmount)
+        const desc = entry.description || 'Manager Expense Entry'
+        const billKey = `${docId || 'mgr'}_${amt}_${desc}`
+        if (!seenBillKeys.has(billKey)) {
+          seenBillKeys.add(billKey)
+          bills.push({
+            source: 'Manager Voucher',
+            description: desc,
+            amount: amt,
+            vendor: entry.vendorName || entry.managerName || 'Manager Approved',
+            billNumber: entry.billNumber || 'VOU',
+          })
+        }
       }
     }
   })
 
-  orgBillsForDay.forEach((b) => {
-    if (Array.isArray(b.bills) && b.bills.length > 0) {
-      b.bills.forEach((subBill, idx) => {
-        const amt = parseAmount(subBill.amount || subBill.totalAmount || subBill.billAmount)
-        const desc = subBill.description || subBill.category || b.description || 'Central Office Expense'
-        const billKey = `${b.id || 'org'}_${subBill.id || subBill.billId || idx}_${amt}_${desc}`
-        if (seenBillKeys.has(billKey)) return
-        seenBillKeys.add(billKey)
-        bills.push({
-          source: 'Direct Org Bill',
-          description: desc,
-          amount: amt,
-          vendor: subBill.vendor || subBill.vendorName || b.vendorName || b.partyName || 'Direct Bill',
-        })
-      })
-    } else {
-      const amt = parseAmount(b.amount || b.totalAmount)
-      const desc = b.description || b.title || 'Central Office Expense'
-      const billKey = `${b.id || 'org'}_${amt}_${desc}`
-      if (!seenBillKeys.has(billKey)) {
-        seenBillKeys.add(billKey)
-        bills.push({
-          source: 'Direct Org Bill',
-          description: desc,
-          amount: amt,
-          vendor: b.vendorName || b.partyName || 'Direct Bill',
-        })
+  // 5B. Manager Expense Summary (Fallback if no detailed entry exists for this transaction)
+  managerExpenseSummary.forEach((sumDoc) => {
+    if (!sumDoc) return
+    const docId = sumDoc.id || sumDoc.docId
+    if (docId && seenManagerDocIds.has(docId)) return // Skip summary if detailed entry already accounted for!
+
+    const matchesSiteCheck = matchesSite(sumDoc, site)
+    const matchesDateCheck = isDateMatch(sumDoc, selectedDate)
+    const matchesStageCheck = stageMatches(sumDoc.projectStage || sumDoc.stage, selectedStage)
+
+    if (matchesSiteCheck && matchesDateCheck && matchesStageCheck) {
+      const amt = parseAmount(sumDoc.managerExpenseTotalAmount || sumDoc.totalAmount || sumDoc.amount)
+      if (amt > 0) {
+        const desc = sumDoc.description || 'Manager Daily Expense Summary'
+        const billKey = `${docId || 'mgr_sum'}_${amt}_${desc}`
+        if (!seenBillKeys.has(billKey)) {
+          seenBillKeys.add(billKey)
+          if (docId) seenManagerDocIds.add(docId)
+          bills.push({
+            source: 'Manager Voucher',
+            description: desc,
+            amount: amt,
+            vendor: sumDoc.managerName || 'Operations Manager',
+            billNumber: 'MGR-SUM',
+          })
+        }
       }
     }
   })
 
-  contractorBillsForDay.forEach((b) => {
-    const amt = parseAmount(b.totalAmount || b.amount || b.paidAmount)
-    const desc = `${b.contractorName || 'Contractor'} - ${b.category || b.workDescription || 'Contract Works'}`
-    const billKey = `${b.id || 'cont'}_${amt}_${desc}`
-    if (!seenBillKeys.has(billKey)) {
-      seenBillKeys.add(billKey)
-      bills.push({
-        source: 'Contractor Payout',
-        description: desc,
-        amount: amt,
-        vendor: b.contractorName || 'Contractor',
-      })
+  // 5C. Organization Expenses & Organization Entries
+  const allOrgEntrySources = [...organizationExpenses, ...organizationEntries]
+  allOrgEntrySources.forEach((entry) => {
+    if (!entry) return
+    const docId = entry.id || entry.docId || entry.expenseId
+    if (docId && seenOrgDocIds.has(docId)) return
+
+    const matchesSiteCheck = matchesSite(entry, site)
+    const matchesDateCheck = isDateMatch(entry, selectedDate)
+    const matchesStageCheck = stageMatches(entry.projectStage || entry.stage, selectedStage)
+
+    if (matchesSiteCheck && matchesDateCheck && matchesStageCheck) {
+      if (docId) seenOrgDocIds.add(docId)
+
+      if (Array.isArray(entry.bills) && entry.bills.length > 0) {
+        entry.bills.forEach((b, idx) => {
+          const amt = parseAmount(b.amount || b.totalAmount || b.billAmount)
+          const desc = b.description || b.category || entry.description || 'Central Office Expense'
+          const billKey = `${docId || 'org'}_${b.id || b.billId || b.billNumber || idx}_${amt}_${desc}`
+          if (seenBillKeys.has(billKey)) return
+          seenBillKeys.add(billKey)
+          bills.push({
+            source: 'Direct Org Bill',
+            description: desc,
+            amount: amt,
+            vendor: b.vendor || b.vendorName || entry.vendorName || entry.partyName || 'Direct Bill',
+            billNumber: b.billNumber || b.billId || `ORG-${idx + 1}`,
+          })
+        })
+      } else {
+        const amt = parseAmount(entry.amount || entry.totalAmount)
+        const desc = entry.description || entry.title || 'Central Office Expense'
+        const billKey = `${docId || 'org'}_${amt}_${desc}`
+        if (!seenBillKeys.has(billKey)) {
+          seenBillKeys.add(billKey)
+          bills.push({
+            source: 'Direct Org Bill',
+            description: desc,
+            amount: amt,
+            vendor: entry.vendorName || entry.partyName || 'Direct Bill',
+            billNumber: entry.billNumber || 'ORG-BILL',
+          })
+        }
+      }
+    }
+  })
+
+  // 5D. Organization Expense Summary (Fallback if no detailed entry exists for this transaction)
+  organizationExpenseSummary.forEach((sumDoc) => {
+    if (!sumDoc) return
+    const docId = sumDoc.id || sumDoc.docId
+    if (docId && seenOrgDocIds.has(docId)) return // Skip summary if detailed entry already accounted for!
+
+    const matchesSiteCheck = matchesSite(sumDoc, site)
+    const matchesDateCheck = isDateMatch(sumDoc, selectedDate)
+    const matchesStageCheck = stageMatches(sumDoc.projectStage || sumDoc.stage, selectedStage)
+
+    if (matchesSiteCheck && matchesDateCheck && matchesStageCheck) {
+      const amt = parseAmount(sumDoc.orgExpenseTotalAmount || sumDoc.totalAmount || sumDoc.amount)
+      if (amt > 0) {
+        const desc = sumDoc.description || 'Corporate Expense Summary'
+        const billKey = `${docId || 'org_sum'}_${amt}_${desc}`
+        if (!seenBillKeys.has(billKey)) {
+          seenBillKeys.add(billKey)
+          if (docId) seenOrgDocIds.add(docId)
+          bills.push({
+            source: 'Direct Org Bill',
+            description: desc,
+            amount: amt,
+            vendor: sumDoc.projectName || 'Central Office',
+            billNumber: 'ORG-SUM',
+          })
+        }
+      }
+    }
+  })
+
+  // 5E. Contractor Payouts
+  contractorEntries.forEach((b) => {
+    if (!b) return
+    const matchesSiteCheck = matchesSite(b, site)
+    const matchesDateCheck = isDateMatch(b, selectedDate)
+    const matchesStageCheck = stageMatches(b.projectStage || b.stage, selectedStage)
+
+    if (matchesSiteCheck && matchesDateCheck && matchesStageCheck) {
+      const amt = parseAmount(b.totalAmount || b.amount || b.paidAmount)
+      const desc = `${b.contractorName || 'Contractor'} - ${b.category || b.workDescription || 'Contract Works'}`
+      const billKey = `${b.id || 'cont'}_${amt}_${desc}`
+      if (!seenBillKeys.has(billKey)) {
+        seenBillKeys.add(billKey)
+        bills.push({
+          source: 'Contractor Payout',
+          description: desc,
+          amount: amt,
+          vendor: b.contractorName || 'Contractor',
+          billNumber: b.billNumber || 'CONT',
+        })
+      }
     }
   })
 
@@ -311,10 +511,10 @@ export function calculateDailySiteExpenses({
   const grandTotal = totalLabour + totalMaterial + foodAmount + transportAmount + totalBills
 
   return {
-    siteName: site?.projectName || site?.siteName || site?.name || 'Selected Site',
-    siteLocation: site?.siteLocation || site?.location || 'Registered Site Location',
-    supervisorName: supervisorEntry?.supervisorName || site?.supervisor || site?.managerName || 'Assigned Supervisor',
-    projectStage: supervisorEntry?.projectStage || site?.projectStage || selectedStage || 'Foundation',
+    siteName: isAllSites ? 'All Managed Sites' : (site?.projectName || site?.siteName || site?.name || 'Selected Site'),
+    siteLocation: isAllSites ? 'All Active Portfolio Locations' : (site?.siteLocation || site?.location || 'Registered Site Location'),
+    supervisorName: resolvedSupervisorName,
+    projectStage: resolvedProjectStage,
     date: selectedDate,
     labours,
     totalLabour,
@@ -325,9 +525,10 @@ export function calculateDailySiteExpenses({
     bills,
     totalBills,
     grandTotal,
-    hasData: grandTotal > 0 || labours.length > 0 || materials.length > 0,
+    hasData: grandTotal > 0 || labours.length > 0 || materials.length > 0 || bills.length > 0,
   }
 }
+
 
 /**
  * Sub-Report 1B: Date Range Expenses Calculation

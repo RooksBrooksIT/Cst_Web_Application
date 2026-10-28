@@ -12,12 +12,17 @@ import { exportToCSV, printReport } from '../../../services/exportService'
 import { useAuth } from '../../../hooks/useAuth'
 import { CONFIG_SECTIONS, subscribeConfigItems } from '../../../services/projectConfigService'
 import { getNormalizedSiteOptions } from '../../../utils/siteUtils.js'
+import { subscribeRoleExpenseData } from '../../../services/reportExpenseService'
 
 export default function SiteExpensesReportHub({
   sites = [],
   siteSupervisorEntries = [],
   managerExpenses = [],
+  managerEntries = [],
+  managerExpenseSummary = [],
   organizationEntries = [],
+  organizationExpenses = [],
+  organizationExpenseSummary = [],
   contractorEntries = [],
   totalSiteExpensesPerDay = [],
   sitePayments = [],
@@ -31,11 +36,48 @@ export default function SiteExpensesReportHub({
   initialStage = null,
   projectStages = null,
   orgId = null,
+  role = null,
   hideHeaderFilters = false,
 }) {
-  const { orgId: authOrgId } = useAuth()
+  const { orgId: authOrgId, role: authRole, userData } = useAuth()
   const activeOrgId = orgId || authOrgId
+  const activeRole = role || authRole || userData?.role || userData?.userRole || 'Organization'
   const [stagesFromConfig, setStagesFromConfig] = useState([])
+
+  // Real-time synchronization for role-based Firestore collections
+  const [realtimeData, setRealtimeData] = useState({
+    organizationExpenses: [],
+    organizationEntries: [],
+    organizationExpenseSummary: [],
+    managerExpenses: [],
+    managerEntries: [],
+    managerExpenseSummary: [],
+    siteSupervisorEntries: [],
+    contractorEntries: [],
+  })
+
+  React.useEffect(() => {
+    if (!activeOrgId) return
+    const unsubscribe = subscribeRoleExpenseData(
+      activeOrgId,
+      activeRole,
+      (data) => {
+        setRealtimeData(data)
+      },
+      (err) => console.warn('Realtime expense subscription error:', err)
+    )
+    return () => unsubscribe()
+  }, [activeOrgId, activeRole])
+
+  // Merge real-time subscription data with props
+  const resolvedOrgExpenses = realtimeData.organizationExpenses.length > 0 ? realtimeData.organizationExpenses : organizationExpenses
+  const resolvedOrgEntries = realtimeData.organizationEntries.length > 0 ? realtimeData.organizationEntries : organizationEntries
+  const resolvedOrgSummary = realtimeData.organizationExpenseSummary.length > 0 ? realtimeData.organizationExpenseSummary : organizationExpenseSummary
+  const resolvedMgrExpenses = realtimeData.managerExpenses.length > 0 ? realtimeData.managerExpenses : managerExpenses
+  const resolvedMgrEntries = realtimeData.managerEntries.length > 0 ? realtimeData.managerEntries : managerEntries
+  const resolvedMgrSummary = realtimeData.managerExpenseSummary.length > 0 ? realtimeData.managerExpenseSummary : managerExpenseSummary
+  const resolvedSupEntries = realtimeData.siteSupervisorEntries.length > 0 ? realtimeData.siteSupervisorEntries : siteSupervisorEntries
+  const resolvedContractorEntries = realtimeData.contractorEntries.length > 0 ? realtimeData.contractorEntries : contractorEntries
 
   React.useEffect(() => {
     if (projectStages && projectStages.length > 0) return
@@ -59,7 +101,7 @@ export default function SiteExpensesReportHub({
 
   const normalizedSites = useMemo(() => getNormalizedSiteOptions(sites), [sites])
   const [activeSubTab, setActiveSubTab] = useState(subReport || 'daily') // 'daily', 'range', 'summary'
-  const [selectedSiteId, setSelectedSiteId] = useState(initialSiteId || normalizedSites[0]?.id || sites[0]?.id || '')
+  const [selectedSiteId, setSelectedSiteId] = useState(initialSiteId || (sites.length > 0 ? 'all' : ''))
   const [selectedDate, setSelectedDate] = useState(initialDate || new Date().toISOString().slice(0, 10))
   const [selectedStage, setSelectedStage] = useState(initialStage || 'all')
 
@@ -71,15 +113,21 @@ export default function SiteExpensesReportHub({
   }, [subReport])
 
   React.useEffect(() => {
-    if (initialSiteId) setSelectedSiteId(initialSiteId)
+    if (initialSiteId !== undefined && initialSiteId !== null) {
+      setSelectedSiteId(initialSiteId)
+    }
   }, [initialSiteId])
 
   React.useEffect(() => {
-    if (initialDate) setSelectedDate(initialDate)
+    if (initialDate !== undefined && initialDate !== null) {
+      setSelectedDate(initialDate)
+    }
   }, [initialDate])
 
   React.useEffect(() => {
-    if (initialStage) setSelectedStage(initialStage)
+    if (initialStage !== undefined && initialStage !== null) {
+      setSelectedStage(initialStage)
+    }
   }, [initialStage])
 
   React.useEffect(() => {
@@ -100,16 +148,12 @@ export default function SiteExpensesReportHub({
   const [toDate, setToDate] = useState(initialToDate || new Date().toISOString().slice(0, 10))
   const [expandedDates, setExpandedDates] = useState({})
 
-  // Selected site object
+  // Selected site object (handles 'all' sites gracefully)
   const selectedSite = useMemo(() => {
-    return sites.find((s) => s.id === selectedSiteId) || sites[0] || null
-  }, [sites, selectedSiteId])
-
-  // Update default siteId if empty
-  React.useEffect(() => {
-    if (!selectedSiteId && sites.length > 0) {
-      setSelectedSiteId(sites[0].id)
+    if (!selectedSiteId || selectedSiteId === 'all') {
+      return { id: 'all', siteId: 'all', projectName: 'All Managed Sites', siteName: 'All Managed Sites', siteLocation: 'All Active Portfolio Locations' }
     }
+    return sites.find((s) => s.id === selectedSiteId || s.siteId === selectedSiteId) || { id: selectedSiteId, siteId: selectedSiteId, projectName: selectedSiteId }
   }, [sites, selectedSiteId])
 
   // Toggle Accordion in Range Report
@@ -128,23 +172,33 @@ export default function SiteExpensesReportHub({
       site: selectedSite,
       selectedDate,
       selectedStage,
-      siteSupervisorEntries,
-      managerExpenses,
-      organizationEntries,
-      contractorEntries,
+      siteSupervisorEntries: resolvedSupEntries,
+      managerExpenses: resolvedMgrExpenses,
+      managerEntries: resolvedMgrEntries,
+      managerExpenseSummary: resolvedMgrSummary,
+      organizationEntries: resolvedOrgEntries,
+      organizationExpenses: resolvedOrgExpenses,
+      organizationExpenseSummary: resolvedOrgSummary,
+      contractorEntries: resolvedContractorEntries,
       totalSiteExpensesPerDay,
       dailySiteLogs,
+      role: activeRole,
     })
   }, [
     selectedSite,
     selectedDate,
     selectedStage,
-    siteSupervisorEntries,
-    managerExpenses,
-    organizationEntries,
-    contractorEntries,
+    resolvedSupEntries,
+    resolvedMgrExpenses,
+    resolvedMgrEntries,
+    resolvedMgrSummary,
+    resolvedOrgEntries,
+    resolvedOrgExpenses,
+    resolvedOrgSummary,
+    resolvedContractorEntries,
     totalSiteExpensesPerDay,
     dailySiteLogs,
+    activeRole,
   ])
 
   // ----------------------------------------------------------------------------------------------
@@ -387,6 +441,7 @@ export default function SiteExpensesReportHub({
                 onChange={(e) => setSelectedSiteId(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-blue-600 focus:bg-white transition-all cursor-pointer shadow-2xs"
               >
+                <option value="all">All Managed Sites</option>
                 {normalizedSites.map((s, idx) => (
                   <option key={`exp-site-${s.id || s.siteId || idx}-${idx}`} value={s.id || s.siteId}>
                     {s.label || s.projectName || s.siteName || s.name || s.id}

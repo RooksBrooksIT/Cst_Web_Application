@@ -4,6 +4,10 @@ import assert from 'node:assert/strict'
 import {
   parseAmount,
   matchesSite,
+  stageMatches,
+  isDateMatch,
+  formatDateToKey,
+  formatDateToISO,
   calculateDailySiteExpenses,
   calculateSiteLifetimeSummary,
   calculateProjectStageReport,
@@ -12,6 +16,7 @@ import {
   calculatePettyCashInsights,
   calculateDomainReports,
 } from '../reportService.js'
+import { normalizeReportRole } from '../reportExpenseService.js'
 
 describe('Reports Data Accuracy & De-duplication Tests', () => {
   describe('matchesSite (Compound and Canonical Site Identification)', () => {
@@ -278,4 +283,235 @@ describe('Reports Data Accuracy & De-duplication Tests', () => {
       assert.equal(incentivesResult.records[0].siteId, 'ST001')
     })
   })
+
+  describe('Role Normalization & Role-Based Query Integrity', () => {
+    it('normalizes roles correctly for report collection subscription', () => {
+      assert.equal(normalizeReportRole('Organization'), 'Organization')
+      assert.equal(normalizeReportRole('org'), 'Organization')
+      assert.equal(normalizeReportRole('admin'), 'Organization')
+      assert.equal(normalizeReportRole('Manager'), 'Manager')
+      assert.equal(normalizeReportRole('operations_manager'), 'Manager')
+      assert.equal(normalizeReportRole('Supervisor'), 'Supervisor')
+      assert.equal(normalizeReportRole('site_supervisor'), 'Supervisor')
+      assert.equal(normalizeReportRole(null), 'Organization')
+    })
+  })
+
+  describe('Filter Robustness: Date, Stage, and Multi-Site Matching', () => {
+    it('matches date across ISO strings, Date objects, Firestore timestamps, and composite IDs', () => {
+      assert.equal(isDateMatch({ date: '2026-10-28T10:00:00.000Z' }, '2026-10-28'), true)
+      assert.equal(isDateMatch({ id: 'ST001_newProject_28102026' }, '2026-10-28'), true)
+      assert.equal(isDateMatch({ dateKey: '28102026' }, '2026-10-28'), true)
+      assert.equal(isDateMatch({ createdAt: { toDate: () => new Date('2026-10-28T12:00:00Z') } }, '2026-10-28'), true)
+      assert.equal(isDateMatch({ date: '2026-10-27' }, '2026-10-28'), false)
+    })
+
+    it('matches stage flexibly handling prefixes, suffixes, and case variations', () => {
+      assert.equal(stageMatches('Foundation Stage', 'Foundation'), true)
+      assert.equal(stageMatches('01. Foundation', 'Foundation'), true)
+      assert.equal(stageMatches('Plastering', 'plastering stage'), true)
+      assert.equal(stageMatches('Masonry Work', 'all'), true)
+      assert.equal(stageMatches('Roofing', 'Foundation'), false)
+    })
+
+    it('matches all sites when site is "all" or site.id is "all"', () => {
+      assert.equal(matchesSite({ siteId: 'ST001' }, 'all'), true)
+      assert.equal(matchesSite({ siteId: 'ST002' }, { id: 'all' }), true)
+      assert.equal(matchesSite({ siteId: 'ST003' }, null), true)
+    })
+  })
+
+  describe('Daily Site Expenses: Entry vs Summary Collections & Multi-Entry Aggregation', () => {
+    it('prevents double-counting when both organizationExpenses and organizationExpenseSummary exist for the same transaction', () => {
+      const docId = 'ST001_Alpha_28102026'
+      const orgExpenses = [
+        {
+          id: docId,
+          siteId: 'ST001',
+          date: '2026-10-28',
+          totalAmount: 15000,
+          bills: [
+            { id: 'b1', amount: 10000, vendor: 'Steel Vendor', category: 'Raw Materials' },
+            { id: 'b2', amount: 5000, vendor: 'Safety Gear', category: 'Protective Equipment' },
+          ],
+        },
+      ]
+      const orgEntries = [
+        {
+          id: docId,
+          siteId: 'ST001',
+          date: '2026-10-28',
+          totalAmount: 15000,
+          bills: [
+            { id: 'b1', amount: 10000, vendor: 'Steel Vendor', category: 'Raw Materials' },
+            { id: 'b2', amount: 5000, vendor: 'Safety Gear', category: 'Protective Equipment' },
+          ],
+        },
+      ]
+      const orgSummary = [
+        {
+          id: docId,
+          siteId: 'ST001',
+          date: '2026-10-28',
+          orgExpenseTotalAmount: 15000,
+        },
+      ]
+
+      const result = calculateDailySiteExpenses({
+        site: { id: 'ST001', siteName: 'Alpha Site' },
+        selectedDate: '2026-10-28',
+        selectedStage: 'all',
+        organizationExpenses: orgExpenses,
+        organizationEntries: orgEntries,
+        organizationExpenseSummary: orgSummary,
+      })
+
+      // Must be 15000, NOT 30000 or 45000!
+      assert.equal(result.totalBills, 15000)
+      assert.equal(result.grandTotal, 15000)
+      assert.equal(result.bills.length, 2)
+    })
+
+    it('prevents double-counting when both managerExpenses and managerExpenseSummary exist for the same transaction', () => {
+      const docId = 'ST001_Alpha_28102026'
+      const managerExpenses = [
+        {
+          id: docId,
+          siteId: 'ST001',
+          date: '2026-10-28',
+          totalAmount: 8000,
+          bills: [
+            { id: 'mb1', amount: 8000, vendor: 'Local Hardware', category: 'Fasteners' },
+          ],
+        },
+      ]
+      const managerSummary = [
+        {
+          id: docId,
+          siteId: 'ST001',
+          date: '2026-10-28',
+          managerExpenseTotalAmount: 8000,
+        },
+      ]
+
+      const result = calculateDailySiteExpenses({
+        site: { id: 'ST001', siteName: 'Alpha Site' },
+        selectedDate: '2026-10-28',
+        managerExpenses,
+        managerExpenseSummary: managerSummary,
+      })
+
+      // Must be 8000, NOT 16000!
+      assert.equal(result.totalBills, 8000)
+      assert.equal(result.grandTotal, 8000)
+      assert.equal(result.bills.length, 1)
+    })
+
+    it('falls back to summary record when no itemized entry exists for that transaction', () => {
+      const orgSummary = [
+        {
+          id: 'ST001_Corporate_28102026',
+          siteId: 'ST001',
+          date: '2026-10-28',
+          orgExpenseTotalAmount: 25000,
+          description: 'Head Office Bulk Cement Allocation',
+        },
+      ]
+
+      const result = calculateDailySiteExpenses({
+        site: { id: 'ST001', siteName: 'Alpha Site' },
+        selectedDate: '2026-10-28',
+        organizationExpenseSummary: orgSummary,
+      })
+
+      assert.equal(result.totalBills, 25000)
+      assert.equal(result.grandTotal, 25000)
+      assert.equal(result.bills.length, 1)
+      assert.equal(result.bills[0].billNumber, 'ORG-SUM')
+    })
+
+    it('aggregates multiple supervisor entries for the same site and date without dropping records', () => {
+      const supEntries = [
+        {
+          id: 'SUP_SHIFT_1',
+          siteId: 'ST001',
+          date: '2026-10-28',
+          projectStage: 'Foundation',
+          supervisorName: 'Kavitha S',
+          labours: [
+            { role: 'Mason', count: 4, rate: 1000, amount: 4000 },
+          ],
+          materials: [
+            { name: 'Bricks', quantity: 1000, unitPrice: 10, amount: 10000 },
+          ],
+          foodAllowance: 500,
+          transportAmount: 300,
+        },
+        {
+          id: 'SUP_SHIFT_2',
+          siteId: 'ST001',
+          date: '2026-10-28',
+          projectStage: 'Foundation',
+          supervisorName: 'Kavitha S',
+          labours: [
+            { role: 'Helper', count: 6, rate: 600, amount: 3600 },
+          ],
+          materials: [
+            { name: 'Sand', quantity: 2, unitPrice: 2500, amount: 5000 },
+          ],
+          foodAllowance: 500,
+          transportAmount: 200,
+        },
+      ]
+
+      const result = calculateDailySiteExpenses({
+        site: { id: 'ST001', siteName: 'Alpha Site' },
+        selectedDate: '2026-10-28',
+        selectedStage: 'Foundation',
+        siteSupervisorEntries: supEntries,
+      })
+
+      // Labour: 4000 + 3600 = 7600
+      assert.equal(result.totalLabour, 7600)
+      // Materials: 10000 + 5000 = 15000
+      assert.equal(result.totalMaterial, 15000)
+      // Food: 500 + 500 = 1000
+      assert.equal(result.foodAmount, 1000)
+      // Transport: 300 + 200 = 500
+      assert.equal(result.transportAmount, 500)
+      // Grand total: 7600 + 15000 + 1000 + 500 = 24100
+      assert.equal(result.grandTotal, 24100)
+      assert.equal(result.labours.length, 2)
+      assert.equal(result.materials.length, 2)
+    })
+
+    it('aggregates across multiple sites when site filter is "all"', () => {
+      const supEntries = [
+        {
+          id: 'SUP_SITE_1',
+          siteId: 'ST001',
+          date: '2026-10-28',
+          labours: [{ role: 'Worker 1', count: 1, rate: 1000, amount: 1000 }],
+        },
+        {
+          id: 'SUP_SITE_2',
+          siteId: 'ST002',
+          date: '2026-10-28',
+          labours: [{ role: 'Worker 2', count: 1, rate: 2000, amount: 2000 }],
+        },
+      ]
+
+      const result = calculateDailySiteExpenses({
+        site: { id: 'all', siteName: 'All Managed Sites' },
+        selectedDate: '2026-10-28',
+        siteSupervisorEntries: supEntries,
+      })
+
+      assert.equal(result.totalLabour, 3000)
+      assert.equal(result.grandTotal, 3000)
+      assert.equal(result.labours.length, 2)
+      assert.equal(result.siteName, 'All Managed Sites')
+    })
+  })
 })
+
