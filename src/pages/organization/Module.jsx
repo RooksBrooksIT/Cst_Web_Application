@@ -28,12 +28,13 @@ import BlueprintsDrawings from '../manager/projects/BlueprintsDrawings'
 import ConstructionDocuments from '../common/ConstructionDocuments'
 import IncentiveCalculation from './incentives/IncentiveCalculation'
 import ProjectAndSiteSetup from '../manager/projects/ProjectAndSiteSetup'
+import MasterConfigurations from '../manager/projects/MasterConfigurations'
 import { SubscriptionLimitService, isFeatureAllowedForPlan, isSubscriptionExpired } from '../../services/subscriptionLimitService'
 import SubscriptionLimitModal from '../../components/common/SubscriptionLimitModal'
 import { ShieldAlert, ArrowUpRight, Eye, Plus, Edit } from 'lucide-react'
 import { matchesSite } from '../../services/reportService'
 
-export { OrgFinancePage, SiteFinancialDetailsPage, OrganizationExpenses, PettyCashGovernance, OrganizationApprovalsCenter, TeamManagement, BlueprintsDrawings, ConstructionDocuments, IncentiveCalculation }
+export { OrgFinancePage, SiteFinancialDetailsPage, OrganizationExpenses, PettyCashGovernance, OrganizationApprovalsCenter, TeamManagement, BlueprintsDrawings, ConstructionDocuments, IncentiveCalculation, ProjectAndSiteSetup, MasterConfigurations }
 
 function displayValue(record, fields, fallback = 'Not available') {
   return fields.map((field) => record?.[field]).find((item) => item !== undefined && item !== null && item !== '') ?? fallback
@@ -1083,6 +1084,18 @@ export default function OrganizationModule(props) {
           currentUser={props.user}
           onNotify={props.onNotify}
           baseRoute="/organization"
+        />
+      )
+    case 'project-configs':
+    case 'project-configuration':
+    case 'project-categories':
+    case 'master-configs':
+    case 'master-configurations':
+    case 'configurations':
+      return (
+        <MasterConfigurations
+          orgId={props.orgId}
+          onNotify={props.onNotify}
         />
       )
     case 'sites':

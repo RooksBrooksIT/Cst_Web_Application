@@ -39,7 +39,7 @@ import {
   Settings,
   Receipt,
   Award,
-  FolderPlus,
+  FolderTree,
 } from 'lucide-react'
 
 function value(record, fields, fallback = '') {
@@ -489,7 +489,7 @@ export default function OrganizationDashboard() {
   const navigation = [
     ['Dashboard', '/organization/dashboard', LayoutDashboard],
     ['Sites', '/organization/sites', Building2],
-    ['Site Setup', '/organization/site-setup', FolderPlus],
+    ['Project Configuration', '/organization/project-configs', FolderTree],
     ['Layout & Drawings', '/organization/drawings', Compass],
     ['Staff & Workforce', '/organization/team', Users],
     ['Inventory & Assets', '/organization/inventory', Boxes],
