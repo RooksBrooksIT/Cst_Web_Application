@@ -52,6 +52,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
   const [formFullName, setFormFullName] = useState('')
   const [formUsername, setFormUsername] = useState('')
   const [formPhone, setFormPhone] = useState('')
+  const [phoneError, setPhoneError] = useState('')
   const [formEmail, setFormEmail] = useState('')
   const [formPassword, setFormPassword] = useState('')
   const [formDesignation, setFormDesignation] = useState('Site Supervisor')
@@ -225,6 +226,12 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
     e.preventDefault()
     if (!orgId) return
 
+    if (!formPhone || formPhone.length !== 10) {
+      setPhoneError('Contact phone number must be exactly 10 digits')
+      onNotify?.('Contact phone number must be exactly 10 digits', 'error')
+      return
+    }
+
     if (isUsernameValid === false) {
       onNotify?.(usernameStatusText || 'Username already exists', 'error')
       return
@@ -272,6 +279,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
       setFormFullName('')
       setFormUsername('')
       setFormPhone('')
+      setPhoneError('')
       setFormEmail('')
       setFormPassword('')
       setFormAssignedSites([])
@@ -331,6 +339,12 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
   const handleSaveEdit = async (e) => {
     e.preventDefault()
     if (!editingSupervisor || !orgId) return
+
+    const cleanEditPhone = editPhone.replace(/\D/g, '')
+    if (cleanEditPhone && cleanEditPhone.length !== 10) {
+      onNotify?.('Contact phone number must be exactly 10 digits', 'error')
+      return
+    }
 
     const targetId = editingSupervisor.SupervisorId || editingSupervisor.supervisorId || editingSupervisor.id
     setSubmitting(true)
@@ -568,13 +582,42 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
                   <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="tel"
+                    inputMode="numeric"
                     required
                     value={formPhone}
-                    onChange={(e) => setFormPhone(e.target.value)}
-                    placeholder="e.g. +91 98765 43210"
-                    className="w-full pl-9 pr-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20"
+                    onChange={(e) => {
+                      const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 10)
+                      setFormPhone(digitsOnly)
+                      if (phoneError) setPhoneError('')
+                    }}
+                    placeholder="e.g. 9876543210"
+                    maxLength={10}
+                    className={`w-full pl-9 pr-3.5 py-2.5 text-sm bg-slate-50 border rounded-xl focus:ring-2 transition-colors ${
+                      (formPhone.length > 0 && formPhone.length < 10) || phoneError
+                        ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500/20'
+                        : formPhone.length === 10
+                        ? 'border-emerald-400 focus:border-emerald-500 focus:ring-emerald-500/20'
+                        : 'border-slate-200 focus:border-blue-500 focus:ring-blue-500/20'
+                    }`}
                   />
                 </div>
+                {phoneError ? (
+                  <span className="text-[11px] text-rose-600 font-semibold flex items-center gap-1 mt-1.5">
+                    <span className="text-xs">⚠️</span>
+                    {phoneError}
+                  </span>
+                ) : formPhone.length > 0 && formPhone.length < 10 ? (
+                  <span className="text-[11px] text-rose-600 font-semibold flex items-center gap-1 mt-1.5">
+                    <span className="text-xs">⚠️</span>
+                    Contact phone number must be exactly 10 digits ({formPhone.length}/10)
+                  </span>
+                ) : formPhone.length === 10 ? (
+                  <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1 mt-1.5">
+                    Contact phone number is valid ✓
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-slate-400 block mt-1">Must be exactly 10 numeric digits</span>
+                )}
               </div>
             </div>
 
@@ -686,7 +729,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
               </button>
               <button
                 type="submit"
-                disabled={submitting || isCheckingUsername || isUsernameValid === false || Boolean(uniquenessError)}
+                disabled={submitting || isCheckingUsername || isUsernameValid === false || Boolean(uniquenessError) || (formPhone.length > 0 && formPhone.length < 10)}
                 className="px-6 py-2.5 bg-[#0B3470] hover:bg-[#082855] text-white text-sm font-semibold rounded-xl transition-all shadow-xs disabled:opacity-50 cursor-pointer"
               >
                 {submitting ? 'Creating Profile...' : `Save & Issue Account (${nextSupervisorId})`}
@@ -885,11 +928,19 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
                   Contact Phone
                 </label>
                 <input
-                  type="text"
+                  type="tel"
+                  inputMode="numeric"
+                  maxLength={10}
                   value={editPhone}
-                  onChange={(e) => setEditPhone(e.target.value)}
+                  onChange={(e) => setEditPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  placeholder="10-digit contact number"
                   className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl"
                 />
+                {editPhone && editPhone.length < 10 && (
+                  <span className="text-[11px] text-rose-600 font-semibold block mt-1">
+                    Contact phone number must be exactly 10 digits ({editPhone.length}/10)
+                  </span>
+                )}
               </div>
 
               <div>

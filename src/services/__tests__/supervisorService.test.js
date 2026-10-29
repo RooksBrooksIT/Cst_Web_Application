@@ -78,5 +78,18 @@ describe('Supervisor Configuration & Collection Schema Unit Tests', () => {
     assert.equal(normalized.status, 'Active')
     assert.equal(normalized.isActive, true)
   })
-})
 
+  it('validates that contact phone number must be exactly 10 numeric digits', () => {
+    const isValidPhone = (val) => {
+      const clean = String(val || '').replace(/\D/g, '')
+      return clean.length === 10
+    }
+
+    assert.equal(isValidPhone('9876543210'), true)
+    assert.equal(isValidPhone('8489044572'), true)
+    assert.equal(isValidPhone('98765'), false) // fewer than 10 digits
+    assert.equal(isValidPhone('987654321099'), false) // more than 10 digits
+    assert.equal(isValidPhone(''), false) // empty
+    assert.equal(isValidPhone('abcdefghij'), false) // non-numeric
+  })
+})

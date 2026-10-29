@@ -14,6 +14,8 @@ import {
   Copy,
   MapPin,
   X,
+  Eye,
+  EyeOff,
 } from 'lucide-react'
 import { useAuth } from '../../../hooks/useAuth'
 import StatusBadge from '../../../components/common/StatusBadge'
@@ -426,6 +428,7 @@ export default function TeamManagement({
 
   // Manager Creation Modal State
   const [isManagerModalOpen, setIsManagerModalOpen] = useState(false)
+  const [showManagerPassword, setShowManagerPassword] = useState(false)
   const [managerFormData, setManagerFormData] = useState({
     fullName: '',
     username: '',
@@ -515,6 +518,7 @@ export default function TeamManagement({
   async function handleOpenCreateManagerModal() {
     setManagerError('')
     setManagerSuccess('')
+    setShowManagerPassword(false)
     const check = await SubscriptionLimitService.canCreateManager({
       orgId,
       currentManagersCount: metrics.managersCount,
@@ -580,6 +584,7 @@ export default function TeamManagement({
         department: 'Operations',
         designation: 'Site Manager',
       })
+      setShowManagerPassword(false)
       setUsernameStatusText(null)
       setIsUsernameValid(null)
       setIsCheckingUsername(false)
@@ -1941,6 +1946,7 @@ export default function TeamManagement({
         isOpen={isManagerModalOpen}
         onClose={() => {
           setIsManagerModalOpen(false)
+          setShowManagerPassword(false)
           setManagerError('')
           setManagerSuccess('')
           setUsernameStatusText(null)
@@ -2017,14 +2023,30 @@ export default function TeamManagement({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block text-xs font-medium text-slate-700">
               Account Password *
-              <input
-                type="password"
-                required
-                value={managerFormData.password}
-                onChange={(e) => setManagerFormData({ ...managerFormData, password: e.target.value })}
-                placeholder="••••••••"
-                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
-              />
+              <div className="relative mt-1">
+                <input
+                  type={showManagerPassword ? 'text' : 'password'}
+                  required
+                  value={managerFormData.password}
+                  onChange={(e) => setManagerFormData({ ...managerFormData, password: e.target.value })}
+                  placeholder="••••••••"
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 pr-10 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowManagerPassword(!showManagerPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 focus:outline-none p-0.5 cursor-pointer flex items-center justify-center"
+                  tabIndex={-1}
+                  aria-label={showManagerPassword ? 'Hide password' : 'Show password'}
+                  title={showManagerPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showManagerPassword ? (
+                    <EyeOff className="w-4 h-4 text-slate-500 hover:text-slate-700" />
+                  ) : (
+                    <Eye className="w-4 h-4 text-slate-500 hover:text-slate-700" />
+                  )}
+                </button>
+              </div>
             </label>
 
             <label className="block text-xs font-medium text-slate-700">
