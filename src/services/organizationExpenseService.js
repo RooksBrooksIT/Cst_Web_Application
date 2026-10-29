@@ -277,28 +277,43 @@ export async function recordOrganizationExpense(orgId, expenseData, orgActor) {
     'Organization Administrator'
   const raiserRole = orgActor?.userRole || orgActor?.role || existingData?.raiserRole || 'Organization'
 
-  const normalizedNewBills = bills.map((b, idx) => ({
-    billNo: b.billNo || (existingBills.length + idx + 1).toString().padStart(3, '0'),
-    billVendor: b.vendor || b.billVendor || 'Vendor',
-    vendor: b.vendor || b.billVendor || 'Vendor',
-    billAmount: Number(b.amount || b.billAmount) || 0,
-    amount: Number(b.amount || b.billAmount) || 0,
-    billCopy: b.billUrl || b.imageUrl || b.billCopy || 'billURL',
-    billUrl: b.billUrl || b.imageUrl || b.billCopy || '',
-    imageUrl: b.billUrl || b.imageUrl || b.billCopy || '',
-    storagePath: b.storagePath || '',
-    description: b.description || b.purpose || '',
-    raisedBy: raiserId,
-    raisedByName: raiserName,
-    userRole: raiserRole,
-    createdAt: new Date(),
-  }))
+  const normalizedNewBills = bills.map((b, idx) => {
+    const rawQty = b.quantity !== undefined ? b.quantity : (b.qty !== undefined ? b.qty : (b.billQuantity !== undefined ? b.billQuantity : null))
+    const parsedQty = rawQty !== null && rawQty !== undefined && rawQty !== ''
+      ? (Number.isFinite(Number(rawQty)) ? Number(rawQty) : rawQty)
+      : null
+
+    return {
+      billNo: b.billNo || (existingBills.length + idx + 1).toString().padStart(3, '0'),
+      billVendor: b.vendor || b.billVendor || 'Vendor',
+      vendor: b.vendor || b.billVendor || 'Vendor',
+      quantity: parsedQty,
+      qty: parsedQty,
+      billAmount: Number(b.amount || b.billAmount) || 0,
+      amount: Number(b.amount || b.billAmount) || 0,
+      billCopy: b.billUrl || b.imageUrl || b.billCopy || 'billURL',
+      billUrl: b.billUrl || b.imageUrl || b.billCopy || '',
+      imageUrl: b.billUrl || b.imageUrl || b.billCopy || '',
+      storagePath: b.storagePath || '',
+      description: b.description || b.purpose || '',
+      raisedBy: raiserId,
+      raisedByName: raiserName,
+      userRole: raiserRole,
+      createdAt: new Date(),
+    }
+  })
 
   // Merge bills: [...existingBills, ...normalizedNewBills]
   const allBills = [...existingBills, ...normalizedNewBills]
   const totalAmount =
     allBills.reduce((acc, b) => acc + (Number(b.amount || b.billAmount) || 0), 0) ||
     (Number(expenseData.totalAmount || expenseData.amount) || 0)
+  const hasNumericQty = allBills.some((b) => b.quantity !== null && b.quantity !== undefined && Number.isFinite(Number(b.quantity)))
+  const totalQuantity = hasNumericQty
+    ? allBills.reduce((acc, b) => acc + (typeof b.quantity === 'number' ? b.quantity : (Number(b.quantity) || 0)), 0)
+    : (expenseData.quantity !== undefined && expenseData.quantity !== null && expenseData.quantity !== ''
+        ? (Number.isFinite(Number(expenseData.quantity)) ? Number(expenseData.quantity) : expenseData.quantity)
+        : (existingData?.quantity !== undefined ? existingData.quantity : null))
 
   const primaryBill = allBills.find((b) => b.billUrl || b.imageUrl || b.billCopy) || {}
   const primaryBillUrl =
@@ -337,6 +352,8 @@ export async function recordOrganizationExpense(orgId, expenseData, orgActor) {
     raiserRole,
     category: 'Organization Bill',
     bills: allBills,
+    quantity: totalQuantity,
+    qty: totalQuantity,
     totalAmount,
     amount: totalAmount,
     billUrl: primaryBillUrl,
@@ -367,6 +384,7 @@ export async function recordOrganizationExpense(orgId, expenseData, orgActor) {
       projectName: payload.projectName,
       projectStage: payload.projectStage,
       orgExpenseTotalAmount: totalAmount,
+      quantity: totalQuantity,
       date: new Date().toISOString(),
       updatedAt: serverTimestamp(),
     }, { merge: true })

@@ -472,6 +472,70 @@ describe('Expense Synchronization & Normalization Tests', () => {
       const aggregatedTotal = billEntries.reduce((sum, e) => sum + e.amount, 0)
       assert.equal(aggregatedTotal, 1100, 'Sum of individual bills must equal 1100 without double counting')
     })
+
+    it('preserves and normalizes Quantity field across bill items with backward compatibility', () => {
+      const expenseWithQuantity = {
+        siteId: 'ST001',
+        siteName: 'Testing Site',
+        date: '2026-10-29',
+        category: 'Materials',
+        bills: [
+          {
+            billNo: 'B-01',
+            vendor: 'Cement Mart',
+            amount: 5000,
+            quantity: 50,
+            unit: 'bags',
+          },
+          {
+            billNo: 'B-02',
+            vendor: 'Steel Supply',
+            amount: 12000,
+            quantity: '120.5',
+          },
+          {
+            // Legacy bill without quantity
+            billNo: 'B-03',
+            vendor: 'Hardware Shop',
+            amount: 1500,
+          },
+        ],
+      }
+
+      const normalized = normalizeExpenseRecord('EXP_WITH_QTY', expenseWithQuantity, 'Manager')
+      assert.equal(normalized.totalAmount, 18500)
+      assert.equal(normalized.bills.length, 3)
+
+      // First bill has integer quantity 50
+      assert.equal(normalized.bills[0].quantity, 50)
+      assert.equal(normalized.bills[0].qty, 50)
+
+      // Second bill has string decimal quantity parsed to 120.5
+      assert.equal(normalized.bills[1].quantity, 120.5)
+      assert.equal(normalized.bills[1].qty, 120.5)
+
+      // Third legacy bill has null quantity without breaking or defaulting to 0
+      assert.equal(normalized.bills[2].quantity, null)
+      assert.equal(normalized.bills[2].qty, null)
+
+      // Top-level quantity should sum valid quantities: 50 + 120.5 = 170.5
+      assert.equal(normalized.quantity, 170.5)
+    })
+
+    it('handles legacy single-record expenses without quantity gracefully', () => {
+      const legacyExpense = {
+        siteId: 'ST001',
+        date: '2026-10-25',
+        totalAmount: 3500,
+        amount: 3500,
+        vendor: 'Old Vendor',
+      }
+
+      const normalized = normalizeExpenseRecord('LEGACY_001', legacyExpense, 'Manager')
+      assert.equal(normalized.totalAmount, 3500)
+      assert.equal(normalized.quantity, null)
+      assert.equal(normalized.bills.length, 0)
+    })
   })
 })
 

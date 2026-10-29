@@ -62,6 +62,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
     description: '',
     vendor: '',
     billNo: '',
+    quantity: '',
     amount: '',
     file: null,
     fileName: '',
@@ -211,12 +212,15 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
           expenseType: 'organization expenses',
           siteId: formSiteId,
           siteName,
+          billNo: updated[index].billNo || '',
           fileName: file.name,
           file,
           sitesList: sites,
         })
 
         const nextBills = [...bills]
+        nextBills[index].file = file
+        nextBills[index].fileName = file.name
         nextBills[index].billUrl = uploadResult.downloadUrl
         nextBills[index].storagePath = uploadResult.storagePath
         nextBills[index].isUploading = false
@@ -226,8 +230,13 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
         console.error('Instant bill upload error:', err)
         const nextBills = [...bills]
         nextBills[index].isUploading = false
+        nextBills[index].file = null
+        nextBills[index].fileName = ''
+        nextBills[index].previewUrl = ''
+        nextBills[index].billUrl = ''
+        nextBills[index].storagePath = ''
         setBills(nextBills)
-        onNotify?.(`Upload warning: ${err.message}. Will retry on submit.`, 'warning')
+        onNotify?.(`Bill upload failed: ${err?.message || 'Storage permission or network error'}.`, 'error')
       }
     } else {
       updated[index].isUploading = false
@@ -249,7 +258,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
       const siteName = site?.siteName || site?.projectName || 'Project_Site'
 
       // Ensure all bill files are uploaded under the exact required folder path:
-      // manager expenses/organisation/{tenantId}/organization expenses/{siteId_siteName}/{image}
+      // /organisation/{orgId}/Organization_exp_bill/{siteId_siteName}/{image}
       const processedBills = await Promise.all(
         bills
           .filter((b) => b.description?.trim() || b.vendor?.trim() || Number(b.amount) > 0)
@@ -263,6 +272,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
                 expenseType: 'organization expenses',
                 siteId: formSiteId,
                 siteName,
+                billNo: b.billNo || '',
                 fileName: b.fileName || b.file.name,
                 file: b.file,
                 sitesList: sites,
@@ -271,10 +281,16 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
               storagePath = uploadRes.storagePath
             }
 
+            const rawQty = b.quantity !== undefined && b.quantity !== null && b.quantity !== ''
+              ? (Number.isFinite(Number(b.quantity)) ? Number(b.quantity) : b.quantity)
+              : null
+
             return {
               description: b.description?.trim() || (b.vendor?.trim() ? `${b.vendor.trim()} Bill` : 'Bill Item'),
               vendor: b.vendor?.trim() || 'Vendor',
               billNo: b.billNo?.trim() || '',
+              quantity: rawQty,
+              qty: rawQty,
               amount: b.amount,
               billUrl,
               imageUrl: billUrl,
@@ -283,6 +299,10 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
             }
           })
       )
+
+      const totalQuantity = processedBills.some((b) => b.quantity !== null && b.quantity !== undefined && Number.isFinite(Number(b.quantity)))
+        ? processedBills.reduce((acc, b) => acc + (typeof b.quantity === 'number' ? b.quantity : (Number(b.quantity) || 0)), 0)
+        : null
 
       await recordOrganizationExpense(
         orgId,
@@ -296,6 +316,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
           expenseDate: formDate || new Date().toISOString().split('T')[0],
           remarks: formRemarks,
           bills: processedBills,
+          quantity: totalQuantity,
           totalAmount: totalCalculatedAmount,
         },
         currentUser
@@ -346,6 +367,9 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
           const billDoc = b.billUrl || b.imageUrl || (b.billCopy && b.billCopy !== 'billURL' ? b.billCopy : '')
           const remarks = b.description || b.remarks || b.purpose || item.remarks || ''
           const billDate = b.date || b.billDate || item.date || item.expenseDate
+          const billQty = b.quantity !== undefined && b.quantity !== null && b.quantity !== ''
+            ? b.quantity
+            : (b.qty !== undefined && b.qty !== null && b.qty !== '' ? b.qty : (item.quantity !== undefined && rawBills.length === 1 ? item.quantity : null))
 
           list.push({
             id: `${item.id || item.expenseId}_bill_${b.id || b.billNo || idx}`,
@@ -363,6 +387,8 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
             billNo,
             vendor,
             billVendor: vendor,
+            quantity: billQty,
+            qty: billQty,
             amount: billAmt,
             billAmount: billAmt,
             totalAmount: billAmt,
@@ -385,6 +411,9 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
         const billNo = item.billNo || '001'
         const vendor = item.vendor || item.billVendor || 'Organization Expense'
         const remarks = item.remarks || item.description || ''
+        const docQty = item.quantity !== undefined && item.quantity !== null && item.quantity !== ''
+          ? item.quantity
+          : (item.qty !== undefined && item.qty !== null && item.qty !== '' ? item.qty : null)
 
         list.push({
           id: item.id || item.expenseId,
@@ -402,6 +431,8 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
           billNo,
           vendor,
           billVendor: vendor,
+          quantity: docQty,
+          qty: docQty,
           amount: amt,
           billAmount: amt,
           totalAmount: amt,
@@ -510,7 +541,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
   const handleExportCSV = () => {
     if (filteredEntries.length === 0) return
     const rows = [
-      ['Expense ID', 'Bill No', 'Site Name', 'Stage', 'Date', 'Vendor', 'Amount', 'Description / Remarks', 'Bill Attached'],
+      ['Expense ID', 'Bill No', 'Site Name', 'Stage', 'Date', 'Vendor', 'Quantity', 'Amount', 'Description / Remarks', 'Bill Attached'],
       ...filteredEntries.map((e) => {
         const dStr = formatEntryDate(e)
         return [
@@ -520,6 +551,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
           `"${(e.projectStage || '').replace(/"/g, '""')}"`,
           `"${dStr}"`,
           `"${(e.vendor || '').replace(/"/g, '""')}"`,
+          e.quantity !== undefined && e.quantity !== null && e.quantity !== '' ? e.quantity : '-',
           e.amount || 0,
           `"${(e.remarks || e.description || '').replace(/"/g, '""')}"`,
           e.billUrl ? 'Yes' : 'No',
@@ -704,6 +736,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
                   <th className="py-3.5 px-4">Bill Date</th>
                   <th className="py-3.5 px-4">Bill No.</th>
                   <th className="py-3.5 px-4">Vendor</th>
+                  <th className="py-3.5 px-4">Quantity</th>
                   <th className="py-3.5 px-4">Receipt</th>
                   <th className="py-3.5 px-4">Amount</th>
                   <th className="py-3.5 px-4">Description / Remarks</th>
@@ -752,20 +785,27 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
                         </span>
                       </td>
 
+                      <td className="py-3.5 px-4 font-mono text-slate-700">
+                        {entry.quantity !== undefined && entry.quantity !== null && entry.quantity !== '' ? entry.quantity : '-'}
+                      </td>
+
                       {/* Bill Document Column with Instant Preview */}
                       <td className="py-3.5 px-4">
-                        {entry.billUrl ? (
+                        {(entry.billUrl || entry.storagePath) ? (
                           <button
                             type="button"
                             onClick={() =>
                               setPreviewModal({
                                 isOpen: true,
-                                imageUrl: entry.billUrl,
+                                imageUrl: entry.billUrl || '',
+                                storagePath: entry.storagePath || '',
+                                orgId: orgId,
                                 title: entry.description || entry.remarks || `${entry.vendor} Bill`,
                                 vendor: entry.vendor,
                                 amount: billAmt,
                                 billNo: entry.billNo,
                                 date: entryDateStr,
+                                quantity: entry.quantity,
                               })
                             }
                             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 text-xs font-semibold transition-all cursor-pointer shadow-2xs"
@@ -833,7 +873,12 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
                       <span className="px-2 py-0.5 text-xs font-semibold bg-slate-100 text-slate-700 rounded-md">
                         Vendor: <span className="font-bold text-slate-900">{entry.vendor}</span>
                       </span>
-                      {entry.billUrl && (
+                      {entry.quantity !== undefined && entry.quantity !== null && entry.quantity !== '' && (
+                        <span className="px-2 py-0.5 text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200 rounded-md">
+                          Qty: <strong>{entry.quantity}</strong>
+                        </span>
+                      )}
+                      {(entry.billUrl || entry.storagePath) && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full">
                           <ImageIcon className="w-3 h-3" />
                           Receipt Attached
@@ -869,18 +914,21 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
                   </div>
 
                   <div className="flex items-center gap-2">
-                    {entry.billUrl && (
+                    {(entry.billUrl || entry.storagePath) && (
                       <button
                         type="button"
                         onClick={() =>
                           setPreviewModal({
                             isOpen: true,
-                            imageUrl: entry.billUrl,
+                            imageUrl: entry.billUrl || '',
+                            storagePath: entry.storagePath || '',
+                            orgId: orgId,
                             title: entry.description || entry.remarks || `${entry.vendor} Bill`,
                             vendor: entry.vendor,
                             amount: billAmt,
                             billNo: entry.billNo,
                             date: entryDateStr,
+                            quantity: entry.quantity,
                           })
                         }
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 text-xs font-semibold cursor-pointer transition-all shadow-2xs"
@@ -1012,7 +1060,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
                         onChange={(e) =>
                           handleUpdateBill(idx, 'description', e.target.value)
                         }
-                        className="col-span-12 sm:col-span-4 px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg"
+                        className="col-span-12 sm:col-span-3 px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg"
                       />
                       <input
                         type="text"
@@ -1021,7 +1069,7 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
                         onChange={(e) =>
                           handleUpdateBill(idx, 'vendor', e.target.value)
                         }
-                        className="col-span-6 sm:col-span-3 px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg"
+                        className="col-span-6 sm:col-span-2 px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg"
                       />
                       <input
                         type="text"
@@ -1034,12 +1082,23 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
                       />
                       <input
                         type="number"
+                        placeholder="Qty"
+                        min="0"
+                        step="any"
+                        value={b.quantity}
+                        onChange={(e) =>
+                          handleUpdateBill(idx, 'quantity', e.target.value)
+                        }
+                        className="col-span-4 sm:col-span-2 px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg font-semibold"
+                      />
+                      <input
+                        type="number"
                         placeholder="Amount (₹) *"
                         value={b.amount}
                         onChange={(e) =>
                           handleUpdateBill(idx, 'amount', e.target.value)
                         }
-                        className="col-span-10 sm:col-span-2 px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg font-semibold"
+                        className="col-span-6 sm:col-span-2 px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg font-semibold"
                       />
                       <button
                         type="button"
@@ -1091,18 +1150,21 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
                         ) : null}
                       </div>
 
-                      {(b.billUrl || b.previewUrl) && (
+                      {(b.billUrl || b.previewUrl || b.storagePath) && (
                         <button
                           type="button"
                           onClick={() =>
                             setPreviewModal({
                               isOpen: true,
-                              imageUrl: b.billUrl || b.previewUrl,
+                              imageUrl: b.billUrl || b.previewUrl || '',
+                              storagePath: b.storagePath || '',
+                              orgId: orgId,
                               title: b.description || 'Bill Preview',
                               vendor: b.vendor,
                               amount: b.amount,
                               billNo: b.billNo,
                               date: formDate,
+                              quantity: b.quantity,
                             })
                           }
                           className="inline-flex items-center gap-1 text-xs text-blue-600 font-semibold hover:underline cursor-pointer"
@@ -1165,11 +1227,14 @@ export default function OrganizationExpenses({ orgId, sites = [], currentUser, o
         isOpen={previewModal.isOpen}
         onClose={() => setPreviewModal({ ...previewModal, isOpen: false })}
         imageUrl={previewModal.imageUrl}
+        storagePath={previewModal.storagePath}
+        orgId={previewModal.orgId || orgId}
         title={previewModal.title}
         vendor={previewModal.vendor}
         amount={previewModal.amount}
         billNo={previewModal.billNo}
         date={previewModal.date}
+        quantity={previewModal.quantity}
       />
     </div>
   )

@@ -115,36 +115,79 @@ async function loginManager(identifier, password) {
     const contactNo = extractFieldValue(data, ['ContactNo', 'contactNo', 'phone', 'Phone', 'Mobile', 'mobile'])
     const contactDigits = contactNo.replace(/\D/g, '')
 
-    return (
+    return Boolean(
       (userName && userName.toLowerCase() === idLower) ||
       (email && email.toLowerCase() === idLower) ||
       (managerId && managerId.toLowerCase() === idLower) ||
       (docId && docId.toLowerCase() === idLower) ||
+      (docId && docId.includes('_') && docId.split('_').some((part) => part.toLowerCase() === idLower)) ||
       (digitsOnly && contactDigits && digitsOnly.length >= 8 && contactDigits.endsWith(digitsOnly))
     )
   }
 
-  // 1. Primary path: query subcollections named 'manager' across all organizations via collectionGroup
-  try {
-    const groupSnap = await getDocs(collectionGroup(db, 'manager'))
-    groupSnap.forEach((d) => {
-      const path = d.ref.path
-      if (!seenDocPaths.has(path)) {
-        seenDocPaths.add(path)
-        const parentOrgId = d.ref.parent?.parent?.id || 'default_org'
-        const data = d.data() || {}
-        if (checkManagerMatch(d.id, data)) {
-          managerCandidates.push({ doc: d, data, orgId: parentOrgId })
+  // 0. High-speed check for previously active or cached organization (0ms overhead)
+  const storedSession = readStoredSession()
+  const cachedOrgId = storedSession?.orgId
+  if (cachedOrgId) {
+    const directChecks = ['manager', 'managers', 'config_users', 'users'].map(async (subCol) => {
+      try {
+        const directDoc = await getDoc(doc(db, 'organisation', cachedOrgId, subCol, rawId))
+        if (directDoc.exists()) {
+          const path = directDoc.ref.path
+          if (!seenDocPaths.has(path)) {
+            seenDocPaths.add(path)
+            managerCandidates.push({ doc: directDoc, data: directDoc.data() || {}, orgId: cachedOrgId })
+          }
         }
-      }
+      } catch (_e) {}
     })
-  } catch (_err) {
-    // collectionGroup might be restricted or index missing; fallback will cover
+    await Promise.allSettled(directChecks)
+
+    if (managerCandidates.length === 0) {
+      try {
+        const snap = await getDocs(collection(db, 'organisation', cachedOrgId, 'manager'))
+        snap.forEach((d) => {
+          const path = d.ref.path
+          if (!seenDocPaths.has(path)) {
+            seenDocPaths.add(path)
+            const data = d.data() || {}
+            if (checkManagerMatch(d.id, data)) {
+              managerCandidates.push({ doc: d, data, orgId: cachedOrgId })
+            }
+          }
+        })
+      } catch (_e) {}
+    }
+  }
+
+  // 1. Primary path: query subcollections named 'manager', 'managers', 'config_users' across all organizations via collectionGroup
+  if (managerCandidates.length === 0) {
+    const candidateColGroups = ['manager', 'managers', 'config_users', 'configUsers']
+    await Promise.allSettled(
+      candidateColGroups.map(async (cgName) => {
+        try {
+          const groupSnap = await getDocs(collectionGroup(db, cgName))
+          groupSnap.forEach((d) => {
+            const path = d.ref.path
+            if (!seenDocPaths.has(path)) {
+              seenDocPaths.add(path)
+              const parentOrgId = d.ref.parent?.parent?.id || d.data()?.orgId || d.data()?.organisationId || 'default_org'
+              const data = d.data() || {}
+              if (checkManagerMatch(d.id, data)) {
+                managerCandidates.push({ doc: d, data, orgId: parentOrgId })
+              }
+            }
+          })
+        } catch (_err) {
+          // collectionGroup might be restricted or index missing; fallback will cover
+        }
+      })
+    )
   }
 
   // 2. Fallback: only check top-level collections in parallel if no candidate matched
   if (managerCandidates.length === 0) {
-    const topColNames = ['manager', 'managers', 'Manager', 'Managers']
+    const topColNames = ['manager', 'managers', 'Manager', 'Managers', 'config_users', 'users']
     await Promise.allSettled(
       topColNames.map(async (topCol) => {
         try {
@@ -179,7 +222,7 @@ async function loginManager(identifier, password) {
             orgsSnap.docs.map(async (orgDoc) => {
               const orgId = orgDoc.id
               await Promise.allSettled(
-                ['manager', 'managers'].map(async (subCol) => {
+                ['manager', 'managers', 'config_users', 'config_user', 'configUsers', 'users'].map(async (subCol) => {
                   try {
                     const subSnap = await getDocs(collection(db, orgCol, orgId, subCol))
                     subSnap.forEach((d) => {
@@ -202,7 +245,87 @@ async function loginManager(identifier, password) {
     )
   }
 
+  // 4. Fallback: Direct Firebase Authentication if identifier is an email and candidates list is empty
+  if (managerCandidates.length === 0 && rawId.includes('@')) {
+    try {
+      const creds = await authenticate(rawId, rawPassword)
+      if (creds?.user) {
+        const u = creds.user
+        const token = await u.getIdTokenResult().catch(() => null)
+        const tokenRole = normalizeRole(token?.claims?.role || token?.claims?.userRole)
+        const tokenOrgId = token?.claims?.orgId || token?.claims?.organisationId
+
+        // If the account has an explicit non-Manager role, respect it
+        if (tokenRole && tokenRole !== 'Manager') {
+          throw Object.assign(
+            new Error(`This account is registered as ${tokenRole}. Please switch to ${tokenRole} Login.`),
+            { code: 'auth/unauthorized-role' }
+          )
+        }
+
+        let resolvedOrgId = tokenOrgId || 'default_org'
+        let managerProfile = null
+
+        // Lookup manager profile document using the verified user's uid or email
+        if (tokenOrgId) {
+          for (const sub of ['manager', 'managers', 'config_users', 'users']) {
+            try {
+              const snap = await getDoc(doc(db, 'organisation', tokenOrgId, sub, u.uid))
+              if (snap.exists()) {
+                managerProfile = snap.data()
+                break
+              }
+            } catch (_) {}
+          }
+        }
+
+        if (!managerProfile) {
+          try {
+            const orgsSnap = await getDocs(collection(db, 'organisation'))
+            for (const orgDoc of orgsSnap.docs) {
+              const oId = orgDoc.id
+              for (const sub of ['manager', 'managers', 'config_users', 'users']) {
+                try {
+                  const mSnap = await getDoc(doc(db, 'organisation', oId, sub, u.uid))
+                  if (mSnap.exists()) {
+                    managerProfile = mSnap.data()
+                    resolvedOrgId = oId
+                    break
+                  }
+                } catch (_) {}
+              }
+              if (managerProfile) break
+            }
+          } catch (_) {}
+        }
+
+        return createSession(u.uid, u.email, resolvedOrgId, 'Manager', {
+          ...managerProfile,
+          Email: u.email,
+          FullName: managerProfile?.FullName || managerProfile?.fullName || u.displayName || 'Site Manager',
+          UserName: managerProfile?.UserName || managerProfile?.username || u.email.split('@')[0],
+          ManagerId: u.uid,
+          Status: managerProfile?.Status || managerProfile?.status || 'Active',
+          Department: managerProfile?.Department || managerProfile?.department || 'Operations',
+          Designation: managerProfile?.Designation || managerProfile?.designation || 'Site Manager',
+          role: 'Manager',
+        })
+      }
+    } catch (authErr) {
+      if (authErr.code === 'auth/wrong-password' || authErr.code === 'auth/invalid-credential') {
+        throw Object.assign(
+          new Error('The password entered is incorrect. Please check your credentials.'),
+          { code: 'auth/wrong-password' }
+        )
+      }
+      if (authErr.code === 'auth/unauthorized-role') {
+        throw authErr
+      }
+    }
+  }
+
   // Validate credentials against Manager records
+  let hadManagerCredentialCandidate = false
   for (const item of managerCandidates) {
     const data = item.data
     const docId = item.doc.id
@@ -229,8 +352,22 @@ async function loginManager(identifier, password) {
         )
       }
 
-      // 2. Validate Password against Manager credentials
-      if (storedPassword && storedPassword === rawPassword) {
+      // 2. Validate Password against Manager credentials (or Firebase Auth)
+      let passwordValid = false
+      if (storedPassword && (storedPassword === rawPassword || storedPassword.trim() === rawPassword)) {
+        passwordValid = true
+      } else if (email && email.includes('@')) {
+        try {
+          await authenticate(email, rawPassword)
+          passwordValid = true
+        } catch (authErr) {
+          if (authErr.code === 'auth/wrong-password' || authErr.code === 'auth/invalid-credential') {
+            hadManagerCredentialCandidate = true
+          }
+        }
+      }
+
+      if (passwordValid) {
         if (email && email.includes('@')) {
           authenticate(email, rawPassword).catch(() => null)
         }
@@ -251,12 +388,15 @@ async function loginManager(identifier, password) {
         })
       }
 
-      // If stored password mismatch
-      throw Object.assign(
-        new Error('The password entered is incorrect. Please check your credentials.'),
-        { code: 'auth/wrong-password' }
-      )
+      hadManagerCredentialCandidate = true
     }
+  }
+
+  if (hadManagerCredentialCandidate) {
+    throw Object.assign(
+      new Error('The password entered is incorrect. Please check your credentials.'),
+      { code: 'auth/wrong-password' }
+    )
   }
 
   // Account not found in Manager collection

@@ -4,19 +4,35 @@ import { Image as ImageIcon } from 'lucide-react'
 import StatusBadge from '../../../components/common/StatusBadge'
 import ExportButton from '../../../components/common/ExportButton'
 import BillImagePreviewModal from '../../../components/common/BillImagePreviewModal'
-import { fetchSiteGranularExpenses } from '../../../services/financeService'
+import {
+  fetchSiteGranularExpenses,
+  subscribeSiteGranularExpenses,
+  calculateSiteTotalExpenses,
+  calculateSiteFinancialMetrics,
+  processRawGranularExpenseDocs,
+} from '../../../services/financeService.js'
 import {
   amountValue,
   matchesSite,
   money,
   formatDate,
   statusBadgeColor,
+  parseDateToTime,
 } from './financeUtils'
 
 export default function SiteFinancialDetailsPage({
-  site,
-  totalExpensesDoc,
+  site = {},
+  totalExpensesDoc = null,
   sitePayments = [],
+  managerExpenses = [],
+  managerEntries = [],
+  organizationExpenses = [],
+  organizationEntries = [],
+  siteSupervisorEntries = [],
+  contractorEntries = [],
+  siteSupervisorIncentives = [],
+  pettyCashExpenses = [],
+  pettyCashTransactions = [],
   onBack,
   orgId,
 }) {
@@ -29,11 +45,14 @@ export default function SiteFinancialDetailsPage({
   const [previewModal, setPreviewModal] = useState({
     isOpen: false,
     imageUrl: '',
+    storagePath: '',
+    orgId: '',
     title: '',
     vendor: '',
     amount: '',
     billNo: '',
     date: '',
+    quantity: '',
   })
 
   const siteId = site.siteId || site.siteid || site.id || site.code || ''
@@ -97,76 +116,133 @@ export default function SiteFinancialDetailsPage({
   ])
   const received = sitePaymentsSum > 0 ? Math.max(directSiteIncome, sitePaymentsSum) : directSiteIncome
 
-  // Consolidate expenses from totalSiteExpensesPerDay or site fields
-  const expDoc = totalExpensesDoc || {}
-  const totalAllExp = amountValue(expDoc, ['totalAllExpenses', 'totalAllExpense', 'total_all_expenses', 'totalExpenses', 'totalExpense'])
-  const supervisorExp = amountValue(expDoc, ['totalSiteExpense', 'totalSupervisorExpense', 'siteExpense', 'supervisorExpense', 'total_site_expense'])
-  const mgrExp = amountValue(expDoc, ['totalMgrExpense', 'totalManagerExpense', 'managerExpense', 'mgrExpense', 'total_mgr_expense'])
-  const orgExp = amountValue(expDoc, ['totalOrgExpense', 'totalOrganizationExpense', 'orgExpense', 'organizationExpense', 'total_org_expense'])
-  const conExp = amountValue(expDoc, ['totalContractorExpense', 'totalContractorPayments', 'contractorExpense', 'total_contractor_expense'])
-  const incExp = amountValue(expDoc, ['totalIncentiveExpenses', 'totalIncentives', 'incentiveExpenses', 'total_incentive_expenses'])
-  const calculatedExpenses = supervisorExp + mgrExp + orgExp + conExp + incExp
-  const directSiteExpenses = amountValue(site, [
-    'amountSpent',
-    'amountSpend',
-    'spent',
-    'spentAmount',
-    'totalAllExpenses',
-    'totalExpenses',
-    'totalExpense',
-    'actualExpense',
-    'actualExpenditure',
-    'actual',
-    'expenditure',
-    'amount_spent',
-    'total_expenses',
-    'total_all_expenses',
+  // Pre-calculate granular expenses from live props for immediate instant display
+  const propGranularExpenses = useMemo(() => {
+    const hasAnyProps =
+      (managerExpenses && managerExpenses.length > 0) ||
+      (organizationExpenses && organizationExpenses.length > 0) ||
+      (siteSupervisorEntries && siteSupervisorEntries.length > 0) ||
+      (contractorEntries && contractorEntries.length > 0) ||
+      (pettyCashTransactions && pettyCashTransactions.length > 0)
+
+    if (!hasAnyProps) return []
+
+    const sourcesWithDocs = [
+      { col: 'siteSupervisorEntries', category: 'Supervisor Entry', docs: siteSupervisorEntries },
+      { col: 'pettyCashTransactions', category: 'Petty Cash', docs: pettyCashTransactions },
+      { col: 'organizationExpenses', category: 'Organization Expense', docs: organizationExpenses },
+      { col: 'managerExpenses', category: 'Manager Direct Expense', docs: managerExpenses },
+      { col: 'contractorEntries', category: 'Contractor Payment', docs: contractorEntries },
+      { col: 'siteSupervisorIncentives', category: 'Supervisor Incentive', docs: siteSupervisorIncentives },
+      { col: 'organizationEntries', category: 'Organization Bill', docs: organizationEntries },
+      { col: 'managerEntries', category: 'Manager Approved', docs: managerEntries },
+      { col: 'petty_cash_expenses', category: 'Petty Cash Voucher', docs: pettyCashExpenses },
+    ]
+
+    return processRawGranularExpenseDocs({
+      sourcesWithDocs,
+      siteId,
+      siteObj: site,
+    })
+  }, [
+    managerExpenses,
+    managerEntries,
+    organizationExpenses,
+    organizationEntries,
+    siteSupervisorEntries,
+    contractorEntries,
+    siteSupervisorIncentives,
+    pettyCashExpenses,
+    pettyCashTransactions,
+    siteId,
+    site,
   ])
 
-  let spent = 0
-  if (totalAllExp > 0) {
-    spent = totalAllExp
-  } else if (calculatedExpenses > 0) {
-    spent = calculatedExpenses
-  } else {
-    spent = directSiteExpenses
-  }
-
-  const cashInHand = received - spent
-  const explicitBalance = amountValue(site, ['amountBalance', 'balance', 'remainingBalance', 'remainingBudget', 'budgetRemaining', 'amount_balance'])
-  const budgetRemaining = budget > 0 ? budget - spent : explicitBalance !== 0 ? explicitBalance : cashInHand
-  const usagePercent = budget > 0 ? Math.min(100, Math.max(0, Math.round((spent / budget) * 100))) : 0
-  const realizationPercent = budget > 0 ? Math.min(100, Math.max(0, Math.round((received / budget) * 100))) : 0
-  const isBudgetCritical = usagePercent >= 85
-  const isBudgetWarning = usagePercent >= 70 && usagePercent < 85
-
-  // Petty Cash
-  const pcReceived = amountValue(expDoc, ['totalPettyCashReceived', 'pettyCashReceived', 'totalPettyCashDisbursed'])
-  const pcSpent = amountValue(expDoc, ['totalPettyCashExpense', 'pettyCashExpense', 'totalPettyCashSpent', 'pettyCashSpent'])
-  const pcRemaining = amountValue(expDoc, ['remainingPettyCash', 'pettyCashBalance', 'floatBalance']) || (pcReceived - pcSpent)
-
-  // Fetch granular expenses on mount
+  // Real-time subscription to granular expenses for the selected site
   useEffect(() => {
     let cancelled = false
     setLoadingExpenses(true)
-    fetchSiteGranularExpenses(orgId, siteId, site)
-      .then((items) => {
+
+    const unsub = subscribeSiteGranularExpenses(
+      orgId,
+      siteId,
+      site,
+      (items) => {
         if (!cancelled) {
           setGranularExpenses(items)
           setLoadingExpenses(false)
         }
-      })
-      .catch(() => {
-        if (!cancelled) setLoadingExpenses(false)
-      })
+      },
+      (err) => {
+        console.warn('[SiteFinancialDetailsPage] Fallback fetch on subscription error:', err?.message)
+        fetchSiteGranularExpenses(orgId, siteId, site)
+          .then((items) => {
+            if (!cancelled) {
+              setGranularExpenses(items)
+              setLoadingExpenses(false)
+            }
+          })
+          .catch(() => {
+            if (!cancelled) setLoadingExpenses(false)
+          })
+      }
+    )
+
     return () => {
       cancelled = true
+      if (unsub) unsub()
     }
   }, [orgId, siteId, site])
 
+  const effectiveGranularExpenses = useMemo(() => {
+    if (granularExpenses && granularExpenses.length > 0) return granularExpenses
+    if (propGranularExpenses && propGranularExpenses.length > 0) return propGranularExpenses
+    return []
+  }, [granularExpenses, propGranularExpenses])
+
+  // Consolidate expenses accurately using calculateSiteTotalExpenses
+  const expDoc = totalExpensesDoc || {}
+  const {
+    totalExpenses: spent,
+    categoryBreakdown,
+  } = useMemo(() => {
+    return calculateSiteTotalExpenses({
+      site,
+      granularExpenses: effectiveGranularExpenses,
+      totalExpensesDoc: expDoc,
+    })
+  }, [site, effectiveGranularExpenses, expDoc])
+
+  const supervisorExp = categoryBreakdown.supervisor
+  const mgrExp = categoryBreakdown.manager
+  const orgExp = categoryBreakdown.organization
+  const conExp = categoryBreakdown.contractor
+  const incExp = categoryBreakdown.incentive
+  const pcSpent = categoryBreakdown.pettyCash || amountValue(expDoc, ['totalPettyCashExpense', 'pettyCashExpense', 'totalPettyCashSpent', 'pettyCashSpent'])
+  const pcReceived = amountValue(expDoc, ['totalPettyCashReceived', 'pettyCashReceived', 'totalPettyCashDisbursed'])
+  const pcRemaining = amountValue(expDoc, ['remainingPettyCash', 'pettyCashBalance', 'floatBalance']) || (pcReceived - pcSpent)
+
+  // Consolidate financial metrics consistently with the actual expenses
+  const explicitBalance = amountValue(site, ['amountBalance', 'balance', 'remainingBalance', 'remainingBudget', 'budgetRemaining', 'amount_balance'])
+  const {
+    cashInHand,
+    budgetRemaining,
+    usagePercent,
+    realizationPercent,
+    isBudgetCritical,
+    isBudgetWarning,
+  } = useMemo(() => {
+    return calculateSiteFinancialMetrics({
+      budget,
+      income: received,
+      expenses: spent,
+      explicitBalance,
+    })
+  }, [budget, received, spent, explicitBalance])
+
   // Filter & sort granular expenses
   const filteredGranularExpenses = useMemo(() => {
-    let list = [...granularExpenses]
+    let list = [...effectiveGranularExpenses]
 
     if (expenseSearch.trim()) {
       const q = expenseSearch.trim().toLowerCase()
@@ -175,7 +251,10 @@ export default function SiteFinancialDetailsPage({
           (exp.title && exp.title.toLowerCase().includes(q)) ||
           (exp.vendorName && exp.vendorName.toLowerCase().includes(q)) ||
           (exp.category && exp.category.toLowerCase().includes(q)) ||
-          (exp.stage && exp.stage.toLowerCase().includes(q))
+          (exp.stage && exp.stage.toLowerCase().includes(q)) ||
+          (exp.billNo && exp.billNo.toLowerCase().includes(q)) ||
+          (exp.id && exp.id.toLowerCase().includes(q)) ||
+          (exp.refId && exp.refId.toLowerCase().includes(q))
         )
       })
     }
@@ -194,14 +273,14 @@ export default function SiteFinancialDetailsPage({
     } else {
       // newest
       list.sort((a, b) => {
-        const da = a.date ? (a.date.toDate ? a.date.toDate() : new Date(a.date)) : 0
-        const dbTime = b.date ? (b.date.toDate ? b.date.toDate() : new Date(b.date)) : 0
+        const da = parseDateToTime(a.date, a.parentDocId || a.id)
+        const dbTime = parseDateToTime(b.date, b.parentDocId || b.id)
         return dbTime - da
       })
     }
 
     return list
-  }, [granularExpenses, expenseSearch, expenseCategoryFilter, expenseSort])
+  }, [effectiveGranularExpenses, expenseSearch, expenseCategoryFilter, expenseSort])
 
   const totalFilteredExpenseAmount = useMemo(() => {
     return filteredGranularExpenses.reduce((sum, e) => sum + (e.amount || 0), 0)
@@ -234,14 +313,14 @@ export default function SiteFinancialDetailsPage({
             to="/organization/expenses"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-blue-50 text-blue-800 border border-blue-200/80 hover:bg-blue-100 transition-colors"
           >
-            <span>🧾</span> Organization Expenses
+             Organization Expenses
           </Link>
 
           <Link
             to="/organization/petty-cash"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200/80 hover:bg-amber-100 transition-colors"
           >
-            <span>◈</span> Petty Cash Ledger
+             Petty Cash Ledger
           </Link>
 
           <ExportButton
@@ -485,9 +564,9 @@ export default function SiteFinancialDetailsPage({
       <div className="space-y-4">
         <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl overflow-x-auto w-full max-w-full [scrollbar-width:none] [&::-webkit-scrollbar]:hidden touch-pan-x">
           {[
-            { id: 'summary', label: 'Financial Health & Breakdown', icon: '📊' },
-            { id: 'income', label: `Client Inflow Payments (${sitePaymentItems.length})`, icon: '💵' },
-            { id: 'expenses', label: `Itemized Expense Ledger (${granularExpenses.length})`, icon: '🧾' },
+            { id: 'summary', label: 'Financial Health & Breakdown' },
+            { id: 'income', label: `Client Inflow Payments (${sitePaymentItems.length})` },
+            { id: 'expenses', label: `Itemized Expense Ledger (${granularExpenses.length})` },
           ].map((t) => (
             <button
               key={t.id}
@@ -512,7 +591,7 @@ export default function SiteFinancialDetailsPage({
             <div className="p-6 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-4">
               <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                 <h3 className="text-sm font-bold text-slate-900">Expense Category Distribution</h3>
-                <span className="text-xs text-slate-400 font-mono">Consolidated ₹{money(spent)}</span>
+                <span className="text-xs text-slate-400 font-mono">Consolidated {money(spent)}</span>
               </div>
 
               <div className="space-y-3 text-xs">
@@ -771,13 +850,15 @@ export default function SiteFinancialDetailsPage({
 
                 <ExportButton
                   filename={`itemized_expenses_${siteId}`}
-                  headers={['Date', 'Title', 'Category', 'Vendor / Payee', 'Stage', 'Amount (INR)']}
+                  headers={['Date', 'Title', 'Bill No.', 'Category', 'Vendor / Payee', 'Stage', 'Quantity', 'Amount (INR)']}
                   data={filteredGranularExpenses.map((exp) => [
                     formatDate(exp.date),
                     exp.title,
+                    exp.billNo || 'N/A',
                     exp.category,
-                    exp.vendorName,
-                    exp.stage,
+                    exp.vendorName || 'Direct Expense',
+                    exp.stage || '-',
+                    exp.quantity !== undefined && exp.quantity !== null && exp.quantity !== '' ? exp.quantity : '-',
                     exp.amount,
                   ])}
                   title="Export Expenses"
@@ -799,31 +880,33 @@ export default function SiteFinancialDetailsPage({
             <div className="bg-white border border-slate-200/90 rounded-2xl shadow-xs overflow-hidden">
               <div className="sm:hidden flex items-center justify-between px-3 py-1.5 bg-blue-50/70 border-b border-blue-100 text-[10px] text-blue-700 font-medium">
                 <span>← Swipe horizontally to view itemized expenses →</span>
-                <span className="font-mono">6 Columns</span>
+                <span className="font-mono">9 Columns</span>
               </div>
               <div className="overflow-x-auto touch-pan-x [scrollbar-width:thin]">
-                <table className="w-full min-w-[680px] text-left text-xs text-slate-700">
+                <table className="w-full min-w-[760px] text-left text-xs text-slate-700">
                   <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
                     <tr>
-                      <th className="p-3.5">Date</th>
+                      <th className="p-3.5 whitespace-nowrap">Date</th>
                       <th className="p-3.5">Expense Title / Description</th>
+                      <th className="p-3.5 whitespace-nowrap">Bill No.</th>
                       <th className="p-3.5">Category</th>
                       <th className="p-3.5">Vendor / Payee</th>
                       <th className="p-3.5">Stage</th>
-                      <th className="p-3.5">Bill Document</th>
-                      <th className="p-3.5 text-right">Amount</th>
+                      <th className="p-3.5 text-center whitespace-nowrap">Quantity</th>
+                      <th className="p-3.5 whitespace-nowrap">Bill Document</th>
+                      <th className="p-3.5 text-right whitespace-nowrap">Amount</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {loadingExpenses ? (
                       <tr>
-                        <td colSpan={7} className="p-12 text-center text-slate-500 text-xs">
+                        <td colSpan={9} className="p-12 text-center text-slate-500 text-xs">
                           <span className="animate-pulse">Loading itemized expense ledger...</span>
                         </td>
                       </tr>
                     ) : filteredGranularExpenses.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="p-12 text-center text-slate-400 text-xs">
+                        <td colSpan={9} className="p-12 text-center text-slate-400 text-xs">
                           No granular expense vouchers matching the criteria.
                         </td>
                       </tr>
@@ -835,7 +918,20 @@ export default function SiteFinancialDetailsPage({
                           </td>
                           <td className="p-3.5">
                             <strong className="text-slate-900 block text-xs">{exp.title}</strong>
-                            {exp.id && <span className="text-[10px] text-slate-400 font-mono">Ref: {exp.id}</span>}
+                            {exp.refId ? (
+                              <span className="text-[10px] text-slate-400 font-mono">Ref: {exp.refId}</span>
+                            ) : exp.id ? (
+                              <span className="text-[10px] text-slate-400 font-mono">Ref: {exp.id}</span>
+                            ) : null}
+                          </td>
+                          <td className="p-3.5 whitespace-nowrap">
+                            {exp.billNo && exp.billNo !== 'N/A' ? (
+                              <span className="px-2 py-0.5 rounded-md font-mono font-bold text-[11px] bg-slate-100 text-slate-800 border border-slate-200">
+                                #{exp.billNo}
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-slate-400 font-mono">N/A</span>
+                            )}
                           </td>
                           <td className="p-3.5">
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-200 whitespace-nowrap">
@@ -854,19 +950,31 @@ export default function SiteFinancialDetailsPage({
                               <span className="text-slate-400 text-[11px]">-</span>
                             )}
                           </td>
+                          <td className="p-3.5 text-center font-mono text-slate-700">
+                            {exp.quantity !== undefined && exp.quantity !== null && exp.quantity !== '' ? (
+                              <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-xs font-semibold">
+                                {exp.quantity}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 text-[11px]">-</span>
+                            )}
+                          </td>
                           <td className="p-3.5 whitespace-nowrap">
-                            {exp.billUrl || exp.imageUrl ? (
+                            {exp.billUrl || exp.imageUrl || exp.storagePath ? (
                               <button
                                 type="button"
                                 onClick={() =>
                                   setPreviewModal({
                                     isOpen: true,
-                                    imageUrl: exp.billUrl || exp.imageUrl,
+                                    imageUrl: exp.billUrl || exp.imageUrl || '',
+                                    storagePath: exp.storagePath || '',
+                                    orgId: orgId,
                                     title: exp.title || 'Expense Document',
                                     vendor: exp.vendorName || '',
                                     amount: exp.amount || '',
-                                    billNo: exp.billNo || exp.id || '',
+                                    billNo: exp.billNo && exp.billNo !== 'N/A' ? exp.billNo : (exp.refId || exp.id || ''),
                                     date: formatDate(exp.date),
+                                    quantity: exp.quantity !== undefined && exp.quantity !== null && exp.quantity !== '' ? exp.quantity : '',
                                   })
                                 }
                                 className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 text-xs font-semibold transition-all cursor-pointer shadow-2xs"
@@ -876,7 +984,7 @@ export default function SiteFinancialDetailsPage({
                                 <span>View Bill</span>
                               </button>
                             ) : (
-                              <span className="text-[11px] text-slate-400 italic">-</span>
+                              <span className="text-[11px] text-slate-400 italic">No file</span>
                             )}
                           </td>
                           <td className="p-3.5 text-right font-mono font-extrabold text-sm text-rose-600 whitespace-nowrap">
@@ -898,11 +1006,14 @@ export default function SiteFinancialDetailsPage({
         isOpen={previewModal.isOpen}
         onClose={() => setPreviewModal({ ...previewModal, isOpen: false })}
         imageUrl={previewModal.imageUrl}
+        storagePath={previewModal.storagePath}
+        orgId={previewModal.orgId || orgId}
         title={previewModal.title}
         vendor={previewModal.vendor}
         amount={previewModal.amount}
         billNo={previewModal.billNo}
         date={previewModal.date}
+        quantity={previewModal.quantity}
       />
     </div>
   )

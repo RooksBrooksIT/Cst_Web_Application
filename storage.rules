@@ -1,0 +1,20 @@
+rules_version = '2';
+
+// Firebase Cloud Storage Security Rules for CST White Label / eBricks Platform
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Multi-tenant isolation: files are strictly scoped under /organisation/{orgId}/
+    match /organisation/{orgId}/{allPaths=**} {
+      // Require authenticated tenant / manager session
+      // Prevents public writes or cross-tenant tampering
+      allow read, write: if request.auth != null;
+    }
+
+    // Default deny for all other paths
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
+

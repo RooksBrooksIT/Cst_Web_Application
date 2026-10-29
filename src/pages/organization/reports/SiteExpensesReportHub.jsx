@@ -273,13 +273,19 @@ export default function SiteExpensesReportHub({
   // Handlers for CSV & Print
   const handleExportDailyCSV = () => {
     const rows = [
-      ...dailyReport.labours.map((l) => ['Labour', l.role, `${l.count} workers @ ${money(l.rate)}`, l.amount]),
-      ...dailyReport.materials.map((m) => ['Material', m.name, `${m.quantity} ${m.unit} @ ${money(m.unitPrice)}`, m.amount]),
-      ['Food Allowance', 'Supervisor Daily Food', '1 Day Allowance', dailyReport.foodAmount],
-      ['Transport & Fuel', 'Vehicle / Site Fuel', 'Site Transport', dailyReport.transportAmount],
-      ...dailyReport.bills.map((b) => [b.source, b.description, b.vendor, b.amount]),
+      ...dailyReport.labours.map((l) => ['Labour', l.role, `${l.count} workers @ ${money(l.rate)}`, l.count, l.amount]),
+      ...dailyReport.materials.map((m) => ['Material', m.name, `${m.unitPrice ? `@ ${money(m.unitPrice)}` : ''}`, `${m.quantity} ${m.unit}`, m.amount]),
+      ['Food Allowance', 'Supervisor Daily Food', '1 Day Allowance', '-', dailyReport.foodAmount],
+      ['Transport & Fuel', 'Vehicle / Site Fuel', 'Site Transport', '-', dailyReport.transportAmount],
+      ...dailyReport.bills.map((b) => [
+        b.source,
+        b.description,
+        b.billNumber || b.billNo ? `${b.vendor} (Bill #${b.billNumber || b.billNo})` : b.vendor,
+        b.quantity !== undefined && b.quantity !== null && b.quantity !== '' ? b.quantity : '-',
+        b.amount,
+      ]),
     ]
-    exportToCSV(`Daily_Report_${selectedSite?.projectName || 'Site'}_${selectedDate}`, ['Category', 'Item / Description', 'Unit / Details', 'Amount (INR)'], rows, { orgName: effectiveOrgName })
+    exportToCSV(`Daily_Report_${selectedSite?.projectName || 'Site'}_${selectedDate}`, ['Category', 'Item / Description', 'Unit / Details', 'Quantity', 'Amount (INR)'], rows, { orgName: effectiveOrgName })
   }
 
   const handlePrintDailyPDF = () => {
@@ -321,9 +327,9 @@ export default function SiteExpensesReportHub({
 
       <h3 style="color: #0f172a; margin-top: 16px; border-bottom: 2px solid #e2e8f0; padding-bottom: 4px;">4. Manager & Direct Org Bills (Subtotal: ${money(dailyReport.totalBills)})</h3>
       <table>
-        <thead><tr><th>Source</th><th>Description</th><th>Vendor / Party</th><th>Amount</th></tr></thead>
+        <thead><tr><th>Source</th><th>Description</th><th>Vendor / Party</th><th style="text-align: center;">Quantity</th><th>Amount</th></tr></thead>
         <tbody>
-          ${dailyReport.bills.length === 0 ? '<tr><td colspan="4">No manager/org bills recorded for this date</td></tr>' : dailyReport.bills.map((b) => `<tr><td>${b.source}</td><td>${b.description}</td><td>${b.vendor}</td><td>${money(b.amount)}</td></tr>`).join('')}
+          ${dailyReport.bills.length === 0 ? '<tr><td colspan="5">No manager/org bills recorded for this date</td></tr>' : dailyReport.bills.map((b) => `<tr><td>${b.source}</td><td>${b.description}</td><td>${b.vendor}${b.billNumber || b.billNo ? ` (#${b.billNumber || b.billNo})` : ''}</td><td style="text-align: center;">${b.quantity !== undefined && b.quantity !== null && b.quantity !== '' ? b.quantity : '-'}</td><td>${money(b.amount)}</td></tr>`).join('')}
         </tbody>
       </table>
     `
@@ -736,18 +742,29 @@ export default function SiteExpensesReportHub({
                       <th className="p-2.5">Source</th>
                       <th className="p-2.5">Description</th>
                       <th className="p-2.5">Vendor / Payee</th>
+                      <th className="p-2.5 text-center">Quantity</th>
                       <th className="p-2.5 text-right">Amount</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {dailyReport.bills.length === 0 ? (
-                      <tr><td colSpan="4" className="p-6 text-center text-slate-400 italic">No manager/org bills recorded for this date</td></tr>
+                      <tr><td colSpan="5" className="p-6 text-center text-slate-400 italic">No manager/org bills recorded for this date</td></tr>
                     ) : (
                       dailyReport.bills.map((b, i) => (
                         <tr key={i} className="hover:bg-slate-50/50 transition-colors">
                           <td className="p-2.5 font-bold text-blue-700">{b.source}</td>
                           <td className="p-2.5 text-slate-800">{b.description}</td>
-                          <td className="p-2.5 text-slate-500">{b.vendor}</td>
+                          <td className="p-2.5 text-slate-500">
+                            <span>{b.vendor}</span>
+                            {(b.billNumber || b.billNo) && (
+                              <span className="block text-[10px] font-mono text-slate-400">
+                                #{b.billNumber || b.billNo}
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-2.5 text-center font-mono text-slate-700">
+                            {b.quantity !== undefined && b.quantity !== null && b.quantity !== '' ? b.quantity : '-'}
+                          </td>
                           <td className="p-2.5 text-right font-bold font-mono text-slate-900">{money(b.amount)}</td>
                         </tr>
                       ))
@@ -889,6 +906,29 @@ export default function SiteExpensesReportHub({
                               </div>
                             )}
                           </div>
+
+                          {/* Bills Breakdown */}
+                          {day.bills && day.bills.length > 0 && (
+                            <div className="p-3 bg-white rounded-xl border border-slate-100 space-y-2 md:col-span-2">
+                              <div className="flex items-center justify-between">
+                                <strong className="text-slate-900 block text-xs">Manager & Org Bills Breakdown</strong>
+                                <span className="font-mono text-xs font-bold text-purple-700">{money(day.totalBills)}</span>
+                              </div>
+                              <div className="space-y-1">
+                                {day.bills.map((b, i) => (
+                                  <div key={i} className="flex justify-between items-center text-[11px] py-0.5">
+                                    <span>
+                                      <strong className="text-blue-700">{b.source}</strong>: {b.description} ({b.vendor})
+                                      {b.quantity !== undefined && b.quantity !== null && b.quantity !== '' && (
+                                        <span className="ml-1 text-slate-500 font-medium">| Qty: {b.quantity}</span>
+                                      )}
+                                    </span>
+                                    <strong className="font-mono text-purple-700">{money(b.amount)}</strong>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}

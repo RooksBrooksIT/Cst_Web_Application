@@ -28,8 +28,14 @@ export function AuthProvider({ children }) {
       const token = await user.getIdTokenResult()
       const tokenRole = token.claims.role || token.claims.userRole
       const stored = readStoredSession()
-      const role = normalizeRole(tokenRole) || (stored?.uid === user.uid ? stored.role : stored?.role || null)
-      setSession({ user, role, orgId: token.claims.orgId || stored?.orgId || null, userData: stored?.userData || null, loading: false })
+      const isStoredManager = stored?.role === 'Manager'
+      const role = isStoredManager
+        ? 'Manager'
+        : (normalizeRole(tokenRole) || (stored?.uid === user.uid ? stored.role : stored?.role || null))
+      const sessionUser = isStoredManager
+        ? { ...user, uid: stored?.uid || user.uid, email: stored?.email || user.email, displayName: stored?.userData?.fullName || user.displayName }
+        : user
+      setSession({ user: sessionUser, role, orgId: token.claims.orgId || stored?.orgId || null, userData: stored?.userData || null, loading: false })
     } catch {
       const stored = readStoredSession()
       if (stored && stored.isLoggedIn) {
@@ -44,8 +50,11 @@ export function AuthProvider({ children }) {
 
   async function login(identifier, password, selectedRole = null) {
     const nextSession = await loginUser(identifier, password, selectedRole)
+    const sessionUser = nextSession.role === 'Manager'
+      ? { ...(auth.currentUser || {}), uid: nextSession.uid, email: nextSession.email, displayName: nextSession.userData?.fullName }
+      : (auth.currentUser || { uid: nextSession.uid, email: nextSession.email, displayName: nextSession.userData?.fullName })
     setSession({
-      user: auth.currentUser || { uid: nextSession.uid, email: nextSession.email, displayName: nextSession.userData?.fullName },
+      user: sessionUser,
       role: nextSession.role,
       orgId: nextSession.orgId,
       userData: nextSession.userData,

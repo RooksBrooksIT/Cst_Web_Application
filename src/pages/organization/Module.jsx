@@ -1061,6 +1061,16 @@ export default function OrganizationModule(props) {
           sites={props.sites}
           totalSiteExpensesPerDay={props.totalSiteExpensesPerDay}
           sitePayments={props.sitePayments}
+          managerExpenses={props.managerExpenses}
+          managerEntries={props.managerEntries}
+          organizationExpenses={props.organizationExpenses}
+          organizationEntries={props.organizationEntries}
+          siteSupervisorEntries={props.siteSupervisorEntries}
+          contractorEntries={props.contractorEntries}
+          siteSupervisorIncentives={props.siteSupervisorIncentives}
+          pettyCashExpenses={props.pettyCashExpenses}
+          pettyCashTransactions={props.pettyCashTransactions}
+          orgId={props.orgId}
         />
       )
     case 'expenses':

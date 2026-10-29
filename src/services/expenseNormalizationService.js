@@ -158,11 +158,18 @@ export function normalizeExpenseRecord(docId, rawData = {}, defaultRole = 'Organ
     const bRawDate = b.billDate || b.date
     const bDate = bRawDate ? parseExpenseDate(bRawDate) : parsedDate
 
+    const rawBillQty = b.quantity !== undefined ? b.quantity : (b.qty !== undefined ? b.qty : (b.billQuantity !== undefined ? b.billQuantity : null))
+    const parsedBillQty = rawBillQty !== null && rawBillQty !== undefined && rawBillQty !== ''
+      ? (Number.isFinite(Number(rawBillQty)) ? Number(rawBillQty) : rawBillQty)
+      : null
+
     return {
       id: b.id || `bill_${idx}`,
       billNo: billNo || (idx + 1).toString().padStart(3, '0'),
       vendor: billVendor || 'Vendor',
       billVendor: billVendor || 'Vendor',
+      quantity: parsedBillQty,
+      qty: parsedBillQty,
       amount: amt,
       billAmount: amt,
       billCopy: billCopy || '',
@@ -223,6 +230,17 @@ export function normalizeExpenseRecord(docId, rawData = {}, defaultRole = 'Organ
     (data.supervisorName ? `Logged by ${data.supervisorName}` : '')
   ).toString().trim()
 
+  // 9. Quantity Normalization
+  const rawDocQty = data.quantity !== undefined ? data.quantity : (data.qty !== undefined ? data.qty : null)
+  const parsedDocQty = rawDocQty !== null && rawDocQty !== undefined && rawDocQty !== ''
+    ? (Number.isFinite(Number(rawDocQty)) ? Number(rawDocQty) : rawDocQty)
+    : null
+  const hasBillQty = normalizedBills.some((b) => b.quantity !== null && b.quantity !== undefined)
+  const billsNumericQtySum = normalizedBills.reduce((acc, b) => acc + (typeof b.quantity === 'number' ? b.quantity : 0), 0)
+  const finalQuantity = parsedDocQty !== null
+    ? parsedDocQty
+    : (hasBillQty ? (billsNumericQtySum > 0 ? billsNumericQtySum : (normalizedBills.find((b) => b.quantity !== null)?.quantity ?? null)) : null)
+
   return {
     ...data,
     id,
@@ -236,6 +254,8 @@ export function normalizeExpenseRecord(docId, rawData = {}, defaultRole = 'Organ
     entryDate: expenseDateTimestamp,
     date: parsedDate,
     bills: normalizedBills,
+    quantity: finalQuantity,
+    qty: finalQuantity,
     totalAmount: finalTotal,
     amount: finalTotal,
     billUrl: primaryBillUrl || null,

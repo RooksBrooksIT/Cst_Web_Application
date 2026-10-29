@@ -106,6 +106,7 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
   const createEmptyBillForm = () => ({
     billNo: '',
     vendor: '',
+    quantity: '',
     amount: '',
     description: '',
     file: null,
@@ -255,6 +256,7 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
           expenseType: 'manager expenses',
           siteId: formSiteId,
           siteName,
+          billNo: currentBill.billNo || '',
           fileName: file.name,
           file,
           sitesList: sites,
@@ -262,6 +264,8 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
 
         setCurrentBill((prev) => ({
           ...prev,
+          file,
+          fileName: file.name,
           billUrl: uploadResult.downloadUrl,
           storagePath: uploadResult.storagePath,
           isUploading: false,
@@ -271,9 +275,14 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
         console.error('Instant bill upload error:', err)
         setCurrentBill((prev) => ({
           ...prev,
+          file: null,
+          fileName: '',
+          previewUrl: '',
+          billUrl: '',
+          storagePath: '',
           isUploading: false,
         }))
-        onNotify?.(`Upload note: ${err.message}. Will upload on submit.`, 'warning')
+        onNotify?.(`Bill upload failed: ${err?.message || 'Storage permission or network error'}.`, 'error')
       }
     } else {
       setCurrentBill((prev) => ({
@@ -298,11 +307,17 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
       return
     }
 
+    const rawBillQty = currentBill.quantity !== undefined && currentBill.quantity !== null && currentBill.quantity !== ''
+      ? (Number.isFinite(Number(currentBill.quantity)) ? Number(currentBill.quantity) : currentBill.quantity)
+      : null
+
     const billItem = {
       ...currentBill,
       billNo: currentBill.billNo?.trim() || `BILL-${sessionBills.length + 1}`,
       vendor: currentBill.vendor?.trim() || 'Vendor',
       billVendor: currentBill.vendor?.trim() || 'Vendor',
+      quantity: rawBillQty,
+      qty: rawBillQty,
       amount: amt,
       billAmount: amt,
       description: currentBill.description?.trim() || 'Site Disbursement',
@@ -367,27 +382,26 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
           let storagePath = b.storagePath || ''
 
           if (b.file && !billUrl) {
-            try {
-              const uploadRes = await AppStorageService.uploadExpenseBillDoc({
-                tenantId: orgId,
-                expenseType: 'manager expenses',
-                siteId: formSiteId,
-                siteName,
-                fileName: b.fileName || b.file.name,
-                file: b.file,
-                sitesList: sites,
-              })
-              billUrl = uploadRes.downloadUrl
-              storagePath = uploadRes.storagePath
-            } catch (upErr) {
-              console.warn('Storage upload error during submission:', upErr?.message)
-            }
+            const uploadRes = await AppStorageService.uploadExpenseBillDoc({
+              tenantId: orgId,
+              expenseType: 'manager expenses',
+              siteId: formSiteId,
+              siteName,
+              billNo: b.billNo || '',
+              fileName: b.fileName || b.file.name,
+              file: b.file,
+              sitesList: sites,
+            })
+            billUrl = uploadRes.downloadUrl
+            storagePath = uploadRes.storagePath
           }
 
           return {
             billNo: b.billNo,
             vendor: b.vendor,
             billVendor: b.vendor,
+            quantity: b.quantity !== undefined ? b.quantity : null,
+            qty: b.quantity !== undefined ? b.quantity : null,
             amount: b.amount,
             billAmount: b.amount,
             billUrl,
@@ -404,6 +418,10 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
         })
       )
 
+      const totalQuantity = processedBills.some((b) => b.quantity !== null && b.quantity !== undefined && Number.isFinite(Number(b.quantity)))
+        ? processedBills.reduce((acc, b) => acc + (typeof b.quantity === 'number' ? b.quantity : (Number(b.quantity) || 0)), 0)
+        : null
+
       const result = await recordManagerExpense(
         orgId,
         {
@@ -416,6 +434,7 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
           expenseDate: formDate,
           remarks: formRemarks,
           bills: processedBills,
+          quantity: totalQuantity,
           totalAmount: sessionTotal,
         },
         currentUser
@@ -504,7 +523,7 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
   const handleExportCSV = () => {
     if (expenses.length === 0) return
     const rows = [
-      ['Voucher ID', 'Site Name', 'Stage', 'Date', 'Total Amount (INR)', 'Manager', 'Remarks', 'Bills Count', 'Receipt Attached'],
+      ['Voucher ID', 'Site Name', 'Stage', 'Date', 'Quantity', 'Total Amount (INR)', 'Manager', 'Remarks', 'Bills Count', 'Receipt Attached'],
       ...expenses.map((e) => {
         const dStr = e.date instanceof Date
           ? e.date.toLocaleDateString('en-IN')
@@ -512,11 +531,17 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
               ? new Date(e.expenseDate.seconds * 1000).toLocaleDateString('en-IN')
               : (typeof e.date === 'string' ? e.date : ''))
         const billsCount = Array.isArray(e.bills) ? e.bills.length : 1
+        const rawQty = e.quantity !== undefined && e.quantity !== null && e.quantity !== ''
+          ? e.quantity
+          : (Array.isArray(e.bills) && e.bills.some((b) => b.quantity !== null && b.quantity !== undefined)
+              ? (e.bills.length === 1 ? e.bills[0].quantity : e.bills.reduce((sum, b) => sum + (Number(b.quantity) || 0), 0) || '-')
+              : '-')
         return [
           e.expenseId || e.id,
           e.siteName || e.projectName || '',
           e.projectStage || '',
           dStr,
+          rawQty !== null && rawQty !== '' ? rawQty : '-',
           e.totalAmount || e.amount || 0,
           e.managerName || e.supervisorName || '',
           `"${(e.remarks || '').replace(/"/g, '""')}"`,
@@ -777,6 +802,11 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                         <div key={idx} className="flex items-center justify-between text-xs text-amber-950 bg-white/60 p-2 rounded-lg">
                           <span>
                             #{b.billNo || idx + 1} • {b.vendor || b.billVendor || 'Vendor'} • {b.description || 'Bill'}
+                            {b.quantity !== undefined && b.quantity !== null && b.quantity !== '' && (
+                              <span className="font-semibold text-amber-800 ml-1">
+                                (Qty: {b.quantity})
+                              </span>
+                            )}
                           </span>
                           <strong className="font-bold">
                             ₹{(Number(b.amount || b.billAmount) || 0).toLocaleString('en-IN')}
@@ -836,7 +866,22 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Quantity
+                    </label>
+                    <input
+                      type="number"
+                      placeholder="e.g. 50"
+                      min="0"
+                      step="any"
+                      value={currentBill.quantity}
+                      onChange={(e) => setCurrentBill({ ...currentBill, quantity: e.target.value })}
+                      className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 font-semibold text-slate-900"
+                    />
+                  </div>
+
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
                       Bill Amount (₹) *
@@ -904,18 +949,21 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                   </div>
 
                   <div className="flex items-center gap-2">
-                    {(currentBill.billUrl || currentBill.previewUrl) && (
+                    {(currentBill.billUrl || currentBill.previewUrl || currentBill.storagePath) && (
                       <button
                         type="button"
                         onClick={() =>
                           setPreviewModal({
                             isOpen: true,
-                            imageUrl: currentBill.billUrl || currentBill.previewUrl,
+                            imageUrl: currentBill.billUrl || currentBill.previewUrl || '',
+                            storagePath: currentBill.storagePath || '',
+                            orgId: orgId,
                             title: currentBill.description || 'Bill Preview',
                             vendor: currentBill.vendor,
                             amount: currentBill.amount,
                             billNo: currentBill.billNo,
                             date: formDate,
+                            quantity: currentBill.quantity,
                           })
                         }
                         className="inline-flex items-center gap-1 px-3 py-2 text-xs font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-xl transition-colors cursor-pointer"
@@ -986,7 +1034,12 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                         <div className="flex items-center gap-2">
                           <span className="font-bold text-slate-900">{b.vendor}</span>
                           <span className="text-[10px] text-slate-400">#{b.billNo}</span>
-                          {(b.billUrl || b.previewUrl) && (
+                          {b.quantity !== undefined && b.quantity !== null && b.quantity !== '' && (
+                            <span className="text-[10px] font-semibold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">
+                              Qty: {b.quantity}
+                            </span>
+                          )}
+                          {(b.billUrl || b.previewUrl || b.storagePath) && (
                             <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
                               <CheckCircle2 className="w-2.5 h-2.5" /> Receipt
                             </span>
@@ -996,18 +1049,21 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
-                        {(b.billUrl || b.previewUrl) && (
+                        {(b.billUrl || b.previewUrl || b.storagePath) && (
                           <button
                             type="button"
                             onClick={() =>
                               setPreviewModal({
                                 isOpen: true,
-                                imageUrl: b.billUrl || b.previewUrl,
+                                imageUrl: b.billUrl || b.previewUrl || '',
+                                storagePath: b.storagePath || '',
+                                orgId: orgId,
                                 title: b.description || 'Receipt Preview',
                                 vendor: b.vendor,
                                 amount: b.amount,
                                 billNo: b.billNo,
                                 date: formDate,
+                                quantity: b.quantity,
                               })
                             }
                             className="p-1 text-purple-600 hover:bg-purple-100 rounded-lg cursor-pointer"
@@ -1204,6 +1260,7 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                       <th className="py-3.5 px-4">Site & Stage</th>
                       <th className="py-3.5 px-4">Date</th>
                       <th className="py-3.5 px-4">Bills</th>
+                      <th className="py-3.5 px-4">Quantity</th>
                       <th className="py-3.5 px-4">Receipt Document</th>
                       <th className="py-3.5 px-4">Total Amount</th>
                       <th className="py-3.5 px-4">Remarks / Notes</th>
@@ -1228,15 +1285,24 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                             : (typeof item.date === 'string' ? item.date : 'Recent'))
                       const billsCount = Array.isArray(item.bills) ? item.bills.length : 1
                       const totalAmt = Number(item.totalAmount || item.amount) || 0
+                      const displayQty = item.quantity !== undefined && item.quantity !== null && item.quantity !== ''
+                        ? item.quantity
+                        : (Array.isArray(item.bills) && item.bills.some((b) => b.quantity !== null && b.quantity !== undefined)
+                            ? (item.bills.length === 1
+                                ? item.bills[0].quantity
+                                : item.bills.reduce((sum, b) => sum + (Number(b.quantity) || 0), 0) || '-')
+                            : '-')
 
                       const billWithDoc =
                         (Array.isArray(item.bills) &&
-                          item.bills.find((b) => b.billUrl || b.imageUrl || (b.billCopy && b.billCopy !== 'billURL'))) ||
+                          item.bills.find((b) => b.billUrl || b.imageUrl || b.storagePath || (b.billCopy && b.billCopy !== 'billURL'))) ||
                         (item.billUrl && item.billUrl !== 'billURL'
-                          ? { billUrl: item.billUrl, description: item.remarks }
+                          ? { billUrl: item.billUrl, storagePath: item.storagePath, description: item.remarks }
                           : (item.imageUrl && item.imageUrl !== 'billURL'
-                              ? { billUrl: item.imageUrl, description: item.remarks }
-                              : (item.billCopy && item.billCopy !== 'billURL' ? { billUrl: item.billCopy, description: item.remarks } : null)))
+                              ? { billUrl: item.imageUrl, storagePath: item.storagePath, description: item.remarks }
+                              : (item.billCopy && item.billCopy !== 'billURL'
+                                  ? { billUrl: item.billCopy, storagePath: item.storagePath, description: item.remarks }
+                                  : (item.storagePath ? { billUrl: '', storagePath: item.storagePath, description: item.remarks } : null))))
 
                       return (
                         <tr key={item.id || item.expenseId} className="hover:bg-slate-50/70 transition-colors">
@@ -1266,6 +1332,10 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                             </span>
                           </td>
 
+                          <td className="py-3.5 px-4 font-mono text-slate-700">
+                            {displayQty}
+                          </td>
+
                           {/* Bill Document Column with Instant Preview */}
                           <td className="py-3.5 px-4">
                             {billWithDoc ? (
@@ -1274,12 +1344,15 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                                 onClick={() =>
                                   setPreviewModal({
                                     isOpen: true,
-                                    imageUrl: billWithDoc.billUrl || billWithDoc.imageUrl || billWithDoc.billCopy,
+                                    imageUrl: billWithDoc.billUrl || billWithDoc.imageUrl || (billWithDoc.billCopy && billWithDoc.billCopy !== 'billURL' ? billWithDoc.billCopy : ''),
+                                    storagePath: billWithDoc.storagePath || '',
+                                    orgId: orgId,
                                     title: billWithDoc.description || item.siteName || item.projectName,
                                     vendor: billWithDoc.vendor || billWithDoc.billVendor || 'Manager Direct Expense',
                                     amount: billWithDoc.amount || billWithDoc.billAmount || totalAmt,
                                     billNo: billWithDoc.billNo || '',
                                     date: expenseDate,
+                                    quantity: billWithDoc.quantity || displayQty,
                                   })
                                 }
                                 className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 text-xs font-semibold transition-all cursor-pointer shadow-2xs"
@@ -1371,6 +1444,11 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                             <span className="px-2 py-0.5 text-[11px] font-semibold bg-emerald-50 text-emerald-700 rounded-md">
                               {billsCount} {billsCount === 1 ? 'Bill Item' : 'Bill Items'}
                             </span>
+                            {item.quantity !== undefined && item.quantity !== null && item.quantity !== '' && (
+                              <span className="px-2 py-0.5 text-[11px] font-semibold bg-purple-50 text-purple-700 border border-purple-200 rounded-md">
+                                Qty: <strong>{item.quantity}</strong>
+                              </span>
+                            )}
                             {hasBillsWithDoc && (
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 rounded-full">
                                 <ImageIcon className="w-3 h-3" />
@@ -1430,6 +1508,7 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                         <div className="bg-white rounded-xl border border-slate-200/80 overflow-hidden divide-y divide-slate-100 text-xs">
                           {item.bills.map((bill, bIdx) => {
                             const billDocUrl = bill.billUrl || bill.imageUrl || (bill.billCopy && bill.billCopy !== 'billURL' ? bill.billCopy : '')
+                            const billStoragePath = bill.storagePath || ''
                             const billVendorName = bill.vendor || bill.billVendor || 'Direct Vendor'
                             const billAmt = Number(bill.amount || bill.billAmount) || 0
 
@@ -1440,22 +1519,30 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                                   <p className="text-slate-500 mt-0.5">
                                     Vendor: <span className="font-medium text-slate-700">{billVendorName}</span>
                                     {bill.billNo && ` • Bill #${bill.billNo}`}
+                                    {bill.quantity !== undefined && bill.quantity !== null && bill.quantity !== '' && (
+                                      <span className="ml-1 text-purple-700 font-semibold">
+                                        • Qty: {bill.quantity}
+                                      </span>
+                                    )}
                                   </p>
                                 </div>
 
                                 <div className="flex items-center gap-3 shrink-0">
-                                  {billDocUrl ? (
+                                  {(billDocUrl || billStoragePath) ? (
                                     <button
                                       type="button"
                                       onClick={() =>
                                         setPreviewModal({
                                           isOpen: true,
                                           imageUrl: billDocUrl,
+                                          storagePath: billStoragePath,
+                                          orgId: orgId,
                                           title: bill.description || 'Bill Receipt',
                                           vendor: billVendorName,
                                           amount: billAmt,
                                           billNo: bill.billNo || '',
                                           date: expenseDate,
+                                          quantity: bill.quantity,
                                         })
                                       }
                                       className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 font-semibold cursor-pointer shadow-2xs"
@@ -1530,7 +1617,14 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Bills to Commit:</span>
-                  <strong className="text-purple-700 font-bold">{sessionBills.length} Bill Items</strong>
+                  <strong className="text-purple-700 font-bold">
+                    {sessionBills.length} Bill Items
+                    {sessionBills.some((b) => b.quantity !== null && b.quantity !== undefined && b.quantity !== '') && (
+                      <span className="ml-1 text-slate-600 font-normal">
+                        (Total Qty: {sessionBills.reduce((acc, b) => acc + (Number(b.quantity) || 0), 0)})
+                      </span>
+                    )}
+                  </strong>
                 </div>
                 <div className="flex justify-between pt-2 border-t border-slate-200 text-sm">
                   <span className="font-bold text-slate-900">Session Total Amount:</span>
@@ -1649,11 +1743,14 @@ export default function ManagerExpenses({ orgId, sites = [], currentUser, onNoti
         isOpen={previewModal.isOpen}
         onClose={() => setPreviewModal({ ...previewModal, isOpen: false })}
         imageUrl={previewModal.imageUrl}
+        storagePath={previewModal.storagePath}
+        orgId={previewModal.orgId || orgId}
         title={previewModal.title}
         vendor={previewModal.vendor}
         amount={previewModal.amount}
         billNo={previewModal.billNo}
         date={previewModal.date}
+        quantity={previewModal.quantity}
       />
     </div>
   )

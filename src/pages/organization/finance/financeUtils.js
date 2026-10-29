@@ -30,55 +30,49 @@ export function amountValue(record, fields) {
 }
 
 export function matchesSite(record, site) {
-  if (!record || !site) return false
-  const siteKeys = [
-    site.id,
-    site.siteId,
-    site.siteid,
-    site.code,
-    site.siteCode,
-    site.projectId,
-  ]
-    .filter(Boolean)
-    .map((k) => String(k).trim().toLowerCase())
+  if (!record) return false
+  if (!site || site === 'all' || site?.id === 'all' || site?.siteId === 'all') return true
 
-  const siteNames = [
-    site.siteName,
-    site.sitename,
-    site.projectName,
-    site.name,
-  ]
-    .filter(Boolean)
-    .map((n) => String(n).trim().toLowerCase())
+  const targetSiteObj = typeof site === 'string' ? { id: site, siteId: site } : site
+  const targetId = String(targetSiteObj.id || targetSiteObj.siteId || targetSiteObj.siteid || targetSiteObj.siteCode || targetSiteObj.code || '').trim().toLowerCase()
+  const targetName = String(targetSiteObj.projectName || targetSiteObj.siteName || targetSiteObj.name || '').trim().toLowerCase()
+  const targetCode = String(targetSiteObj.siteCode || targetSiteObj.code || '').trim().toLowerCase()
 
-  const recKeys = [
-    record.id,
-    record.siteId,
-    record.siteid,
-    record.code,
-    record.siteCode,
-    record.projectId,
-    record.projectID,
-  ]
-    .filter(Boolean)
-    .map((k) => String(k).trim().toLowerCase())
+  if (targetId === 'all') return true
 
-  const recNames = [
-    record.siteName,
-    record.sitename,
-    record.projectName,
-    record.name,
-  ]
-    .filter(Boolean)
-    .map((n) => String(n).trim().toLowerCase())
+  const recSiteId = String(record.siteId || record.rawSiteId || record.canonicalSiteKey || record.site_id || record.projectId || record.project_id || record.id || '').trim().toLowerCase()
+  const recSiteName = String(record.siteName || record.site_name || record.projectName || record.project_name || record.name || '').trim().toLowerCase()
+  const recSiteCode = String(record.siteCode || record.code || '').trim().toLowerCase()
 
-  for (const sKey of siteKeys) {
-    if (recKeys.includes(sKey)) return true
+  // 1. Direct exact matches
+  if (targetId && (recSiteId === targetId || recSiteName === targetId)) return true
+  if (targetName && (recSiteName === targetName || recSiteId === targetName)) return true
+  if (targetCode && (recSiteCode === targetCode || recSiteId === targetCode)) return true
+
+  // 2. Site code extraction (e.g. ST001)
+  const extractCode = (s) => {
+    const m = String(s || '').match(/st\d+/i)
+    return m ? m[0].toLowerCase() : ''
+  }
+  const tCode = targetCode || extractCode(targetId) || extractCode(targetName)
+  const rCode = recSiteCode || extractCode(recSiteId) || extractCode(recSiteName)
+  if (tCode && rCode && tCode === rCode) return true
+
+  // 3. Strip PR\d+_ prefix (e.g. PR001_ST001_Testing -> ST001_Testing)
+  const stripPr = (s) => String(s || '').replace(/^pr\d+_/i, '').trim().toLowerCase()
+  const strippedTarget = stripPr(targetId)
+  const strippedRec = stripPr(recSiteId)
+  if (strippedTarget && strippedRec && strippedTarget === strippedRec) return true
+
+  // 4. Substring containment for compound IDs (ensure at least 4 chars to avoid false positives)
+  if (strippedTarget && strippedRec && strippedTarget.length >= 4 && strippedRec.length >= 4) {
+    if (strippedTarget.includes(strippedRec) || strippedRec.includes(strippedTarget)) return true
   }
 
-  for (const sName of siteNames) {
-    if (recNames.includes(sName)) return true
-  }
+  // 5. Normalized alphanumeric name match
+  const normTargetName = targetName.replace(/[^a-z0-9]/g, '')
+  const normRecName = recSiteName.replace(/[^a-z0-9]/g, '')
+  if (normTargetName && normRecName && normTargetName === normRecName) return true
 
   return false
 }
@@ -131,3 +125,31 @@ export function statusBadgeColor(status) {
   }
   return 'bg-sky-50 text-sky-700 border-sky-200' // Live / In Progress
 }
+
+export function parseDateToTime(rawDate, docId = '') {
+  if (!rawDate) {
+    if (docId && docId.includes('_')) {
+      const parts = docId.split('_')
+      const lastPart = parts[parts.length - 1]
+      if (/^\d{8}$/.test(lastPart)) {
+        const d = parseInt(lastPart.slice(0, 2), 10)
+        const m = parseInt(lastPart.slice(2, 4), 10) - 1
+        const y = parseInt(lastPart.slice(4, 8), 10)
+        return new Date(y, m, d).getTime()
+      }
+    }
+    return 0
+  }
+  if (rawDate?.toDate && typeof rawDate.toDate === 'function') {
+    return rawDate.toDate().getTime()
+  }
+  if (rawDate instanceof Date) {
+    return rawDate.getTime()
+  }
+  if (typeof rawDate === 'number') {
+    return rawDate > 1e11 ? rawDate : rawDate * 1000
+  }
+  const parsed = new Date(rawDate)
+  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime()
+}
+

@@ -10,13 +10,29 @@ import {
   money,
   statusBadgeColor,
 } from './financeUtils'
+import {
+  calculateSiteTotalExpenses,
+  calculateSiteFinancialMetrics,
+  parseAmount,
+} from '../../../services/financeService.js'
 
 export default function OrgFinancePage({
   sites = [],
   totalSiteExpensesPerDay = [],
   sitePayments = [],
+  managerExpenses = [],
+  managerEntries = [],
+  organizationExpenses = [],
+  organizationEntries = [],
+  siteSupervisorEntries = [],
+  contractorEntries = [],
+  siteSupervisorIncentives = [],
+  pettyCashExpenses = [],
+  pettyCashTransactions = [],
+  orgId: propOrgId,
 }) {
-  const { orgId } = useAuth()
+  const { orgId: authOrgId } = useAuth()
+  const orgId = propOrgId || authOrgId
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
   const [categoryFilter, setCategoryFilter] = useState('All')
@@ -53,41 +69,37 @@ export default function OrgFinancePage({
 
       // 2. Find matching totalSiteExpensesPerDay doc
       const expDoc = totalSiteExpensesPerDay.find((d) => matchesSite(d, site)) || {}
-      const totalAllExp = amountValue(expDoc, ['totalAllExpenses', 'totalAllExpense', 'total_all_expenses', 'totalExpenses', 'totalExpense'])
-      const supervisorExp = amountValue(expDoc, ['totalSiteExpense', 'totalSupervisorExpense', 'siteExpense', 'supervisorExpense', 'total_site_expense'])
-      const mgrExp = amountValue(expDoc, ['totalMgrExpense', 'totalManagerExpense', 'managerExpense', 'mgrExpense', 'total_mgr_expense'])
-      const orgExp = amountValue(expDoc, ['totalOrgExpense', 'totalOrganizationExpense', 'orgExpense', 'organizationExpense', 'total_org_expense'])
-      const conExp = amountValue(expDoc, ['totalContractorExpense', 'totalContractorPayments', 'contractorExpense', 'total_contractor_expense'])
-      const incExp = amountValue(expDoc, ['totalIncentiveExpenses', 'totalIncentives', 'incentiveExpenses', 'total_incentive_expenses'])
-      const calculatedExpenses = supervisorExp + mgrExp + orgExp + conExp + incExp
 
-      const directSiteExpenses = amountValue(site, [
-        'amountSpent',
-        'amountSpend',
-        'spent',
-        'spentAmount',
-        'totalAllExpenses',
-        'totalExpenses',
-        'totalExpense',
-        'actualExpense',
-        'actualExpenditure',
-        'actual',
-        'expenditure',
-        'amount_spent',
-        'total_expenses',
-        'total_all_expenses',
-      ])
+      // 3. Assemble sourcesWithDocs from live collection props for real-time deduplicated calculation
+      const sourcesWithDocs = [
+        { col: 'siteSupervisorEntries', category: 'Supervisor Entry', docs: siteSupervisorEntries },
+        { col: 'pettyCashTransactions', category: 'Petty Cash', docs: pettyCashTransactions },
+        { col: 'organizationExpenses', category: 'Organization Expense', docs: organizationExpenses },
+        { col: 'managerExpenses', category: 'Manager Direct Expense', docs: managerExpenses },
+        { col: 'contractorEntries', category: 'Contractor Payment', docs: contractorEntries },
+        { col: 'siteSupervisorIncentives', category: 'Supervisor Incentive', docs: siteSupervisorIncentives },
+        { col: 'organizationEntries', category: 'Organization Bill', docs: organizationEntries },
+        { col: 'managerEntries', category: 'Manager Approved', docs: managerEntries },
+        { col: 'petty_cash_expenses', category: 'Petty Cash Voucher', docs: pettyCashExpenses },
+      ]
 
-      let expenses = 0
-      if (totalAllExp > 0) {
-        expenses = totalAllExp
-      } else if (calculatedExpenses > 0) {
-        expenses = calculatedExpenses
-      } else {
-        expenses = directSiteExpenses
-      }
+      // 4. Calculate consolidated actual expenses
+      const {
+        totalExpenses: expenses,
+        categoryBreakdown,
+      } = calculateSiteTotalExpenses({
+        site,
+        sourcesWithDocs,
+        totalExpensesDoc: expDoc,
+      })
 
-      // 3. Inflow income
+      const supervisorExp = categoryBreakdown.supervisor
+      const mgrExp = categoryBreakdown.manager
+      const orgExp = categoryBreakdown.organization
+      const conExp = categoryBreakdown.contractor
+      const incExp = categoryBreakdown.incentive
+
+      // 5. Inflow income
       const directSiteIncome = amountValue(site, [
         'amountPaid',
         'paid',
@@ -123,8 +135,7 @@ export default function OrgFinancePage({
 
       const income = paymentsSum > 0 ? Math.max(directSiteIncome, paymentsSum) : directSiteIncome
 
-      // 4. Balance & Cushion
-      const cashInHand = income - expenses
+      // 6. Balance, Margin Cushion, & Utilization Metrics
       const explicitBalance = amountValue(site, [
         'amountBalance',
         'balance',
@@ -133,22 +144,23 @@ export default function OrgFinancePage({
         'budgetRemaining',
         'amount_balance',
       ])
-      let balance = 0
-      if (budget > 0) {
-        balance = budget - expenses
-      } else if (income > 0) {
-        balance = income - expenses
-      } else if (explicitBalance !== 0) {
-        balance = explicitBalance
-      }
 
-      const usagePercent = budget > 0 ? Math.min(100, Math.max(0, Math.round((expenses / budget) * 100))) : 0
-      const realizationPercent = budget > 0 ? Math.min(100, Math.max(0, Math.round((income / budget) * 100))) : 0
-      const isCritical = usagePercent >= 85
+      const metrics = calculateSiteFinancialMetrics({
+        budget,
+        income,
+        expenses,
+        explicitBalance,
+      })
+
+      const cashInHand = metrics.cashInHand
+      const balance = metrics.balance
+      const usagePercent = metrics.usagePercent
+      const realizationPercent = metrics.realizationPercent
+      const isCritical = metrics.isBudgetCritical
 
       // Petty cash
       const pcReceived = amountValue(expDoc, ['totalPettyCashReceived', 'pettyCashReceived', 'totalPettyCashDisbursed'])
-      const pcSpent = amountValue(expDoc, ['totalPettyCashExpense', 'pettyCashExpense', 'totalPettyCashSpent', 'pettyCashSpent'])
+      const pcSpent = categoryBreakdown.pettyCash || amountValue(expDoc, ['totalPettyCashExpense', 'pettyCashExpense', 'totalPettyCashSpent', 'pettyCashSpent'])
       const pcRemaining = amountValue(expDoc, ['remainingPettyCash', 'pettyCashBalance', 'floatBalance']) || (pcReceived - pcSpent)
 
       return {
@@ -179,7 +191,20 @@ export default function OrgFinancePage({
         pcRemaining,
       }
     })
-  }, [sites, totalSiteExpensesPerDay, sitePayments])
+  }, [
+    sites,
+    totalSiteExpensesPerDay,
+    sitePayments,
+    managerExpenses,
+    managerEntries,
+    organizationExpenses,
+    organizationEntries,
+    siteSupervisorEntries,
+    contractorEntries,
+    siteSupervisorIncentives,
+    pettyCashExpenses,
+    pettyCashTransactions,
+  ])
 
   // Global Financial Overview KPI calculations
   const globalTotalBudget = useMemo(() => siteFinanceRows.reduce((sum, s) => sum + s.budget, 0), [siteFinanceRows])
@@ -305,6 +330,15 @@ export default function OrgFinancePage({
         site={selectedSiteForDetails.site}
         totalExpensesDoc={selectedSiteForDetails.expDoc}
         sitePayments={sitePayments}
+        managerExpenses={managerExpenses}
+        managerEntries={managerEntries}
+        organizationExpenses={organizationExpenses}
+        organizationEntries={organizationEntries}
+        siteSupervisorEntries={siteSupervisorEntries}
+        contractorEntries={contractorEntries}
+        siteSupervisorIncentives={siteSupervisorIncentives}
+        pettyCashExpenses={pettyCashExpenses}
+        pettyCashTransactions={pettyCashTransactions}
         onBack={() => setSelectedSiteForDetails(null)}
         orgId={orgId}
       />
@@ -341,25 +375,25 @@ export default function OrgFinancePage({
             to="/organization/expenses"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-blue-50 text-blue-800 border border-blue-200/80 hover:bg-blue-100 transition-colors shadow-2xs"
           >
-            <span>🧾</span> Organization Expenses
+             Organization Expenses
           </Link>
           <Link
             to="/organization/petty-cash"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200/80 hover:bg-amber-100 transition-colors shadow-2xs"
           >
-            <span>◈</span> Petty Cash Hub
+             Petty Cash Hub
           </Link>
           <Link
             to="/organization/approvals"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-50 text-indigo-800 border border-indigo-200/80 hover:bg-indigo-100 transition-colors shadow-2xs"
           >
-            <span>✓</span> Approvals Queue
+             Approvals Queue
           </Link>
           <Link
             to="/organization/reports"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-800 border border-slate-200 hover:bg-slate-200 transition-colors shadow-2xs"
           >
-            <span>▤</span> Financial Reports
+             Financial Reports
           </Link>
 
           <ExportButton
@@ -494,7 +528,7 @@ export default function OrgFinancePage({
         <div className="p-4 rounded-2xl bg-gradient-to-r from-rose-50 via-amber-50/60 to-rose-50 border border-rose-200/90 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <span className="w-8 h-8 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center font-bold text-sm">
-              ⚠️
+              
             </span>
             <div>
               <strong className="text-xs font-bold text-rose-900 block">
@@ -631,7 +665,7 @@ export default function OrgFinancePage({
             { id: 'Live', label: 'Live / In Progress', count: liveCount },
             { id: 'Planning', label: 'Planning', count: planningCount },
             { id: 'Completed', label: 'Completed', count: completedCount },
-            { id: 'Critical', label: '⚠️ Budget Alert (>85%)', count: criticalCount },
+            { id: 'Critical', label: 'Budget Alert (>85%)', count: criticalCount },
           ].map((tab) => {
             const isActive = statusFilter === tab.id
             return (
@@ -694,7 +728,7 @@ export default function OrgFinancePage({
                   <th className="p-3.5 text-right whitespace-nowrap">Expenses (Spent)</th>
                   <th className="p-3.5 text-right whitespace-nowrap">Cash in Hand</th>
                   <th className="p-3.5 text-right whitespace-nowrap">Margin Cushion</th>
-                  <th className="p-3.5 text-center whitespace-nowrap">Budget Spent</th>
+              
                   <th className="p-3.5 text-center whitespace-nowrap">Action</th>
                 </tr>
               </thead>
@@ -776,32 +810,6 @@ export default function OrgFinancePage({
                         </span>
                       </td>
 
-                      {/* Budget Utilization Meter */}
-                      <td className="p-3.5 text-center min-w-[130px]">
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between text-[11px]">
-                            <span
-                              className={`font-bold ${item.isCritical ? 'text-rose-600' : 'text-slate-700'
-                                }`}
-                            >
-                              {item.usagePercent}%
-                            </span>
-                            {item.isCritical && (
-                              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-rose-100 text-rose-800 font-bold">
-                                Alert
-                              </span>
-                            )}
-                          </div>
-                          <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden border border-slate-200">
-                            <div
-                              className={`h-1.5 rounded-full transition-all ${item.isCritical ? 'bg-rose-500' : 'bg-[#0B3470]'
-                                }`}
-                              style={{ width: `${Math.min(100, item.usagePercent)}%` }}
-                            />
-                          </div>
-                        </div>
-                      </td>
-
                       {/* Action */}
                       <td className="p-3.5 text-center whitespace-nowrap">
                         <button
@@ -860,7 +868,7 @@ export default function OrgFinancePage({
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {filteredAndSortedSites.length === 0 ? (
             <div className="col-span-full p-12 text-center bg-white border border-slate-200 rounded-2xl space-y-3 shadow-xs">
-              <span className="text-3xl block">👛</span>
+             
               <h3 className="text-sm font-bold text-slate-800">No sites found</h3>
               <p className="text-xs text-slate-500">Try adjusting your search query or status filter.</p>
               <button
@@ -943,7 +951,7 @@ export default function OrgFinancePage({
                   <div className="flex justify-between text-[11px]">
                     <span className="text-slate-500 font-medium">Budget Consumed:</span>
                     <strong className={item.isCritical ? 'text-rose-600 font-bold' : 'text-slate-700'}>
-                      {item.usagePercent}% {item.isCritical && '⚠️ Critical'}
+                      {item.usagePercent}% {item.isCritical && 'Critical'}
                     </strong>
                   </div>
                   <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200">

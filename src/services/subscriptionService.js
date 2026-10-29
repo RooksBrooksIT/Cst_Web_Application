@@ -524,30 +524,40 @@ export async function syncSubscriptionAcrossDocs(orgId, subscriptionPayload) {
   batch.set(subRef, removeUndefinedFields(subscriptionPayload), { merge: true })
 
   // 2. Synchronize to root organisation doc /organisation/{orgId}
+  // Keep minimal flat fields for backward compatibility with loginOrganization and
+  // isPendingRegistrationDoc reads. All detailed subscription data lives in the
+  // nested `subscription` map and in /data/subscription subcollection.
   const rootRef = doc(db, 'organisation', orgId)
   const rootSyncFields = {
-    subscriptionPlan: subscriptionPayload.subscriptionPlan,
-    subscriptionType: subscriptionPayload.subscriptionType,
-    subscriptionStartDate: subscriptionPayload.subscriptionStartDate,
-    subscriptionEndDate: subscriptionPayload.subscriptionEndDate,
+    // Minimal flat fields required for backward-compatible reads
     isSubscriptionActive: subscriptionPayload.isSubscriptionActive,
+    subscriptionPlan: subscriptionPayload.subscriptionPlan,
     onboardingStep: subscriptionPayload.onboardingStep || 'COMPLETED',
     registrationStatus: subscriptionPayload.registrationStatus || 'COMPLETED',
-    maxProjects: subscriptionPayload.maxProjects,
-    maxUsers: subscriptionPayload.maxUsers,
-    maxManagers: subscriptionPayload.maxManagers,
-    maxSupervisors: subscriptionPayload.maxSupervisors,
-    paymentGateway: subscriptionPayload.paymentGateway || 'PayU',
-    paymentTxnId: subscriptionPayload.paymentTxnId || '',
-    payuMoneyId: subscriptionPayload.payuMoneyId || '',
-    paymentStatus: subscriptionPayload.paymentStatus || 'SUCCESS',
-    paymentAmount: subscriptionPayload.paymentAmount !== undefined ? subscriptionPayload.paymentAmount : 0,
-    paymentMethod: subscriptionPayload.paymentMethod || 'PayU Gateway',
-    platinumProjects: subscriptionPayload.platinumProjects || null,
-    isUpgradeQueued: subscriptionPayload.isUpgradeQueued || false,
-    subscription: subscriptionPayload,
     updatedAt: serverTimestamp(),
     updated_at: serverTimestamp(),
+    // All subscription detail lives in the nested `subscription` map
+    subscription: {
+      subscriptionPlan: subscriptionPayload.subscriptionPlan,
+      subscriptionType: subscriptionPayload.subscriptionType,
+      subscriptionStartDate: subscriptionPayload.subscriptionStartDate,
+      subscriptionEndDate: subscriptionPayload.subscriptionEndDate,
+      isSubscriptionActive: subscriptionPayload.isSubscriptionActive,
+      onboardingStep: subscriptionPayload.onboardingStep || 'COMPLETED',
+      registrationStatus: subscriptionPayload.registrationStatus || 'COMPLETED',
+      maxProjects: subscriptionPayload.maxProjects,
+      maxUsers: subscriptionPayload.maxUsers,
+      maxManagers: subscriptionPayload.maxManagers,
+      maxSupervisors: subscriptionPayload.maxSupervisors,
+      paymentGateway: subscriptionPayload.paymentGateway || 'PayU',
+      paymentTxnId: subscriptionPayload.paymentTxnId || '',
+      payuMoneyId: subscriptionPayload.payuMoneyId || '',
+      paymentStatus: subscriptionPayload.paymentStatus || 'SUCCESS',
+      paymentAmount: subscriptionPayload.paymentAmount !== undefined ? subscriptionPayload.paymentAmount : 0,
+      paymentMethod: subscriptionPayload.paymentMethod || 'PayU Gateway',
+      platinumProjects: subscriptionPayload.platinumProjects || null,
+      isUpgradeQueued: subscriptionPayload.isUpgradeQueued || false,
+    },
   }
   batch.set(rootRef, removeUndefinedFields(rootSyncFields), { merge: true })
 

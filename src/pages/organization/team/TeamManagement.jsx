@@ -16,6 +16,8 @@ import {
   X,
   Eye,
   EyeOff,
+  Key,
+  Lock,
 } from 'lucide-react'
 import { useAuth } from '../../../hooks/useAuth'
 import StatusBadge from '../../../components/common/StatusBadge'
@@ -28,6 +30,10 @@ import {
   subscribeManagers,
   fetchManagers,
   createManager,
+  updateManager,
+  isValidEmail,
+  isValidContactNumber,
+  isValidManagerPassword,
   checkGlobalUsernameUniqueness,
   warmupUsernameCache,
   isUsernameCachedAsTaken,
@@ -448,6 +454,38 @@ export default function TeamManagement({
   const [isUsernameValid, setIsUsernameValid] = useState(null)
   const usernameValidationSeq = useRef(0)
 
+  // Manager Email Validation State
+  const [managerEmailError, setManagerEmailError] = useState('')
+  const [isManagerEmailValid, setIsManagerEmailValid] = useState(null)
+
+  // Manager Contact Number & Password Validation State
+  const [managerPhoneError, setManagerPhoneError] = useState('')
+  const [isManagerPhoneValid, setIsManagerPhoneValid] = useState(null)
+  const [managerPasswordError, setManagerPasswordError] = useState('')
+  const [isManagerPasswordValid, setIsManagerPasswordValid] = useState(null)
+
+  // Manager Details & Password Viewing / Edit Modal State
+  const [isManagerDetailsOpen, setIsManagerDetailsOpen] = useState(false)
+  const [selectedManager, setSelectedManager] = useState(null)
+  const [showDetailPassword, setShowDetailPassword] = useState(false)
+  const [isEditingPassword, setIsEditingPassword] = useState(false)
+  const [detailPasswordCopied, setDetailPasswordCopied] = useState(false)
+  const [detailFormData, setDetailFormData] = useState({
+    fullName: '',
+    username: '',
+    email: '',
+    phone: '',
+    designation: '',
+    department: '',
+    password: '',
+    status: 'Active',
+  })
+  const [detailEmailError, setDetailEmailError] = useState('')
+  const [isDetailEmailValid, setIsDetailEmailValid] = useState(null)
+  const [managerDetailLoading, setManagerDetailLoading] = useState(false)
+  const [managerDetailError, setManagerDetailError] = useState('')
+  const [managerDetailSuccess, setManagerDetailSuccess] = useState('')
+
   // Warm up username cache and load plan limits on mount
   useEffect(() => {
     warmupUsernameCache()
@@ -515,10 +553,160 @@ export default function TeamManagement({
     return () => clearTimeout(timer)
   }, [managerFormData.username, isManagerModalOpen, orgId])
 
+  function handleManagerEmailChange(val) {
+    setManagerFormData((prev) => ({ ...prev, email: val }))
+    const trimmed = (val || '').trim()
+    if (!trimmed) {
+      setManagerEmailError('')
+      setIsManagerEmailValid(null)
+    } else if (isValidEmail(trimmed)) {
+      setManagerEmailError('')
+      setIsManagerEmailValid(true)
+    } else {
+      setManagerEmailError('Please enter a valid email address (e.g. manager@example.com).')
+      setIsManagerEmailValid(false)
+    }
+  }
+
+  function handleManagerPhoneChange(val) {
+    setManagerFormData((prev) => ({ ...prev, phone: val }))
+    const trimmed = (val || '').trim()
+    if (!trimmed) {
+      setManagerPhoneError('')
+      setIsManagerPhoneValid(null)
+    } else if (/[^\d]/.test(trimmed)) {
+      setManagerPhoneError('Contact number must contain only numeric digits (0–9).')
+      setIsManagerPhoneValid(false)
+    } else if (trimmed.length !== 10) {
+      setManagerPhoneError(`Contact number must be exactly 10 digits (${trimmed.length}/10).`)
+      setIsManagerPhoneValid(false)
+    } else {
+      setManagerPhoneError('')
+      setIsManagerPhoneValid(true)
+    }
+  }
+
+  function handleManagerPasswordChange(val) {
+    setManagerFormData((prev) => ({ ...prev, password: val }))
+    if (!val) {
+      setManagerPasswordError('')
+      setIsManagerPasswordValid(null)
+    } else if (val.length < 8) {
+      setManagerPasswordError(`Password must be at least 8 characters (${val.length}/8).`)
+      setIsManagerPasswordValid(false)
+    } else {
+      setManagerPasswordError('')
+      setIsManagerPasswordValid(true)
+    }
+  }
+
+  function handleOpenManagerDetails(person) {
+    if (!person || person.roleCategory !== 'manager') return
+    const raw = person.raw || {}
+    const existingPassword = raw.Password || raw.password || raw.pass || ''
+
+    setSelectedManager(person)
+    setDetailFormData({
+      fullName: person.fullName || '',
+      username: person.username || '',
+      email: person.email || '',
+      phone: person.phone || '',
+      designation: person.designation || 'Site Manager',
+      department: person.department || 'Operations',
+      password: existingPassword,
+      status: person.status || 'Active',
+    })
+    setShowDetailPassword(false)
+    setIsEditingPassword(!existingPassword)
+    setDetailPasswordCopied(false)
+    setManagerDetailError('')
+    setManagerDetailSuccess('')
+    setDetailEmailError('')
+    setIsDetailEmailValid(person.email ? isValidEmail(person.email) : null)
+    setIsManagerDetailsOpen(true)
+  }
+
+  function handleDetailEmailChange(val) {
+    setDetailFormData((prev) => ({ ...prev, email: val }))
+    const trimmed = (val || '').trim()
+    if (!trimmed) {
+      setDetailEmailError('')
+      setIsDetailEmailValid(null)
+    } else if (isValidEmail(trimmed)) {
+      setDetailEmailError('')
+      setIsDetailEmailValid(true)
+    } else {
+      setDetailEmailError('Please enter a valid email address (e.g. manager@example.com).')
+      setIsDetailEmailValid(false)
+    }
+  }
+
+  function handleCopyPassword(pass) {
+    if (!pass) return
+    navigator.clipboard?.writeText(pass)
+    setDetailPasswordCopied(true)
+    setTimeout(() => setDetailPasswordCopied(false), 2000)
+  }
+
+  async function handleUpdateManagerSubmit(e) {
+    e.preventDefault()
+    setManagerDetailError('')
+    setManagerDetailSuccess('')
+
+    const cleanEmail = (detailFormData.email || '').trim().toLowerCase()
+    if (cleanEmail && !isValidEmail(cleanEmail)) {
+      const err = 'Please enter a valid email address (e.g. manager@example.com).'
+      setManagerDetailError(err)
+      setDetailEmailError(err)
+      setIsDetailEmailValid(false)
+      return
+    }
+
+    if (!detailFormData.fullName.trim()) {
+      setManagerDetailError('Full Name is required.')
+      return
+    }
+    if (!detailFormData.phone.trim()) {
+      setManagerDetailError('Contact Number is required.')
+      return
+    }
+
+    setManagerDetailLoading(true)
+    try {
+      const managerId = selectedManager.id
+      await updateManager(orgId, managerId, {
+        fullName: detailFormData.fullName,
+        email: cleanEmail,
+        phone: detailFormData.phone,
+        designation: detailFormData.designation,
+        department: detailFormData.department,
+        status: detailFormData.status,
+        ...(detailFormData.password ? { password: detailFormData.password } : {}),
+      })
+
+      setManagerDetailSuccess('Manager details & credentials updated successfully!')
+      setTimeout(() => {
+        setIsManagerDetailsOpen(false)
+        setManagerDetailSuccess('')
+      }, 1000)
+    } catch (err) {
+      console.error('Update manager error:', err)
+      setManagerDetailError(err.message || 'Failed to update manager.')
+    } finally {
+      setManagerDetailLoading(false)
+    }
+  }
+
   async function handleOpenCreateManagerModal() {
     setManagerError('')
     setManagerSuccess('')
     setShowManagerPassword(false)
+    setManagerEmailError('')
+    setIsManagerEmailValid(null)
+    setManagerPhoneError('')
+    setIsManagerPhoneValid(null)
+    setManagerPasswordError('')
+    setIsManagerPasswordValid(null)
     const check = await SubscriptionLimitService.canCreateManager({
       orgId,
       currentManagersCount: metrics.managersCount,
@@ -563,6 +751,65 @@ export default function TeamManagement({
     e.preventDefault()
     if (!orgId) return
 
+    // 1. Password Validation: minimum 8 characters
+    const rawPassword = managerFormData.password || ''
+    if (!rawPassword) {
+      const err = 'Account password is required.'
+      setManagerError(err)
+      setManagerPasswordError(err)
+      setIsManagerPasswordValid(false)
+      return
+    }
+    if (!isValidManagerPassword(rawPassword)) {
+      const err = 'Password must be at least 8 characters long.'
+      setManagerError(err)
+      setManagerPasswordError(err)
+      setIsManagerPasswordValid(false)
+      return
+    }
+
+    // 2. Contact Number Validation: exactly 10 digits, only numeric characters (0-9)
+    const rawPhone = (managerFormData.phone || '').trim()
+    if (!rawPhone) {
+      const err = 'Contact number is required.'
+      setManagerError(err)
+      setManagerPhoneError(err)
+      setIsManagerPhoneValid(false)
+      return
+    }
+    if (/[^\d]/.test(rawPhone)) {
+      const err = 'Contact number must contain only numeric digits (0–9).'
+      setManagerError(err)
+      setManagerPhoneError(err)
+      setIsManagerPhoneValid(false)
+      return
+    }
+    if (rawPhone.length !== 10) {
+      const err = 'Contact number must be exactly 10 digits.'
+      setManagerError(err)
+      setManagerPhoneError(err)
+      setIsManagerPhoneValid(false)
+      return
+    }
+
+    // 3. Email Validation
+    const cleanEmail = (managerFormData.email || '').trim().toLowerCase()
+    if (!cleanEmail) {
+      const err = 'Official email address is required.'
+      setManagerError(err)
+      setManagerEmailError(err)
+      setIsManagerEmailValid(false)
+      return
+    }
+
+    if (!isValidEmail(cleanEmail)) {
+      const err = 'Please enter a valid email address (e.g. manager@example.com).'
+      setManagerError(err)
+      setManagerEmailError(err)
+      setIsManagerEmailValid(false)
+      return
+    }
+
     if (isUsernameValid === false) {
       setManagerError(usernameStatusText || 'Username already exists')
       return
@@ -573,7 +820,11 @@ export default function TeamManagement({
     setManagerSuccess('')
 
     try {
-      const created = await createManager(orgId, managerFormData)
+      const created = await createManager(orgId, {
+        ...managerFormData,
+        phone: rawPhone,
+        email: cleanEmail,
+      })
       setManagerSuccess(`Manager "${created.FullName}" created successfully (ID: ${created.ManagerId}).`)
       setManagerFormData({
         fullName: '',
@@ -585,6 +836,12 @@ export default function TeamManagement({
         designation: 'Site Manager',
       })
       setShowManagerPassword(false)
+      setManagerEmailError('')
+      setIsManagerEmailValid(null)
+      setManagerPhoneError('')
+      setIsManagerPhoneValid(null)
+      setManagerPasswordError('')
+      setIsManagerPasswordValid(null)
       setUsernameStatusText(null)
       setIsUsernameValid(null)
       setIsCheckingUsername(false)
@@ -1238,19 +1495,6 @@ export default function TeamManagement({
             <span>Create Manager</span>
           </button>
 
-         
-
-          <button
-            type="button"
-            onClick={handleRefresh}
-            disabled={isRefreshing}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100 transition-colors shadow-2xs"
-            title="Reload workforce data from Firestore"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-blue-600' : 'text-slate-500'}`} />
-            <span>{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
-          </button>
-
           <ExportButton
             filename={`complete_workforce_roster_${new Date().toISOString().split('T')[0]}`}
             headers={exportHeaders}
@@ -1259,73 +1503,6 @@ export default function TeamManagement({
           />
         </div>
       </div>
-
-      {/* Subscription Team Quotas Status Bar */}
-      {planLimits && (
-        <div className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
-          <div className="flex items-center justify-between text-xs pb-1 border-b border-slate-100">
-            <span className="font-semibold text-slate-700">Subscription Quota Allocation</span>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
-              {planLimits.planName} Plan
-            </span>
-          </div>
-          {planLimits.isTrial ? (
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
-              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                <span className="text-slate-500">Org Admin:</span>
-                <span className="font-mono font-bold text-slate-800">
-                  1 / 1
-                </span>
-              </div>
-              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                <span className="text-slate-500">Manager:</span>
-                <span className={`font-mono font-bold ${metrics.managersCount >= 1 ? 'text-amber-600' : 'text-slate-800'}`}>
-                  {metrics.managersCount} / 1
-                </span>
-              </div>
-              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                <span className="text-slate-500">Site Supervisor:</span>
-                <span className={`font-mono font-bold ${metrics.supervisorsCount >= 1 ? 'text-amber-600' : 'text-slate-800'}`}>
-                  {metrics.supervisorsCount} / 1
-                </span>
-              </div>
-              <div className="flex items-center justify-between p-2.5 rounded-xl bg-emerald-50/60 border border-emerald-100">
-                <span className="text-emerald-700 font-medium">Workers:</span>
-                <span className="font-mono font-bold text-emerald-800">
-                  {metrics.workersCount} (Unlimited)
-                </span>
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
-              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                <span className="text-slate-500">Subscription Users:</span>
-                <span className={`font-mono font-bold ${1 + metrics.managersCount + metrics.supervisorsCount >= (planLimits.maxUsers || 2) ? 'text-rose-600' : 'text-slate-800'}`}>
-                  {1 + metrics.managersCount + metrics.supervisorsCount} / {planLimits.maxUsers === 999999 ? 'Unlimited' : planLimits.maxUsers}
-                </span>
-              </div>
-              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                <span className="text-slate-500">Dedicated Managers:</span>
-                <span className={`font-mono font-bold ${metrics.managersCount >= (planLimits.maxManagers || 1) ? 'text-rose-600' : 'text-slate-800'}`}>
-                  {metrics.managersCount} / {planLimits.maxManagers === 999999 ? 'Unlimited' : planLimits.maxManagers}
-                </span>
-              </div>
-              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                <span className="text-slate-500">Site Supervisors:</span>
-                <span className={`font-mono font-bold ${metrics.supervisorsCount >= (planLimits.maxSupervisors || 1) ? 'text-rose-600' : 'text-slate-800'}`}>
-                  {metrics.supervisorsCount} / {planLimits.maxSupervisors === 999999 ? 'Unlimited' : planLimits.maxSupervisors}
-                </span>
-              </div>
-              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                <span className="text-slate-500">Field Workers:</span>
-                <span className="font-mono font-bold text-slate-800">
-                  {metrics.workersCount} (Excluded from Limit)
-                </span>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Free Trial User Limit Modal */}
       <FreeTrialUserLimitModal
@@ -1572,11 +1749,11 @@ export default function TeamManagement({
               onChange={(e) => handleSiteFilterChange(e.target.value)}
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 outline-none focus:bg-white focus:border-blue-600 cursor-pointer transition-all"
             >
-              <option value="ALL">🏢 All Sites & Projects</option>
-              <option value="UNASSIGNED">⚠️ Unassigned Personnel Only</option>
+              <option value="ALL">All Sites & Projects</option>
+              <option value="UNASSIGNED">Unassigned Personnel Only</option>
               {distinctSiteOptions.map((s) => (
                 <option key={s} value={s}>
-                  📍 {s}
+                  {s}
                 </option>
               ))}
             </select>
@@ -1613,13 +1790,14 @@ export default function TeamManagement({
                 <th className="p-3.5 min-w-[200px]">Email / Contact</th>
                 <th className="p-3.5 min-w-[170px]">Assigned Role</th>
                 <th className="p-3.5 min-w-[200px]">Site / Project Assignment</th>
-                <th className="p-3.5 pr-5 text-center min-w-[110px]">Status</th>
+                <th className="p-3.5 text-center min-w-[110px]">Status</th>
+                <th className="p-3.5 pr-5 text-center min-w-[100px]">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {paginatedWorkforce.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="p-12 text-center">
+                  <td colSpan={6} className="p-12 text-center">
                     <div className="max-w-sm mx-auto space-y-3">
                       <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mx-auto text-slate-400">
                         <Users className="w-6 h-6" />
@@ -1671,9 +1849,20 @@ export default function TeamManagement({
                             {initials}
                           </div>
                           <div className="min-w-0">
-                            <strong className="block text-slate-900 font-bold group-hover:text-blue-900 transition-colors truncate max-w-[200px]">
-                              {person.fullName}
-                            </strong>
+                            {person.roleCategory === 'manager' ? (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenManagerDetails(person)}
+                                className="block text-left text-slate-900 font-bold hover:text-blue-700 transition-colors truncate max-w-[200px] cursor-pointer"
+                                title="Click to view manager details & password"
+                              >
+                                {person.fullName}
+                              </button>
+                            ) : (
+                              <strong className="block text-slate-900 font-bold group-hover:text-blue-900 transition-colors truncate max-w-[200px]">
+                                {person.fullName}
+                              </strong>
+                            )}
                             <div className="flex items-center gap-1.5 mt-0.5">
                               {(() => {
                                 const displayId = (isRawAuthUid(person.id) || person.id === user?.uid || person.id === userData?.uid)
@@ -1751,8 +1940,25 @@ export default function TeamManagement({
                       </td>
 
                       {/* Status */}
-                      <td className="p-3.5 pr-5 text-center">
+                      <td className="p-3.5 text-center">
                         <StatusBadge status={person.status} />
+                      </td>
+
+                      {/* Actions */}
+                      <td className="p-3.5 pr-5 text-center">
+                        {person.roleCategory === 'manager' ? (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenManagerDetails(person)}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-colors shadow-2xs cursor-pointer"
+                            title="View manager account details and password"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-blue-600" />
+                            <span>Details</span>
+                          </button>
+                        ) : (
+                          <span className="text-slate-300 text-xs">-</span>
+                        )}
                       </td>
                     </tr>
                   )
@@ -1942,179 +2148,610 @@ export default function TeamManagement({
       </Modal>
 
       {/* Direct Manager Account Creation Modal */}
-      <Modal
-        isOpen={isManagerModalOpen}
-        onClose={() => {
-          setIsManagerModalOpen(false)
-          setShowManagerPassword(false)
-          setManagerError('')
-          setManagerSuccess('')
-          setUsernameStatusText(null)
-          setIsUsernameValid(null)
-          setIsCheckingUsername(false)
-        }}
-        title="Create New Organization Manager Account"
-      >
-        <form onSubmit={handleCreateManagerSubmit} className="space-y-4">
-          {managerError && (
-            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl font-bold flex items-start gap-2">
-              <span className="text-sm">⚠️</span>
-              <div>{managerError}</div>
-            </div>
-          )}
+   
+<Modal
+  isOpen={isManagerModalOpen}
+  onClose={() => {
+    setIsManagerModalOpen(false)
+    setShowManagerPassword(false)
+    setManagerError('')
+    setManagerSuccess('')
+    setUsernameStatusText(null)
+    setIsUsernameValid(null)
+    setIsCheckingUsername(false)
+    setManagerEmailError('')
+    setIsManagerEmailValid(null)
+    setManagerPhoneError('')
+    setIsManagerPhoneValid(null)
+    setManagerPasswordError('')
+    setIsManagerPasswordValid(null)
+  }}
+  title="Create New Organization Manager Account"
+>
+  <form
+    onSubmit={handleCreateManagerSubmit}
+    className="flex flex-col w-full min-w-0"
+  >
+    {/* Scrollable Form Content */}
+    <div className="max-h-[70vh] sm:max-h-[72vh] overflow-y-auto overflow-x-hidden px-1 py-2">
+      <div className="space-y-5">
 
-          {managerSuccess && (
-            <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-xl font-bold flex items-center gap-2">
-              <span className="text-sm">✓</span>
-              <div>{managerSuccess}</div>
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label className="block text-xs font-medium text-slate-700">
-              Full Name *
-              <input
-                required
-                value={managerFormData.fullName}
-                onChange={(e) => setManagerFormData({ ...managerFormData, fullName: e.target.value })}
-                placeholder="e.g. Sharan Rooks"
-                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
-              />
-            </label>
-
-            <label className="block text-xs font-medium text-slate-700">
-              Username *
-              <div className="relative mt-1">
-                <input
-                  required
-                  value={managerFormData.username}
-                  onChange={(e) => setManagerFormData({ ...managerFormData, username: e.target.value.replace(/\s+/g, '') })}
-                  placeholder="e.g. Sharan123"
-                  className={`w-full bg-slate-50 border rounded-xl p-2.5 pr-8 text-xs text-slate-900 outline-none transition-colors ${isUsernameValid === false
-                      ? 'border-rose-400 focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20'
-                      : isUsernameValid === true
-                        ? 'border-emerald-400 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20'
-                        : 'border-slate-300 focus:bg-white focus:border-blue-600'
-                    }`}
-                />
-                {isCheckingUsername && (
-                  <RefreshCw className="w-3.5 h-3.5 text-slate-400 animate-spin absolute right-3 top-1/2 -translate-y-1/2" />
-                )}
-              </div>
-              {isCheckingUsername ? (
-                <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1 mt-1">
-                  Checking username...
-                </span>
-              ) : isUsernameValid === false && usernameStatusText ? (
-                <span className="text-[11px] text-rose-600 font-semibold flex items-center gap-1 mt-1">
-                  <span className="text-xs">⚠️</span>
-                  {usernameStatusText}
-                </span>
-              ) : isUsernameValid === true ? (
-                <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1 mt-1">
-                  Username is available ✓
-                </span>
-              ) : (
-                <span className="text-[10px] text-slate-400 block mt-0.5">Global case-insensitive unique login ID</span>
-              )}
-            </label>
+        {/* Error Message */}
+        {managerError && (
+          <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl font-bold flex items-start gap-2 break-words">
+            <span className="text-sm shrink-0">⚠️</span>
+            <div>{managerError}</div>
           </div>
+        )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label className="block text-xs font-medium text-slate-700">
-              Account Password *
-              <div className="relative mt-1">
-                <input
-                  type={showManagerPassword ? 'text' : 'password'}
-                  required
-                  value={managerFormData.password}
-                  onChange={(e) => setManagerFormData({ ...managerFormData, password: e.target.value })}
-                  placeholder="••••••••"
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 pr-10 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowManagerPassword(!showManagerPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 focus:outline-none p-0.5 cursor-pointer flex items-center justify-center"
-                  tabIndex={-1}
-                  aria-label={showManagerPassword ? 'Hide password' : 'Show password'}
-                  title={showManagerPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showManagerPassword ? (
-                    <EyeOff className="w-4 h-4 text-slate-500 hover:text-slate-700" />
-                  ) : (
-                    <Eye className="w-4 h-4 text-slate-500 hover:text-slate-700" />
-                  )}
-                </button>
-              </div>
-            </label>
-
-            <label className="block text-xs font-medium text-slate-700">
-              Contact Number *
-              <input
-                required
-                value={managerFormData.phone}
-                onChange={(e) => setManagerFormData({ ...managerFormData, phone: e.target.value })}
-                placeholder="8489044572"
-                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
-              />
-            </label>
+        {/* Success Message */}
+        {managerSuccess && (
+          <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-xl font-bold flex items-center gap-2 break-words">
+            <span className="text-sm shrink-0">✓</span>
+            <div>{managerSuccess}</div>
           </div>
+        )}
 
-          <label className="block text-xs font-medium text-slate-700">
-            Official Email Address
+        {/* Full Name and Username */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <label className="block min-w-0 text-xs font-semibold text-slate-700">
+            Full Name *
             <input
-              type="email"
-              value={managerFormData.email}
-              onChange={(e) => setManagerFormData({ ...managerFormData, email: e.target.value })}
-              placeholder="sharan.rooks@gmail.com"
-              className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
+              required
+              value={managerFormData.fullName}
+              onChange={(e) =>
+                setManagerFormData({
+                  ...managerFormData,
+                  fullName: e.target.value,
+                })
+              }
+              placeholder="e.g. Alen Roy"
+              className="mt-1.5 w-full min-w-0 bg-white border border-slate-300 rounded-lg px-3 py-2.5 text-sm text-slate-900 outline-none transition-colors focus:border-blue-600 focus:ring-2 focus:ring-blue-600/10"
             />
           </label>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label className="block text-xs font-medium text-slate-700">
-              Department
+          <label className="block min-w-0 text-xs font-semibold text-slate-700">
+            Username *
+            <div className="relative mt-1.5">
               <input
-                value={managerFormData.department}
-                onChange={(e) => setManagerFormData({ ...managerFormData, department: e.target.value })}
-                placeholder="Operations"
-                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
+                required
+                value={managerFormData.username}
+                onChange={(e) =>
+                  setManagerFormData({
+                    ...managerFormData,
+                    username: e.target.value.replace(/\s+/g, ''),
+                  })
+                }
+                placeholder="e.g. Roy123"
+                className={`w-full min-w-0 bg-white border rounded-lg px-3 py-2.5 pr-10 text-sm text-slate-900 outline-none transition-colors ${
+                  isUsernameValid === false
+                    ? 'border-rose-400 focus:border-rose-500 focus:ring-2 focus:ring-rose-500/10'
+                    : isUsernameValid === true
+                      ? 'border-emerald-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10'
+                      : 'border-slate-300 focus:border-blue-600 focus:ring-2 focus:ring-blue-600/10'
+                }`}
               />
+
+              {isCheckingUsername && (
+                <RefreshCw className="w-4 h-4 text-slate-400 animate-spin absolute right-3 top-1/2 -translate-y-1/2" />
+              )}
+            </div>
+
+            {isCheckingUsername ? (
+              <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1 mt-1.5">
+                Checking username...
+              </span>
+            ) : isUsernameValid === false && usernameStatusText ? (
+              <span className="text-[11px] text-rose-600 font-semibold flex items-start gap-1 mt-1.5 break-words">
+                <span className="shrink-0">⚠️</span>
+                {usernameStatusText}
+              </span>
+            ) : isUsernameValid === true ? (
+              <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1 mt-1.5">
+                Username is available ✓
+              </span>
+            ) : (
+              <span className="text-[10px] text-slate-400 block mt-1">
+                Global case-insensitive unique login ID
+              </span>
+            )}
+          </label>
+        </div>
+
+        {/* Password and Contact Number */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <label className="block min-w-0 text-xs font-semibold text-slate-700">
+            Account Password *
+            <div className="relative mt-1.5">
+              <input
+                type={showManagerPassword ? 'text' : 'password'}
+                required
+                value={managerFormData.password}
+                onChange={(e) => handleManagerPasswordChange(e.target.value)}
+                placeholder="••••••••"
+                className={`w-full min-w-0 bg-white border rounded-lg px-3 py-2.5 pr-11 text-sm text-slate-900 outline-none transition-colors ${
+                  managerPasswordError
+                    ? 'border-rose-400 focus:border-rose-500 focus:ring-2 focus:ring-rose-500/10'
+                    : isManagerPasswordValid === true
+                      ? 'border-emerald-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10'
+                      : 'border-slate-300 focus:border-blue-600 focus:ring-2 focus:ring-blue-600/10'
+                }`}
+              />
+
+              <button
+                type="button"
+                onClick={() => setShowManagerPassword(!showManagerPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 focus:outline-none p-1 cursor-pointer flex items-center justify-center"
+                tabIndex={-1}
+                aria-label={
+                  showManagerPassword ? 'Hide password' : 'Show password'
+                }
+                title={
+                  showManagerPassword ? 'Hide password' : 'Show password'
+                }
+              >
+                {showManagerPassword ? (
+                  <EyeOff className="w-4 h-4 text-slate-500 hover:text-slate-700" />
+                ) : (
+                  <Eye className="w-4 h-4 text-slate-500 hover:text-slate-700" />
+                )}
+              </button>
+            </div>
+            {managerPasswordError ? (
+              <span className="text-[11px] text-rose-600 font-semibold flex items-start gap-1 mt-1.5 break-words">
+                <span className="shrink-0">⚠️</span>
+                {managerPasswordError}
+              </span>
+            ) : isManagerPasswordValid === true ? (
+              <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1 mt-1.5">
+                Password length meets requirement (8+ chars) ✓
+              </span>
+            ) : (
+              <span className="text-[10px] text-slate-400 block mt-1">
+                Minimum 8 characters required
+              </span>
+            )}
+          </label>
+
+          <label className="block min-w-0 text-xs font-semibold text-slate-700">
+            Contact Number *
+            <input
+              type="tel"
+              inputMode="numeric"
+              maxLength={10}
+              required
+              value={managerFormData.phone}
+              onChange={(e) => handleManagerPhoneChange(e.target.value)}
+              placeholder="9876543210"
+              className={`mt-1.5 w-full min-w-0 bg-white border rounded-lg px-3 py-2.5 text-sm text-slate-900 outline-none transition-colors ${
+                managerPhoneError
+                  ? 'border-rose-400 focus:border-rose-500 focus:ring-2 focus:ring-rose-500/10'
+                  : isManagerPhoneValid === true
+                    ? 'border-emerald-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10'
+                    : 'border-slate-300 focus:border-blue-600 focus:ring-2 focus:ring-blue-600/10'
+              }`}
+            />
+            {managerPhoneError ? (
+              <span className="text-[11px] text-rose-600 font-semibold flex items-start gap-1 mt-1.5 break-words">
+                <span className="shrink-0">⚠️</span>
+                {managerPhoneError}
+              </span>
+            ) : isManagerPhoneValid === true ? (
+              <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1 mt-1.5">
+                Valid 10-digit contact number ✓
+              </span>
+            ) : (
+              <span className="text-[10px] text-slate-400 block mt-1">
+                Must be exactly 10 numeric digits (0–9)
+              </span>
+            )}
+          </label>
+        </div>
+
+        {/* Official Email */}
+        <label className="block min-w-0 text-xs font-semibold text-slate-700">
+          Official Email Address *
+          <div className="relative mt-1.5">
+            <input
+              type="email"
+              required
+              value={managerFormData.email}
+              onChange={(e) => handleManagerEmailChange(e.target.value)}
+              placeholder="manager@example.com"
+              className={`w-full min-w-0 bg-white border rounded-lg px-3 py-2.5 text-sm text-slate-900 outline-none transition-colors ${
+                managerEmailError
+                  ? 'border-rose-400 focus:border-rose-500 focus:ring-2 focus:ring-rose-500/10'
+                  : isManagerEmailValid === true
+                    ? 'border-emerald-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10'
+                    : 'border-slate-300 focus:border-blue-600 focus:ring-2 focus:ring-blue-600/10'
+              }`}
+            />
+          </div>
+          {managerEmailError ? (
+            <span className="text-[11px] text-rose-600 font-semibold flex items-start gap-1 mt-1.5 break-words">
+              <span className="shrink-0">⚠️</span>
+              {managerEmailError}
+            </span>
+          ) : isManagerEmailValid === true ? (
+            <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1 mt-1.5">
+              Email format is valid ✓
+            </span>
+          ) : (
+            <span className="text-[10px] text-slate-400 block mt-1">
+              Required for manager operations, notifications and credentials
+            </span>
+          )}
+        </label>
+
+        {/* Designation */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <label className="block min-w-0 text-xs font-semibold text-slate-700">
+            Designation
+            <input
+              value={managerFormData.designation}
+              onChange={(e) =>
+                setManagerFormData({
+                  ...managerFormData,
+                  designation: e.target.value,
+                })
+              }
+              placeholder="Site Manager"
+              className="mt-1.5 w-full min-w-0 bg-white border border-slate-300 rounded-lg px-3 py-2.5 text-sm text-slate-900 outline-none transition-colors focus:border-blue-600 focus:ring-2 focus:ring-blue-600/10"
+            />
+          </label>
+        </div>
+
+      </div>
+    </div>
+
+    {/* Fixed Action Buttons */}
+    <div className="flex flex-col-reverse sm:flex-row gap-3 pt-4 mt-2 border-t border-slate-200 bg-white">
+      <button
+        type="button"
+        onClick={() => {
+          setIsManagerModalOpen(false)
+          setManagerError('')
+          setManagerSuccess('')
+          setShowManagerPassword(false)
+          setUsernameStatusText(null)
+          setIsUsernameValid(null)
+          setIsCheckingUsername(false)
+          setManagerEmailError('')
+          setIsManagerEmailValid(null)
+          setManagerPhoneError('')
+          setIsManagerPhoneValid(null)
+          setManagerPasswordError('')
+          setIsManagerPasswordValid(null)
+        }}
+        className="w-full sm:w-1/2 py-2.5 px-4 rounded-lg font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-slate-300"
+      >
+        Cancel
+      </button>
+
+      <button
+        type="submit"
+        disabled={
+          managerSubmitLoading ||
+          isCheckingUsername ||
+          isUsernameValid === false ||
+          isManagerEmailValid === false ||
+          isManagerPhoneValid === false ||
+          isManagerPasswordValid === false
+        }
+        className="w-full sm:w-1/2 py-2.5 px-4 rounded-lg font-semibold bg-[#0B3470] hover:bg-blue-800 text-white text-sm shadow-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+      >
+        {managerSubmitLoading
+          ? 'Saving Manager...'
+          : '✓ Create Manager Account'}
+      </button>
+    </div>
+  </form>
+</Modal>
+
+      {/* Manager Details & Password Viewing / Edit Modal */}
+      <Modal
+        isOpen={isManagerDetailsOpen}
+        onClose={() => {
+          setIsManagerDetailsOpen(false)
+          setManagerDetailError('')
+          setManagerDetailSuccess('')
+          setShowDetailPassword(false)
+          setIsEditingPassword(false)
+        }}
+        title="Manager Details & Credentials"
+        subtitle={
+          selectedManager
+            ? `Account credentials and details for ${selectedManager.fullName}`
+            : 'Manager Account Governance'
+        }
+        maxWidth="max-w-xl"
+      >
+        {selectedManager && (
+          <form onSubmit={handleUpdateManagerSubmit} className="space-y-4">
+            {managerDetailError && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center gap-2">
+                <span>⚠️</span>
+                <span>{managerDetailError}</span>
+              </div>
+            )}
+
+            {managerDetailSuccess && (
+              <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center gap-2">
+                <span>✓</span>
+                <span>{managerDetailSuccess}</span>
+              </div>
+            )}
+
+            {/* Quick Profile Summary Card */}
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-100 text-[#0B3470] border border-blue-200 flex items-center justify-center font-bold text-sm">
+                  {selectedManager.fullName.substring(0, 2).toUpperCase()}
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-900 text-sm">{selectedManager.fullName}</h4>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="font-mono text-[10px] text-slate-500 bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                      ID: {selectedManager.id}
+                    </span>
+                    {selectedManager.username && (
+                      <span className="text-[11px] text-slate-500 font-medium">
+                        @{selectedManager.username}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <StatusBadge status={detailFormData.status} />
+            </div>
+
+            {/* Account Credentials / Password Section */}
+            <div className="p-4 rounded-xl bg-blue-50/50 border border-blue-100 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <Key className="w-4 h-4 text-[#0B3470]" />
+                  <span className="text-xs font-bold text-slate-800">Account Password</span>
+                </div>
+                <span className="text-[10px] text-slate-500 font-medium">
+                  {showDetailPassword ? 'Password Visible' : 'Protected & Masked'}
+                </span>
+              </div>
+
+              <div>
+                <div className="relative flex items-center">
+                  <input
+                    type={showDetailPassword ? 'text' : 'password'}
+                    value={detailFormData.password}
+                    onChange={(e) =>
+                      setDetailFormData({
+                        ...detailFormData,
+                        password: e.target.value,
+                      })
+                    }
+                    readOnly={!isEditingPassword}
+                    placeholder={detailFormData.password ? '••••••••' : 'No password stored'}
+                    className={`w-full min-w-0 bg-white border ${
+                      isEditingPassword
+                        ? 'border-blue-400 focus:border-blue-600 focus:ring-2 focus:ring-blue-600/10'
+                        : 'border-slate-300'
+                    } rounded-lg px-3 py-2.5 pr-20 text-sm font-mono text-slate-900 outline-none transition-colors`}
+                  />
+
+                  <div className="absolute right-2 flex items-center gap-1">
+                    {detailFormData.password && (
+                      <button
+                        type="button"
+                        onClick={() => handleCopyPassword(detailFormData.password)}
+                        className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-colors cursor-pointer"
+                        title="Copy password to clipboard"
+                        aria-label="Copy password to clipboard"
+                      >
+                        {detailPasswordCopied ? (
+                          <Check className="w-4 h-4 text-emerald-600" />
+                        ) : (
+                          <Copy className="w-4 h-4" />
+                        )}
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setShowDetailPassword(!showDetailPassword)}
+                      className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-colors cursor-pointer"
+                      title={showDetailPassword ? 'Hide password' : 'View password'}
+                      aria-label={showDetailPassword ? 'Hide password' : 'View password'}
+                    >
+                      {showDetailPassword ? (
+                        <EyeOff className="w-4 h-4 text-slate-600" />
+                      ) : (
+                        <Eye className="w-4 h-4 text-slate-600" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between mt-1.5 text-[11px]">
+                  <span className="text-slate-500">
+                    {detailPasswordCopied ? (
+                      <span className="text-emerald-600 font-semibold">Password copied to clipboard! ✓</span>
+                    ) : showDetailPassword ? (
+                      'Password visible for administrative verification.'
+                    ) : (
+                      'Click the eye icon to view existing manager password.'
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditingPassword(!isEditingPassword)
+                      if (!isEditingPassword) setShowDetailPassword(true)
+                    }}
+                    className="font-semibold text-blue-700 hover:text-blue-900 transition-colors cursor-pointer"
+                  >
+                    {isEditingPassword ? 'Cancel Edit' : 'Change Password'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Editable Profile Fields */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <label className="block min-w-0 text-xs font-semibold text-slate-700">
+                Full Name *
+                <input
+                  required
+                  value={detailFormData.fullName}
+                  onChange={(e) =>
+                    setDetailFormData({
+                      ...detailFormData,
+                      fullName: e.target.value,
+                    })
+                  }
+                  className="mt-1.5 w-full min-w-0 bg-white border border-slate-300 rounded-lg px-3 py-2.5 text-sm text-slate-900 outline-none transition-colors focus:border-blue-600 focus:ring-2 focus:ring-blue-600/10"
+                />
+              </label>
+
+              <label className="block min-w-0 text-xs font-semibold text-slate-700">
+                Contact Number *
+                <input
+                  required
+                  value={detailFormData.phone}
+                  onChange={(e) =>
+                    setDetailFormData({
+                      ...detailFormData,
+                      phone: e.target.value,
+                    })
+                  }
+                  className="mt-1.5 w-full min-w-0 bg-white border border-slate-300 rounded-lg px-3 py-2.5 text-sm text-slate-900 outline-none transition-colors focus:border-blue-600 focus:ring-2 focus:ring-blue-600/10"
+                />
+              </label>
+            </div>
+
+            {/* Official Email */}
+            <label className="block min-w-0 text-xs font-semibold text-slate-700">
+              Official Email Address
+              <input
+                type="email"
+                value={detailFormData.email}
+                onChange={(e) => handleDetailEmailChange(e.target.value)}
+                placeholder="manager@example.com"
+                className={`mt-1.5 w-full min-w-0 bg-white border rounded-lg px-3 py-2.5 text-sm text-slate-900 outline-none transition-colors ${
+                  detailEmailError
+                    ? 'border-rose-400 focus:border-rose-500 focus:ring-2 focus:ring-rose-500/10'
+                    : isDetailEmailValid === true
+                      ? 'border-emerald-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10'
+                      : 'border-slate-300 focus:border-blue-600 focus:ring-2 focus:ring-blue-600/10'
+                }`}
+              />
+              {detailEmailError ? (
+                <span className="text-[11px] text-rose-600 font-semibold flex items-start gap-1 mt-1.5 break-words">
+                  <span className="shrink-0">⚠️</span>
+                  {detailEmailError}
+                </span>
+              ) : isDetailEmailValid === true ? (
+                <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1 mt-1.5">
+                  Email format is valid ✓
+                </span>
+              ) : null}
             </label>
 
-            <label className="block text-xs font-medium text-slate-700">
-              Designation
-              <input
-                value={managerFormData.designation}
-                onChange={(e) => setManagerFormData({ ...managerFormData, designation: e.target.value })}
-                placeholder="Site Manager"
-                className="mt-1 w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:bg-white focus:border-blue-600"
-              />
-            </label>
-          </div>
+            {/* Designation & Department */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <label className="block min-w-0 text-xs font-semibold text-slate-700">
+                Designation
+                <input
+                  value={detailFormData.designation}
+                  onChange={(e) =>
+                    setDetailFormData({
+                      ...detailFormData,
+                      designation: e.target.value,
+                    })
+                  }
+                  className="mt-1.5 w-full min-w-0 bg-white border border-slate-300 rounded-lg px-3 py-2.5 text-sm text-slate-900 outline-none transition-colors focus:border-blue-600 focus:ring-2 focus:ring-blue-600/10"
+                />
+              </label>
 
-          <div className="flex gap-3 pt-2">
-            <button
-              type="button"
-              onClick={() => {
-                setIsManagerModalOpen(false)
-                setManagerError('')
-                setManagerSuccess('')
-              }}
-              className="w-1/2 py-2.5 rounded-xl font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={managerSubmitLoading || isCheckingUsername || isUsernameValid === false}
-              className="w-1/2 py-2.5 rounded-xl font-bold bg-[#0B3470] hover:bg-blue-800 text-white text-xs shadow-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
-            >
-              {managerSubmitLoading ? 'Saving Manager...' : '✓ Create Manager Account'}
-            </button>
-          </div>
-        </form>
+              <label className="block min-w-0 text-xs font-semibold text-slate-700">
+                Department
+                <input
+                  value={detailFormData.department}
+                  onChange={(e) =>
+                    setDetailFormData({
+                      ...detailFormData,
+                      department: e.target.value,
+                    })
+                  }
+                  className="mt-1.5 w-full min-w-0 bg-white border border-slate-300 rounded-lg px-3 py-2.5 text-sm text-slate-900 outline-none transition-colors focus:border-blue-600 focus:ring-2 focus:ring-blue-600/10"
+                />
+              </label>
+            </div>
+
+            {/* Account Status */}
+            <div>
+              <label className="block min-w-0 text-xs font-semibold text-slate-700">
+                Account Status
+                <select
+                  value={detailFormData.status}
+                  onChange={(e) =>
+                    setDetailFormData({
+                      ...detailFormData,
+                      status: e.target.value,
+                    })
+                  }
+                  className="mt-1.5 w-full min-w-0 bg-white border border-slate-300 rounded-lg px-3 py-2.5 text-sm text-slate-900 outline-none transition-colors focus:border-blue-600 focus:ring-2 focus:ring-blue-600/10 cursor-pointer"
+                >
+                  <option value="Active">Active</option>
+                  <option value="Inactive">Inactive</option>
+                </select>
+              </label>
+            </div>
+
+            {/* Assigned Sites (read-only reference) */}
+            {selectedManager.assignedSites && selectedManager.assignedSites.length > 0 && (
+              <div className="pt-1">
+                <span className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Currently Assigned Projects / Sites
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {selectedManager.assignedSites.map((siteName, i) => (
+                    <span
+                      key={i}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200"
+                    >
+                      <MapPin className="w-3 h-3 text-slate-400" />
+                      {siteName}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Modal Actions */}
+            <div className="flex flex-col-reverse sm:flex-row gap-3 pt-4 mt-2 border-t border-slate-200 bg-white">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsManagerDetailsOpen(false)
+                  setManagerDetailError('')
+                  setManagerDetailSuccess('')
+                  setShowDetailPassword(false)
+                  setIsEditingPassword(false)
+                }}
+                className="w-full sm:w-1/2 py-2.5 px-4 rounded-lg font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 text-sm transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+
+              <button
+                type="submit"
+                disabled={managerDetailLoading || isDetailEmailValid === false}
+                className="w-full sm:w-1/2 py-2.5 px-4 rounded-lg font-semibold bg-[#0B3470] hover:bg-blue-800 text-white text-sm shadow-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
+                {managerDetailLoading ? 'Saving Changes...' : '✓ Save Manager Changes'}
+              </button>
+            </div>
+          </form>
+        )}
       </Modal>
     </div>
   )

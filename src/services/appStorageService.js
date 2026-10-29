@@ -22,7 +22,12 @@ let authInFlightPromise = null
  */
 export async function ensureStorageAuthenticated(orgId) {
   if (auth.currentUser) {
-    return auth.currentUser
+    try {
+      await auth.currentUser.getIdToken(false)
+      return auth.currentUser
+    } catch (_e) {
+      // Token expired or invalid, will re-authenticate below
+    }
   }
 
   if (authInFlightPromise) {
@@ -35,7 +40,7 @@ export async function ensureStorageAuthenticated(orgId) {
       if (!targetOrgId) {
         try {
           const stored = JSON.parse(localStorage.getItem('constructa_session') || '{}')
-          targetOrgId = stored.orgId
+          targetOrgId = stored.orgId || stored.tenantId
         } catch {}
       }
 
@@ -52,7 +57,16 @@ export async function ensureStorageAuthenticated(orgId) {
         console.warn('Could not read organisation doc for storage auth:', e?.message)
       }
 
-      if (!orgData?.email || !orgData?.password) {
+      if (!orgData?.email && !orgData?.Email) {
+        try {
+          const orgDocSnapAlt = await getDoc(doc(db, 'organization', targetOrgId))
+          if (orgDocSnapAlt.exists()) {
+            orgData = { ...(orgData || {}), ...orgDocSnapAlt.data() }
+          }
+        } catch (_e) {}
+      }
+
+      if ((!orgData?.email && !orgData?.Email) || (!orgData?.password && !orgData?.Password)) {
         try {
           const adminDataSnap = await getDoc(doc(db, 'organisation', targetOrgId, 'admin', 'data'))
           if (adminDataSnap.exists()) {
@@ -63,8 +77,8 @@ export async function ensureStorageAuthenticated(orgId) {
         }
       }
 
-      const email = orgData?.email
-      const password = orgData?.password
+      const email = (orgData?.email || orgData?.Email || '').trim()
+      const password = (orgData?.password || orgData?.Password || '').trim()
 
       if (email && password) {
         try {
@@ -348,18 +362,19 @@ export const AppStorageService = {
   /**
    * Upload an expense bill image/document to Firebase Cloud Storage.
    *
-   * Paths:
-   * Manager Expenses:
-   *   manager expenses/organisation/{tenantId}/manager expenses/{siteId_siteName}/{image}
+   * Exact Paths:
    * Organization Expenses:
-   *   manager expenses/organisation/{tenantId}/organization expenses/{siteId_siteName}/{image}
+   *   /organisation/{orgId}/Organization_exp_bill/{siteId_siteName}/{image}
+   * Manager Expenses:
+   *   /organisation/{orgId}/Manager_exp_bill/{siteId_siteName}/{image}
    *
    * @param {Object} params
    * @param {string} [params.tenantId] - Organization / Tenant ID (e.g. "cst_RBConstruction_19-09-2026")
    * @param {string} [params.orgId] - Alternate name for tenantId
    * @param {'manager expenses'|'organization expenses'} [params.expenseType='manager expenses'] - Expense category
    * @param {string} params.siteId - Target site ID (e.g. "ST001")
-   * @param {string} [params.siteName] - Target site name (e.g. "name" or "Testing")
+   * @param {string} [params.siteName] - Target site name (e.g. "Testing")
+   * @param {string} [params.billNo] - Bill invoice or reference number
    * @param {string} params.fileName - Original file name
    * @param {File|Blob|Uint8Array} params.file - File binary
    * @param {Array} [params.sitesList] - Optional sites list
@@ -371,6 +386,7 @@ export const AppStorageService = {
     expenseType = 'manager expenses',
     siteId,
     siteName = '',
+    billNo = '',
     fileName,
     file,
     sitesList = [],
@@ -383,20 +399,33 @@ export const AppStorageService = {
     // 1. Establish authenticated tenant context in Firebase Auth
     await ensureStorageAuthenticated(rawTenantId)
 
-    const cleanTenantId = String(rawTenantId).trim().replace(/[/\\]/g, '_')
-    const normalizedExpenseType =
-      String(expenseType).toLowerCase().includes('org')
-        ? 'organization expenses'
-        : 'manager expenses'
+    let cleanTenantId = String(rawTenantId).trim()
+    if (cleanTenantId.startsWith('organisation/')) {
+      cleanTenantId = cleanTenantId.replace(/^organisation\//, '')
+    }
+    cleanTenantId = cleanTenantId.replace(/^\/+/, '').replace(/[/\\]/g, '_')
 
+    // Determine target subfolder:
+    // Organization Expenses -> Organization_exp_bill
+    // Manager Expenses -> Manager_exp_bill
+    const isOrgExpense =
+      String(expenseType).toLowerCase().includes('org') ||
+      String(expenseType).toLowerCase().includes('organisation') ||
+      String(expenseType).toLowerCase().includes('organization')
+
+    const folderName = isOrgExpense ? 'Organization_exp_bill' : 'Manager_exp_bill'
     const siteFolder = formatSiteStorageFolder(siteId, siteName, sitesList)
     const cleanFileName = cleanStorageFileName(fileName || 'bill.jpg')
+    const cleanBillNo = billNo ? cleanStorageFileName(String(billNo).trim()) : ''
     const timestamp = Date.now()
-    const image = `${timestamp}_${cleanFileName}`
+    const image = cleanBillNo && !cleanFileName.toLowerCase().includes(cleanBillNo.toLowerCase())
+      ? `${timestamp}_${cleanBillNo}_${cleanFileName}`
+      : `${timestamp}_${cleanFileName}`
 
-    // Exact required folder path:
-    // manager expenses/organisation/{tenantId}/{expenseType}/{siteId_siteName}/{image}
-    const storagePath = `manager expenses/organisation/${cleanTenantId}/${normalizedExpenseType}/${siteFolder}/${image}`
+    // Exact required folder paths matching Firebase Storage permissions:
+    // /organisation/{orgId}/Organization_exp_bill/{siteFolder}/{image}
+    // /organisation/{orgId}/Manager_exp_bill/{siteFolder}/{image}
+    const storagePath = `organisation/${cleanTenantId}/${folderName}/${siteFolder}/${image}`
 
     const contentType = inferMimeType(cleanFileName)
     const ext = cleanFileName.split('.').pop()?.toLowerCase() || 'jpg'
@@ -407,9 +436,11 @@ export const AppStorageService = {
       const uploadResult = await uploadBytes(storageRef, file, {
         contentType,
         customMetadata: {
+          orgId: cleanTenantId,
           tenantId: cleanTenantId,
-          expenseType: normalizedExpenseType,
+          expenseType: folderName,
           siteFolder,
+          billNo: cleanBillNo || '',
           originalName: fileName || cleanFileName,
           uploadedAt: new Date().toISOString(),
         },
@@ -419,11 +450,16 @@ export const AppStorageService = {
 
       // In-memory cache for ultra-fast instant display
       billUrlCache.set(storagePath, downloadUrl)
+      if (storagePath.startsWith('/')) {
+        billUrlCache.set(storagePath.slice(1), downloadUrl)
+      } else {
+        billUrlCache.set(`/${storagePath}`, downloadUrl)
+      }
 
       return {
         downloadUrl,
         storagePath,
-        fileName: cleanFileName,
+        fileName: image,
         fileType: ext,
         fileSizeBytes,
         fileSize: formatBytes(fileSizeBytes),
@@ -436,19 +472,28 @@ export const AppStorageService = {
 
   /**
    * Fast URL resolver for cached or live download URLs
+   * @param {string} storagePath - Relative or absolute storage path
+   * @param {string} [orgId] - Optional orgId to ensure auth context
    */
-  async getExpenseBillUrl(storagePath) {
+  async getExpenseBillUrl(storagePath, orgId) {
     if (!storagePath) return ''
-    if (billUrlCache.has(storagePath)) {
-      return billUrlCache.get(storagePath)
+    const cleanPath = String(storagePath).replace(/^\/+/, '')
+    if (billUrlCache.has(cleanPath)) {
+      return billUrlCache.get(cleanPath)
+    }
+    if (billUrlCache.has(`/${cleanPath}`)) {
+      return billUrlCache.get(`/${cleanPath}`)
     }
     try {
-      const storageRef = ref(storage, storagePath)
+      if (orgId) {
+        await ensureStorageAuthenticated(orgId).catch(() => {})
+      }
+      const storageRef = ref(storage, cleanPath)
       const url = await getDownloadURL(storageRef)
-      billUrlCache.set(storagePath, url)
+      billUrlCache.set(cleanPath, url)
       return url
     } catch (e) {
-      console.warn('Could not resolve expense bill URL for path:', storagePath, e?.message)
+      console.warn('Could not resolve expense bill URL for path:', cleanPath, e?.message)
       return ''
     }
   },
@@ -467,7 +512,7 @@ export function formatSiteStorageFolder(siteId = '', siteName = '', sitesList = 
   let cleanId = String(siteId || '').trim()
   let cleanName = String(siteName || '').trim()
 
-  if ((!cleanName || cleanName === cleanId) && Array.isArray(sitesList) && sitesList.length > 0) {
+  if (Array.isArray(sitesList) && sitesList.length > 0) {
     const matched = sitesList.find((s) => {
       if (!s) return false
       return (
@@ -480,17 +525,22 @@ export function formatSiteStorageFolder(siteId = '', siteName = '', sitesList = 
     })
     if (matched) {
       cleanId = matched.siteCode || matched.siteId || matched.id || cleanId
-      cleanName = matched.siteName || matched.name || matched.projectName || ''
+      cleanName = matched.siteName || matched.name || matched.projectName || cleanName
     }
   }
 
-  // If cleanId already has an underscore format like ST001_name, preserve it
+  // Strip PR001_ prefix if doc ID format is PR001_ST001 or PR001_ST001_Testing
+  if (/^PR\d+_(ST\d+.*)$/i.test(cleanId)) {
+    cleanId = cleanId.replace(/^PR\d+_/i, '')
+  }
+
+  // If cleanId already has an underscore format like ST001_Testing, preserve it
   if (cleanId.includes('_')) {
     return cleanId.replace(/[/\\]/g, '_').replace(/\s+/g, '_')
   }
 
   const sId = cleanId.replace(/[/\\]/g, '_').replace(/\s+/g, '_')
-  const sName = cleanName.replace(/[/\\]/g, '_').replace(/\s+/g, '_')
+  const sName = cleanName.replace(/[/\\]/g, '_').replace(/\s+/g, '')
 
   if (sId && sName) {
     return `${sId}_${sName}`

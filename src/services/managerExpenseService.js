@@ -326,10 +326,17 @@ export async function recordManagerExpense(orgId, expenseData, managerActor) {
       ? (b.billDate instanceof Date ? b.billDate : (typeof b.billDate === 'string' ? new Date(b.billDate) : (b.billDate.seconds ? new Date(b.billDate.seconds * 1000) : new Date())))
       : (expenseData.expenseDate ? new Date(expenseData.expenseDate) : new Date())
 
+    const rawQty = b.quantity !== undefined ? b.quantity : (b.qty !== undefined ? b.qty : (b.billQuantity !== undefined ? b.billQuantity : null))
+    const parsedQty = rawQty !== null && rawQty !== undefined && rawQty !== ''
+      ? (Number.isFinite(Number(rawQty)) ? Number(rawQty) : rawQty)
+      : null
+
     return {
       billNo: b.billNo || (existingBills.length + idx + 1).toString().padStart(3, '0'),
       billVendor: b.vendor || b.billVendor || 'Vendor',
       vendor: b.vendor || b.billVendor || 'Vendor',
+      quantity: parsedQty,
+      qty: parsedQty,
       billAmount: amt,
       amount: amt,
       billCopy: billDocUrl || 'billURL',
@@ -348,6 +355,12 @@ export async function recordManagerExpense(orgId, expenseData, managerActor) {
   // Merge bills: [...existingBills, ...newBills]
   const allBills = [...existingBills, ...normalizedNewBills]
   const totalAmount = allBills.reduce((acc, b) => acc + (Number(b.billAmount || b.amount) || 0), 0) || (Number(expenseData.totalAmount || expenseData.amount) || 0)
+  const hasNumericQty = allBills.some((b) => b.quantity !== null && b.quantity !== undefined && Number.isFinite(Number(b.quantity)))
+  const totalQuantity = hasNumericQty
+    ? allBills.reduce((acc, b) => acc + (typeof b.quantity === 'number' ? b.quantity : (Number(b.quantity) || 0)), 0)
+    : (expenseData.quantity !== undefined && expenseData.quantity !== null && expenseData.quantity !== ''
+        ? (Number.isFinite(Number(expenseData.quantity)) ? Number(expenseData.quantity) : expenseData.quantity)
+        : (existingData?.quantity !== undefined ? existingData.quantity : null))
 
   const primaryBill = allBills.find((b) => b.billUrl || b.imageUrl || (b.billCopy && b.billCopy !== 'billURL')) || {}
   const primaryBillUrl = expenseData.billUrl || expenseData.imageUrl || primaryBill.billUrl || primaryBill.imageUrl || (primaryBill.billCopy !== 'billURL' ? primaryBill.billCopy : null) || null
@@ -377,6 +390,8 @@ export async function recordManagerExpense(orgId, expenseData, managerActor) {
     entryDate: resolvedDate,
     date: expenseData.expenseDate || (typeof existingData?.date === 'string' ? existingData.date : new Date().toISOString()),
     bills: allBills,
+    quantity: totalQuantity,
+    qty: totalQuantity,
     totalAmount,
     amount: totalAmount,
     billUrl: primaryBillUrl,
@@ -407,6 +422,7 @@ export async function recordManagerExpense(orgId, expenseData, managerActor) {
       projectName: payload.projectName,
       projectStage: payload.projectStage,
       managerExpenseTotalAmount: totalAmount,
+      quantity: totalQuantity,
       managerId,
       managerName,
       date: new Date().toISOString(),

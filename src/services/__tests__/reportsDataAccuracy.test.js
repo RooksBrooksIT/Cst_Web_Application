@@ -137,6 +137,56 @@ describe('Reports Data Accuracy & De-duplication Tests', () => {
       assert.equal(result.totalBills, 2000)
       assert.equal(result.bills.length, 2)
     })
+
+    it('preserves Quantity across Manager bills and Direct Org bills in calculateDailySiteExpenses', () => {
+      const managerExpenses = [
+        {
+          id: 'ME_QTY_1',
+          date: '2026-10-29',
+          siteId: 'ST001',
+          bills: [
+            { billId: 'BILL-M1', amount: 3000, category: 'Bricks', quantity: 1500, vendor: 'Brick Factory' },
+            { billId: 'BILL-M2', amount: 1500, category: 'Sand', quantity: null, vendor: 'Sand Supplier' },
+          ],
+        },
+      ]
+
+      const organizationEntries = [
+        {
+          id: 'OE_QTY_1',
+          date: '2026-10-29',
+          siteId: 'ST001',
+          bills: [
+            { billNo: 'BILL-O1', amount: 8000, category: 'Steel', quantity: 25.5, vendor: 'Steel Trader' },
+          ],
+        },
+      ]
+
+      const result = calculateDailySiteExpenses({
+        site: { id: 'ST001', siteName: 'Site Alpha' },
+        selectedDate: '2026-10-29',
+        siteSupervisorEntries: [],
+        managerExpenses,
+        organizationEntries,
+      })
+
+      assert.equal(result.bills.length, 3)
+
+      const brickBill = result.bills.find((b) => b.billNumber === 'BILL-M1')
+      assert.ok(brickBill)
+      assert.equal(brickBill.quantity, 1500)
+      assert.equal(brickBill.amount, 3000)
+
+      const sandBill = result.bills.find((b) => b.billNumber === 'BILL-M2')
+      assert.ok(sandBill)
+      assert.equal(sandBill.quantity, null)
+      assert.equal(sandBill.amount, 1500)
+
+      const steelBill = result.bills.find((b) => b.billNumber === 'BILL-O1')
+      assert.ok(steelBill)
+      assert.equal(steelBill.quantity, 25.5)
+      assert.equal(steelBill.amount, 8000)
+    })
   })
 
   describe('calculateSiteLifetimeSummary: Outflow & Inflow Integrity', () => {

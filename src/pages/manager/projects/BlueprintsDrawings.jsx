@@ -4,7 +4,6 @@ import {
   UploadCloud,
   FileText,
   Search,
-  Filter,
   Eye,
   Trash2,
   Download,
@@ -12,29 +11,19 @@ import {
   AlertCircle,
   Building2,
   Layers,
-  ZoomIn,
-  ZoomOut,
-  Maximize2,
   X,
-  ExternalLink,
   Table,
   LayoutGrid,
   ShieldAlert,
   ArrowUpRight,
-  Sparkles,
   Plus,
   Edit3,
   RefreshCw,
   FolderOpen,
-  Calendar,
-  User,
   Check,
-  FileCode,
-  HardDrive,
 } from 'lucide-react'
 import {
   fetchDrawings,
-  fetchSiteDrawings,
   saveAndUploadDrawings,
   updateDrawingDocument,
   deleteDrawingSet,
@@ -50,11 +39,46 @@ import { fetchSiteSupervisorMappings } from '../../../services/supervisorService
 import BlueprintViewerModal from '../../../components/common/BlueprintViewerModal.jsx'
 import ConstructionDocuments from '../../common/ConstructionDocuments.jsx'
 
-/**
- * CST White Label / eBricks - Layout & Construction Drawings Management Subsystem
- * Corresponds to Flutter Mobile: lib/screens/manager/config_layout_and_drawing.dart
- * Follows LAYOUT_AND_DRAWING_WORKFLOW.txt Sections 3.1, 3.2, 4.2, 4.3, 5.1-5.4
- */
+const inputClass =
+  'w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15'
+
+const labelClass = 'mb-1.5 block text-xs font-semibold text-slate-700'
+
+const primaryButtonClass =
+  'inline-flex items-center justify-center gap-2 rounded-lg bg-[#0B3470] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#082855] disabled:cursor-not-allowed disabled:opacity-50'
+
+const secondaryButtonClass =
+  'inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50'
+
+const dangerButtonClass =
+  'inline-flex items-center justify-center gap-2 rounded-lg bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-rose-700'
+
+function ModalShell({ title, children, onClose, closeDisabled = false }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-xl"
+      >
+        <div className="flex items-center justify-between gap-4 border-b border-slate-100 px-6 py-4">
+          <h3 className="text-base font-bold text-slate-900">{title}</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={closeDisabled}
+            aria-label="Close dialog"
+            className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="space-y-5 p-6">{children}</div>
+      </div>
+    </div>
+  )
+}
 
 export default function BlueprintsDrawings({
   orgId,
@@ -62,15 +86,18 @@ export default function BlueprintsDrawings({
   currentUser,
   onNotify,
 }) {
-  // Primary Tabs: 0: 'Upload & Configure', 1: 'Drawings Directory', 2: 'Field View'
+  // Two primary tabs:
+  // 0: Upload Section
+  // 1: Uploaded Files
   const [activeTab, setActiveTab] = useState(0)
 
-  // Master Drawings Data & Loading
+  // Existing field-view workflow remains inside Uploaded Files.
+  const [showFieldView, setShowFieldView] = useState(false)
+
   const [drawings, setDrawings] = useState([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  // Plan limits & site usage state
   const [planLimits, setPlanLimits] = useState({
     planName: 'Free Trial',
     maxActiveDocsPerSite: 1,
@@ -79,44 +106,41 @@ export default function BlueprintsDrawings({
     maxDeletesPerSite: 0,
     maxReuploadsPerSite: 0,
   })
+
   const [siteUsage, setSiteUsage] = useState({
     totalUploadCount: 0,
     reuploadCount: 0,
     deleteCount: 0,
   })
-  const [activeDocsCountForSite, setActiveDocsCountForSite] = useState(0)
 
-  // Supervisor mappings for auto-fill
+  const [activeDocsCountForSite, setActiveDocsCountForSite] = useState(0)
   const [supervisorMappings, setSupervisorMappings] = useState({})
 
-  // Form State (Tab 0: Upload & Configure)
   const [formSiteId, setFormSiteId] = useState('')
   const [formProjectName, setFormProjectName] = useState('')
   const [formSupervisorName, setFormSupervisorName] = useState('')
-  const [formProjectStage, setFormProjectStage] = useState('Superstructure Columns & RCC Slabs')
+  const [formProjectStage, setFormProjectStage] = useState(
+    'Superstructure Columns & RCC Slabs'
+  )
 
-  // Document entry inputs
   const [docName, setDocName] = useState('')
   const [docPurpose, setDocPurpose] = useState('Architectural Layout')
   const [attachedFile, setAttachedFile] = useState(null)
   const [attachedFileName, setAttachedFileName] = useState('')
   const [attachedFileSize, setAttachedFileSize] = useState('')
   const [attachedFileType, setAttachedFileType] = useState('pdf')
-
-  // Staged documents queue (in-memory)
   const [stagedDocuments, setStagedDocuments] = useState([])
 
-  // Directory Tab State (Tab 1)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedSiteFilter, setSelectedSiteFilter] = useState('ALL')
   const [selectedPurposeFilter, setSelectedPurposeFilter] = useState('ALL')
-  const [directoryViewMode, setDirectoryViewMode] = useState('cards') // 'cards' | 'table'
+  const [directoryViewMode, setDirectoryViewMode] = useState('cards')
 
-  // Modals & Action States
   const [activePreviewDoc, setActivePreviewDoc] = useState(null)
   const [upgradeModalInfo, setUpgradeModalInfo] = useState(null)
   const [deleteSetConfirm, setDeleteSetConfirm] = useState(null)
   const [deleteSingleConfirm, setDeleteSingleConfirm] = useState(null)
+
   const [editDocModal, setEditDocModal] = useState(null)
   const [editDocName, setEditDocName] = useState('')
   const [editDocPurpose, setEditDocPurpose] = useState('Architectural Layout')
@@ -128,10 +152,12 @@ export default function BlueprintsDrawings({
   const fileInputRef = useRef(null)
   const editFileInputRef = useRef(null)
 
-  // 1. Initial Load: Plan Limits, Supervisor Mappings, and Drawings Ledger
+  // Existing data-loading workflow.
   const loadMasterData = async () => {
     if (!orgId) return
+
     setLoading(true)
+
     try {
       const [limits, drawingList, mappings] = await Promise.all([
         SubscriptionLimitService.getActivePlanLimits(orgId),
@@ -143,10 +169,12 @@ export default function BlueprintsDrawings({
       setDrawings(drawingList || [])
 
       const map = {}
+
       ;(mappings || []).forEach((m) => {
         const key = formatCanonicalSiteId(m.siteId || m.siteID)
         map[key] = m
       })
+
       setSupervisorMappings(map)
     } catch (err) {
       console.error('Error loading drawings master data:', err)
@@ -160,17 +188,15 @@ export default function BlueprintsDrawings({
     loadMasterData()
   }, [orgId])
 
-  // Set default site when sites load
   useEffect(() => {
     if (!formSiteId && sites.length > 0) {
       handleSiteSelect(sites[0].id || sites[0].siteId)
     }
   }, [sites])
 
-  // 2. Site Selection & Auto-fill Handler
   const handleSiteSelect = async (siteId) => {
     setFormSiteId(siteId)
-    setStagedDocuments([]) // Reset staging queue on site switch
+    setStagedDocuments([])
 
     const cleanSiteId = formatCanonicalSiteId(siteId)
     const matchedSite = sites.find(
@@ -182,7 +208,6 @@ export default function BlueprintsDrawings({
 
     const mapping = supervisorMappings[cleanSiteId]
 
-    // Auto-fill project metadata
     const resolvedProject =
       matchedSite?.projectName ||
       matchedSite?.siteName ||
@@ -205,13 +230,16 @@ export default function BlueprintsDrawings({
     setFormSupervisorName(resolvedSupervisor)
     setFormProjectStage(resolvedStage)
 
-    // Fetch site quota usage & active documents count
     if (orgId && cleanSiteId) {
       try {
         const [usage, activeCount] = await Promise.all([
           SubscriptionLimitService.getSiteDrawingUsage(orgId, cleanSiteId),
-          SubscriptionLimitService.getActiveDrawingsCountForSite(orgId, cleanSiteId),
+          SubscriptionLimitService.getActiveDrawingsCountForSite(
+            orgId,
+            cleanSiteId
+          ),
         ])
+
         setSiteUsage(usage)
         setActiveDocsCountForSite(activeCount)
       } catch (e) {
@@ -220,16 +248,16 @@ export default function BlueprintsDrawings({
     }
   }
 
-  // Live computation of whether upload is locked for current site
   const isUploadLocked = useMemo(() => {
     if (!planLimits) return false
-    // If active docs + currently staged already reach max
+
     const totalPotential = activeDocsCountForSite + stagedDocuments.length
+
     if (totalPotential >= planLimits.maxActiveDocsPerSite) return true
 
-    // Re-upload restriction check
     if (siteUsage.totalUploadCount > 0) {
       if (!planLimits.allowReupload) return true
+
       if (
         planLimits.maxReuploadsPerSite !== Infinity &&
         siteUsage.reuploadCount >= planLimits.maxReuploadsPerSite
@@ -239,54 +267,61 @@ export default function BlueprintsDrawings({
     }
 
     return false
-  }, [activeDocsCountForSite, stagedDocuments.length, planLimits, siteUsage])
+  }, [
+    activeDocsCountForSite,
+    stagedDocuments.length,
+    planLimits,
+    siteUsage,
+  ])
 
-  // 3. Staged Document File Selection
   const handleFileAttach = (e) => {
     const file = e.target.files?.[0]
     if (!file) return
 
-    // Pre-check lock
     if (isUploadLocked) {
       setUpgradeModalInfo({
         title: 'Site Drawing Quota Reached',
         message: `Your current subscription plan (${planLimits.planName}) allows up to ${planLimits.maxActiveDocsPerSite} active drawing(s) per site. Upgrade to Platinum to expand drawing capacity.`,
         plan: 'Platinum',
       })
+
       if (fileInputRef.current) fileInputRef.current.value = ''
       return
     }
 
     const ext = file.name.split('.').pop()?.toLowerCase() || ''
+
     if (!ALLOWED_DRAWING_EXTENSIONS.includes(ext)) {
       onNotify?.(
         `File format .${ext} is not supported. Allowed formats: ${ALLOWED_DRAWING_EXTENSIONS.join(', ')}`,
         'error'
       )
+
       if (fileInputRef.current) fileInputRef.current.value = ''
       return
     }
 
-    // Format human-readable file size
     const sizeInMb = (file.size / (1024 * 1024)).toFixed(1)
-    const formattedSize = file.size > 1024 * 1024 ? `${sizeInMb} MB` : `${Math.round(file.size / 1024)} KB`
+    const formattedSize =
+      file.size > 1024 * 1024
+        ? `${sizeInMb} MB`
+        : `${Math.round(file.size / 1024)} KB`
 
     setAttachedFile(file)
     setAttachedFileName(file.name)
     setAttachedFileSize(formattedSize)
     setAttachedFileType(ext)
 
-    // Auto-fill document title if empty
     if (!docName.trim()) {
       const cleanName = file.name
         .replace(/\.[^/.]+$/, '')
         .replace(/[-_]/g, ' ')
         .replace(/\b\w/g, (l) => l.toUpperCase())
+
       setDocName(cleanName)
     }
   }
 
-  // 4. Add to Staging List
   const handleAddToStaging = (e) => {
     e.preventDefault()
 
@@ -294,13 +329,17 @@ export default function BlueprintsDrawings({
       onNotify?.('Please provide a Document Name', 'error')
       return
     }
+
     if (!attachedFile) {
-      onNotify?.('Please attach a blueprint file (PDF, DWG, DXF, PNG, JPG)', 'error')
+      onNotify?.(
+        'Please attach a blueprint file (PDF, DWG, DXF, PNG, JPG)',
+        'error'
+      )
       return
     }
 
-    // Capacity validation check
     const currentActive = activeDocsCountForSite + stagedDocuments.length
+
     if (currentActive + 1 > planLimits.maxActiveDocsPerSite) {
       setUpgradeModalInfo({
         title: 'Plan Capacity Limit Exceeded',
@@ -310,18 +349,21 @@ export default function BlueprintsDrawings({
       return
     }
 
-    // Re-upload restriction check
     if (siteUsage.totalUploadCount > 0 && !planLimits.allowReupload) {
       setUpgradeModalInfo({
         title: 'Re-uploading Restricted',
-        message: 'Re-uploading and replacing blueprints is not permitted on the Silver/Free Trial plan. Upgrade to Gold or Platinum.',
+        message:
+          'Re-uploading and replacing blueprints is not permitted on the Silver/Free Trial plan. Upgrade to Gold or Platinum.',
         plan: 'Gold',
       })
       return
     }
 
     const newStagedItem = {
-      docId: `DOC_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+      docId: `DOC_${Date.now()}_${Math.random()
+        .toString(36)
+        .substring(2, 6)
+        .toUpperCase()}`,
       docName: docName.trim(),
       purpose: docPurpose,
       fileName: attachedFileName,
@@ -335,11 +377,11 @@ export default function BlueprintsDrawings({
     setStagedDocuments((prev) => [...prev, newStagedItem])
     onNotify?.(`Added "${newStagedItem.docName}" to staging list`, 'success')
 
-    // Reset entry inputs
     setDocName('')
     setAttachedFile(null)
     setAttachedFileName('')
     setAttachedFileSize('')
+
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -347,19 +389,24 @@ export default function BlueprintsDrawings({
     setStagedDocuments((prev) => prev.filter((_, i) => i !== index))
   }
 
-  // 5. Cloud Upload & Database Commit
   const handleSaveAndUpload = async () => {
     if (!orgId) return
+
     if (!formSiteId) {
       onNotify?.('Please select a target construction site', 'error')
       return
     }
+
     if (stagedDocuments.length === 0) {
-      onNotify?.('Please stage at least one blueprint document before saving', 'error')
+      onNotify?.(
+        'Please stage at least one blueprint document before saving',
+        'error'
+      )
       return
     }
 
     setSaving(true)
+
     try {
       const result = await saveAndUploadDrawings({
         orgId,
@@ -377,15 +424,16 @@ export default function BlueprintsDrawings({
         'success'
       )
 
-      // Clear staged list and reload
       setStagedDocuments([])
       await loadMasterData()
       handleSiteSelect(formSiteId)
 
-      // Switch to Directory Tab
+      // Open the uploaded-files directory after a successful upload.
+      setShowFieldView(false)
       setActiveTab(1)
     } catch (err) {
       console.error('Save & Upload error:', err)
+
       if (err.code || err.upgradePlan) {
         setUpgradeModalInfo({
           title: 'Subscription Limit Reached',
@@ -393,31 +441,39 @@ export default function BlueprintsDrawings({
           plan: err.upgradePlan || 'Platinum',
         })
       } else {
-        onNotify?.(err.message || 'Failed to complete cloud blueprint upload', 'error')
+        onNotify?.(
+          err.message || 'Failed to complete cloud blueprint upload',
+          'error'
+        )
       }
     } finally {
       setSaving(false)
     }
   }
 
-  // 6. Delete Handlers (with Governance & Gold Warning Dialog)
   const confirmDeleteSet = async () => {
     if (!deleteSetConfirm || !orgId) return
+
     try {
       await deleteDrawingSet({
         orgId,
         docId: deleteSetConfirm.id || deleteSetConfirm.docId,
         siteId: deleteSetConfirm.siteId,
         currentPlanName: planLimits.planName,
-        totalDocuments: deleteSetConfirm.totalDocuments || deleteSetConfirm.siteDocs?.length || 1,
+        totalDocuments:
+          deleteSetConfirm.totalDocuments ||
+          deleteSetConfirm.siteDocs?.length ||
+          1,
       })
 
       onNotify?.('Drawing set deleted and quota updated', 'info')
       setDeleteSetConfirm(null)
       await loadMasterData()
+
       if (formSiteId) handleSiteSelect(formSiteId)
     } catch (err) {
       console.error(err)
+
       if (err.upgradePlan) {
         setUpgradeModalInfo({
           title: 'Deletion Restricted',
@@ -427,12 +483,14 @@ export default function BlueprintsDrawings({
       } else {
         onNotify?.(err.message || 'Failed to delete drawing set', 'error')
       }
+
       setDeleteSetConfirm(null)
     }
   }
 
   const confirmDeleteIndividual = async () => {
     if (!deleteSingleConfirm || !orgId) return
+
     try {
       await deleteIndividualDocument({
         orgId,
@@ -442,12 +500,18 @@ export default function BlueprintsDrawings({
         currentPlanName: planLimits.planName,
       })
 
-      onNotify?.(`Blueprint "${deleteSingleConfirm.docName}" removed`, 'info')
+      onNotify?.(
+        `Blueprint "${deleteSingleConfirm.docName}" removed`,
+        'info'
+      )
+
       setDeleteSingleConfirm(null)
       await loadMasterData()
+
       if (formSiteId) handleSiteSelect(formSiteId)
     } catch (err) {
       console.error(err)
+
       if (err.upgradePlan) {
         setUpgradeModalInfo({
           title: 'Deletion Restricted',
@@ -457,22 +521,19 @@ export default function BlueprintsDrawings({
       } else {
         onNotify?.(err.message || 'Failed to delete blueprint', 'error')
       }
+
       setDeleteSingleConfirm(null)
     }
   }
 
-  // Blueprint Edit / Update Handlers
   const handleOpenEditModal = (parentDocId, siteId, docItem) => {
-    setEditDocModal({
-      parentDocId,
-      siteId,
-      docItem,
-    })
+    setEditDocModal({ parentDocId, siteId, docItem })
     setEditDocName(docItem.docName || '')
     setEditDocPurpose(docItem.purpose || 'Architectural Layout')
     setEditReplacementFile(null)
     setEditReplacementFileName('')
     setEditReplacementFileSize('')
+
     if (editFileInputRef.current) editFileInputRef.current.value = ''
   }
 
@@ -481,17 +542,22 @@ export default function BlueprintsDrawings({
     if (!file) return
 
     const ext = file.name.split('.').pop()?.toLowerCase() || ''
+
     if (!ALLOWED_DRAWING_EXTENSIONS.includes(ext)) {
       onNotify?.(
         `File format .${ext} is not supported. Allowed formats: ${ALLOWED_DRAWING_EXTENSIONS.join(', ')}`,
         'error'
       )
+
       if (editFileInputRef.current) editFileInputRef.current.value = ''
       return
     }
 
     const sizeInMb = (file.size / (1024 * 1024)).toFixed(1)
-    const formattedSize = file.size > 1024 * 1024 ? `${sizeInMb} MB` : `${Math.round(file.size / 1024)} KB`
+    const formattedSize =
+      file.size > 1024 * 1024
+        ? `${sizeInMb} MB`
+        : `${Math.round(file.size / 1024)} KB`
 
     setEditReplacementFile(file)
     setEditReplacementFileName(file.name)
@@ -500,13 +566,16 @@ export default function BlueprintsDrawings({
 
   const handleSaveEditedDoc = async (e) => {
     e.preventDefault()
+
     if (!editDocModal || !orgId) return
+
     if (!editDocName.trim()) {
       onNotify?.('Document Name is required', 'error')
       return
     }
 
     setEditUpdating(true)
+
     try {
       await updateDrawingDocument({
         orgId,
@@ -526,11 +595,14 @@ export default function BlueprintsDrawings({
           : `Blueprint details updated for "${editDocName}"`,
         'success'
       )
+
       setEditDocModal(null)
       await loadMasterData()
+
       if (formSiteId) handleSiteSelect(formSiteId)
     } catch (err) {
       console.error('Error updating blueprint:', err)
+
       if (err.upgradePlan) {
         setUpgradeModalInfo({
           title: 'Update / Re-upload Limit Exceeded',
@@ -545,17 +617,16 @@ export default function BlueprintsDrawings({
     }
   }
 
-  // Load saved config back into Tab 0 (Editor)
   const handleLoadInEditor = (drawingSet) => {
     handleSiteSelect(drawingSet.siteId)
     setActiveTab(0)
     onNotify?.(`Loaded "${drawingSet.projectName}" into editor`, 'info')
   }
 
-  // Filtered drawings for Directory Tab
   const filteredDirectorySets = useMemo(() => {
     return drawings.filter((set) => {
       const q = searchQuery.toLowerCase().trim()
+
       const matchesSearch =
         !q ||
         (set.siteId || '').toLowerCase().includes(q) ||
@@ -570,19 +641,27 @@ export default function BlueprintsDrawings({
 
       const matchesSite =
         selectedSiteFilter === 'ALL' ||
-        formatCanonicalSiteId(set.siteId) === formatCanonicalSiteId(selectedSiteFilter)
+        formatCanonicalSiteId(set.siteId) ===
+          formatCanonicalSiteId(selectedSiteFilter)
 
       const matchesPurpose =
         selectedPurposeFilter === 'ALL' ||
-        (set.siteDocs || []).some((d) => d.purpose === selectedPurposeFilter)
+        (set.siteDocs || []).some(
+          (d) => d.purpose === selectedPurposeFilter
+        )
 
       return matchesSearch && matchesSite && matchesPurpose
     })
-  }, [drawings, searchQuery, selectedSiteFilter, selectedPurposeFilter])
+  }, [
+    drawings,
+    searchQuery,
+    selectedSiteFilter,
+    selectedPurposeFilter,
+  ])
 
   return (
-    <div className="space-y-6 animate-fade-in pb-12">
-      {/* Blueprint Preview Modal */}
+    <div className="space-y-6 pb-12">
+      {/* Blueprint preview */}
       {activePreviewDoc && (
         <BlueprintViewerModal
           document={activePreviewDoc}
@@ -590,497 +669,460 @@ export default function BlueprintsDrawings({
         />
       )}
 
-      {/* Subscription Upgrade / Limit Reached Modal */}
+      {/* Subscription notice */}
       {upgradeModalInfo && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 animate-fade-in">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 text-center space-y-4">
-            <div className="w-16 h-16 rounded-2xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center mx-auto shadow-xs">
-              <ShieldAlert className="w-8 h-8" />
+        <ModalShell
+          title={upgradeModalInfo.title}
+          onClose={() => setUpgradeModalInfo(null)}
+        >
+          <div className="flex items-start gap-3">
+            <div className="rounded-xl bg-amber-50 p-3 text-amber-600">
+              <ShieldAlert className="h-6 w-6" />
             </div>
-            <div>
-              <span className="text-[10px] font-extrabold uppercase tracking-widest text-amber-700 bg-amber-100/80 px-2.5 py-0.5 rounded-full">
-                Subscription Quota Notice
-              </span>
-              <h3 className="text-lg font-black text-slate-900 mt-2">{upgradeModalInfo.title}</h3>
-              <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                {upgradeModalInfo.message}
-              </p>
-            </div>
-
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-left space-y-1">
-              <div className="flex justify-between">
-                <span className="text-slate-500">Current Plan:</span>
-                <strong className="text-slate-800">{planLimits.planName}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Active Quota:</span>
-                <span className="font-semibold">{planLimits.maxActiveDocsPerSite} doc(s) / site</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Recommended Tier:</span>
-                <strong className="text-blue-700">{upgradeModalInfo.plan || 'Platinum'}</strong>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setUpgradeModalInfo(null)}
-                className="flex-1 py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
-              >
-                Close
-              </button>
-              <a
-                href="/organization/subscription"
-                className="flex-1 py-2.5 px-4 bg-[#0B3470] hover:bg-[#082855] text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-              >
-                <span>View Plans</span>
-                <ArrowUpRight className="w-3.5 h-3.5" />
-              </a>
-            </div>
+            <p className="text-sm leading-relaxed text-slate-600">
+              {upgradeModalInfo.message}
+            </p>
           </div>
-        </div>
+
+          <dl className="space-y-3 rounded-xl bg-slate-50 p-4 text-sm">
+            <div className="flex justify-between gap-4">
+              <dt className="text-slate-500">Current plan</dt>
+              <dd className="font-semibold text-slate-800">
+                {planLimits.planName}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-slate-500">Active quota</dt>
+              <dd className="font-semibold text-slate-800">
+                {planLimits.maxActiveDocsPerSite} doc(s) / site
+              </dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-slate-500">Recommended tier</dt>
+              <dd className="font-semibold text-blue-700">
+                {upgradeModalInfo.plan || 'Platinum'}
+              </dd>
+            </div>
+          </dl>
+
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setUpgradeModalInfo(null)}
+              className={`${secondaryButtonClass} flex-1`}
+            >
+              Close
+            </button>
+            <a
+              href="/organization/subscription"
+              className={`${primaryButtonClass} flex-1`}
+            >
+              View Plans
+              <ArrowUpRight className="h-4 w-4" />
+            </a>
+          </div>
+        </ModalShell>
       )}
 
-      {/* Delete Drawing Set Confirmation Dialog */}
+      {/* Delete drawing set */}
       {deleteSetConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 animate-fade-in">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
-            <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center border border-rose-200">
-              <Trash2 className="w-6 h-6" />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-slate-900">
-                Delete Drawing Set for {deleteSetConfirm.projectName}?
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">
-                This will remove all {deleteSetConfirm.totalDocuments || deleteSetConfirm.siteDocs?.length || 1} active
-                drawings associated with site {deleteSetConfirm.siteId}.
-              </p>
-            </div>
+        <ModalShell
+          title="Delete Drawing Set"
+          onClose={() => setDeleteSetConfirm(null)}
+        >
+          <p className="text-sm leading-relaxed text-slate-600">
+            Delete the drawing set for{' '}
+            <strong className="text-slate-900">
+              {deleteSetConfirm.projectName}
+            </strong>
+            ? This will remove all{' '}
+            {deleteSetConfirm.totalDocuments ||
+              deleteSetConfirm.siteDocs?.length ||
+              1}{' '}
+            active drawings associated with site {deleteSetConfirm.siteId}.
+          </p>
 
-            {planLimits.planName === 'Gold' && (
-              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-800 flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <span>
-                  <strong>Gold Plan Notice:</strong> Deleting this drawing set will consume your{' '}
-                  <strong>1 of 1 permitted deletions</strong> for this site.
-                </span>
-              </div>
-            )}
-
-            <div className="flex items-center gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setDeleteSetConfirm(null)}
-                className="flex-1 py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmDeleteSet}
-                className="flex-1 py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer"
-              >
-                Confirm Delete
-              </button>
+          {planLimits.planName === 'Gold' && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                <strong>Gold Plan Notice:</strong> Deleting this drawing
+                set will consume your{' '}
+                <strong>1 of 1 permitted deletions</strong> for this site.
+              </span>
             </div>
+          )}
+
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setDeleteSetConfirm(null)}
+              className={`${secondaryButtonClass} flex-1`}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmDeleteSet}
+              className={`${dangerButtonClass} flex-1`}
+            >
+              Confirm Delete
+            </button>
           </div>
-        </div>
+        </ModalShell>
       )}
 
-      {/* Delete Individual Document Confirmation Dialog */}
+      {/* Delete individual document */}
       {deleteSingleConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 animate-fade-in">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
-            <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center border border-rose-200">
-              <Trash2 className="w-6 h-6" />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-slate-900">
-                Delete Blueprint: {deleteSingleConfirm.docName}?
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Are you sure you want to remove this document from the site drawing configuration?
-              </p>
-            </div>
+        <ModalShell
+          title="Delete Blueprint"
+          onClose={() => setDeleteSingleConfirm(null)}
+        >
+          <p className="text-sm leading-relaxed text-slate-600">
+            Remove{' '}
+            <strong className="text-slate-900">
+              {deleteSingleConfirm.docName}
+            </strong>{' '}
+            from the site drawing configuration?
+          </p>
 
-            {planLimits.planName === 'Gold' && (
-              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-800 flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <span>
-                  <strong>Gold Plan Notice:</strong> Deleting this individual document will consume your{' '}
-                  <strong>1 permitted deletion</strong> for Site {deleteSingleConfirm.siteId}.
-                </span>
-              </div>
-            )}
-
-            <div className="flex items-center gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setDeleteSingleConfirm(null)}
-                className="flex-1 py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmDeleteIndividual}
-                className="flex-1 py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer"
-              >
-                Delete Blueprint
-              </button>
+          {planLimits.planName === 'Gold' && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                <strong>Gold Plan Notice:</strong> Deleting this document
+                will consume your <strong>1 permitted deletion</strong>{' '}
+                for Site {deleteSingleConfirm.siteId}.
+              </span>
             </div>
+          )}
+
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setDeleteSingleConfirm(null)}
+              className={`${secondaryButtonClass} flex-1`}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmDeleteIndividual}
+              className={`${dangerButtonClass} flex-1`}
+            >
+              Delete Blueprint
+            </button>
           </div>
-        </div>
+        </ModalShell>
       )}
 
-      {/* Update Blueprint Document Modal */}
+      {/* Update document */}
       {editDocModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 animate-fade-in">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-5">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center border border-blue-200">
-                  <Edit3 className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-extrabold text-slate-900">Update Blueprint Document</h3>
-                  <span className="text-[11px] text-slate-500 font-mono">Site ID: {editDocModal.siteId}</span>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setEditDocModal(null)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
+        <ModalShell
+          title="Update Blueprint Document"
+          onClose={() => setEditDocModal(null)}
+          closeDisabled={editUpdating}
+        >
+          <p className="text-xs text-slate-500">
+            Site ID: {editDocModal.siteId}
+          </p>
+
+          <form onSubmit={handleSaveEditedDoc} className="space-y-4">
+            <div>
+              <label htmlFor="edit-document-title" className={labelClass}>
+                Document Title <span className="text-rose-500">*</span>
+              </label>
+              <input
+                id="edit-document-title"
+                type="text"
+                value={editDocName}
+                onChange={(e) => setEditDocName(e.target.value)}
+                className={inputClass}
+                placeholder="e.g. Ground Floor Structural Layout"
+                required
+              />
             </div>
 
-            <form onSubmit={handleSaveEditedDoc} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Document Title <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={editDocName}
-                  onChange={(e) => setEditDocName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-medium"
-                  placeholder="e.g. Ground Floor Structural Layout"
-                  required
-                />
-              </div>
+            <div>
+              <label htmlFor="edit-document-purpose" className={labelClass}>
+                Discipline / Purpose
+              </label>
+              <select
+                id="edit-document-purpose"
+                value={editDocPurpose}
+                onChange={(e) => setEditDocPurpose(e.target.value)}
+                className={inputClass}
+              >
+                {DRAWING_PURPOSES.map((purpose) => (
+                  <option key={purpose} value={purpose}>
+                    {purpose}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Discipline / Purpose <span className="text-rose-500">*</span>
-                </label>
-                <select
-                  value={editDocPurpose}
-                  onChange={(e) => setEditDocPurpose(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-medium"
-                >
-                  {DRAWING_PURPOSES.map((purpose) => (
-                    <option key={purpose} value={purpose}>
-                      {purpose}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Current Stored File Details */}
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                  Current Stored File in Firebase:
+            <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <p className="text-xs font-semibold text-slate-500">
+                Current stored file
+              </p>
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span className="min-w-0 truncate font-medium text-slate-700">
+                  {editDocModal.docItem.fileName}
                 </span>
-                <div className="flex items-center justify-between text-slate-700 font-medium">
-                  <span className="font-mono truncate max-w-xs">{editDocModal.docItem.fileName}</span>
-                  <span className="text-slate-500">{editDocModal.docItem.fileSize || 'Standard'}</span>
-                </div>
-                {editDocModal.docItem.storagePath && (
-                  <span className="font-mono text-[10px] text-slate-400 truncate block">
-                    {editDocModal.docItem.storagePath}
+                <span className="shrink-0 text-slate-500">
+                  {editDocModal.docItem.fileSize || 'Standard'}
+                </span>
+              </div>
+
+              {editDocModal.docItem.storagePath && (
+                <p className="truncate font-mono text-[10px] text-slate-400">
+                  {editDocModal.docItem.storagePath}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label
+                htmlFor="replace-blueprint-file"
+                className={labelClass}
+              >
+                Replace File{' '}
+                <span className="font-normal text-slate-400">
+                  (optional)
+                </span>
+              </label>
+
+              <div className="flex items-center gap-2">
+                <input
+                  ref={editFileInputRef}
+                  type="file"
+                  accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.dwg,.dxf"
+                  onChange={handleEditFileAttach}
+                  className="sr-only"
+                  id="replace-blueprint-file"
+                />
+                <label
+                  htmlFor="replace-blueprint-file"
+                  className={`${secondaryButtonClass} min-w-0 flex-1 cursor-pointer`}
+                >
+                  <UploadCloud className="h-4 w-4 shrink-0" />
+                  <span className="truncate">
+                    {editReplacementFileName || 'Choose replacement file'}
                   </span>
+                </label>
+
+                {editReplacementFileName && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditReplacementFile(null)
+                      setEditReplacementFileName('')
+                      setEditReplacementFileSize('')
+                      if (editFileInputRef.current) {
+                        editFileInputRef.current.value = ''
+                      }
+                    }}
+                    className="rounded-lg p-2 text-rose-500 hover:bg-rose-50"
+                    aria-label="Clear replacement file"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
                 )}
               </div>
 
-              {/* Replace File Option */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Replace File in Storage <span className="text-slate-400 font-normal">(Optional)</span>
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    ref={editFileInputRef}
-                    type="file"
-                    accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.dwg,.dxf"
-                    onChange={handleEditFileAttach}
-                    className="hidden"
-                    id="replace-blueprint-file"
-                  />
-                  <label
-                    htmlFor="replace-blueprint-file"
-                    className="flex-1 px-3.5 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer transition-all truncate"
-                  >
-                    <UploadCloud className="w-4 h-4 text-blue-600 shrink-0" />
-                    <span className="truncate">
-                      {editReplacementFileName ? editReplacementFileName : 'Choose replacement file to upload'}
-                    </span>
-                  </label>
-                  {editReplacementFileName && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditReplacementFile(null)
-                        setEditReplacementFileName('')
-                        setEditReplacementFileSize('')
-                        if (editFileInputRef.current) editFileInputRef.current.value = ''
-                      }}
-                      className="p-2 text-rose-500 hover:text-rose-700 cursor-pointer"
-                      title="Clear replacement"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-                <p className="text-[11px] text-slate-400 mt-1">
-                  {editReplacementFileName
-                    ? `New file selected (${editReplacementFileSize}). Saving will upload to /organisation/${orgId}/drawings/${editDocModal.siteId}/.`
-                    : 'Leave empty to preserve the existing stored file without re-uploading or duplicating.'}
-                </p>
-              </div>
+              <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                {editReplacementFileName
+                  ? `New file selected (${editReplacementFileSize}). Saving will upload to /organisation/${orgId}/drawings/${editDocModal.siteId}/.`
+                  : 'Leave empty to keep the existing file without re-uploading or duplicating.'}
+              </p>
+            </div>
 
-              <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setEditDocModal(null)}
-                  disabled={editUpdating}
-                  className="flex-1 py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={editUpdating}
-                  className="flex-1 py-2.5 px-4 bg-[#0B3470] hover:bg-[#082855] text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50"
-                >
-                  {editUpdating ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Saving Updates...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Check className="w-4 h-4" />
-                      <span>Save Changes</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+            <div className="flex gap-3 border-t border-slate-100 pt-4">
+              <button
+                type="button"
+                onClick={() => setEditDocModal(null)}
+                disabled={editUpdating}
+                className={`${secondaryButtonClass} flex-1`}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={editUpdating}
+                className={`${primaryButtonClass} flex-1`}
+              >
+                {editUpdating ? (
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Check className="h-4 w-4" />
+                )}
+                {editUpdating ? 'Saving Updates...' : 'Save Changes'}
+              </button>
+            </div>
+          </form>
+        </ModalShell>
       )}
 
-      {/* Top Banner & Module Navigation Header */}
-      <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs font-bold uppercase tracking-wider text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200/60">
-              Multi-Tenant Drawing Subsystem
-            </span>
-            <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full">
-              Plan: <strong className="text-slate-800 font-bold">{planLimits.planName}</strong>
-            </span>
+      {/* Page header and two primary tabs */}
+      <header className="rounded-2xl border border-slate-200 bg-white">
+        <div className="flex flex-col justify-between gap-3 p-5 sm:flex-row sm:items-center sm:p-6">
+          <div>
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
+              Layout & Construction Drawings
+            </h1>
+            <p className="mt-1 text-sm text-slate-500">
+              Upload site drawings and manage your existing files.
+            </p>
           </div>
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2.5">
-            <Compass className="w-7 h-7 text-[#0B3470]" />
-            <span>Layout & Construction Drawings</span>
-          </h1>
-          <p className="text-xs text-slate-500 mt-1 max-w-xl">
-            Upload, version-control, inspect, and distribute architectural blueprints, structural rebar layouts, and MEP
-            schematics directly to mobile field crews.
-          </p>
+
+          <span className="inline-flex self-start rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600 sm:self-auto">
+            Plan: {planLimits.planName}
+          </span>
         </div>
 
-        {/* Tab Switcher Pills */}
-        <div className="flex items-center bg-slate-100 p-1.5 rounded-2xl border border-slate-200/80 shrink-0">
-          <button
-            type="button"
-            onClick={() => setActiveTab(0)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 0
-                ? 'bg-[#0B3470] text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <UploadCloud className="w-4 h-4" />
-            <span>Upload & Configure</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab(1)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 1
-                ? 'bg-[#0B3470] text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <FolderOpen className="w-4 h-4" />
-            <span>Drawings Directory</span>
-            <span className="ml-1 px-1.5 py-0.2 bg-white/20 rounded-md text-[10px]">
-              {drawings.length}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab(2)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 2
-                ? 'bg-[#0B3470] text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Eye className="w-4 h-4" />
-            <span>Field View</span>
-          </button>
+        <div
+          role="tablist"
+          aria-label="Drawing management"
+          className="flex gap-2 border-t border-slate-100 px-4 sm:px-6"
+        >
+          {[
+            { id: 0, label: 'Upload Section', Icon: UploadCloud },
+            { id: 1, label: 'Uploaded Files', Icon: FolderOpen },
+          ].map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              id={`drawings-tab-${id}`}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === id}
+              aria-controls={`drawings-panel-${id}`}
+              onClick={() => {
+                setActiveTab(id)
+                setShowFieldView(false)
+              }}
+              className={`flex flex-1 items-center justify-center gap-2 border-b-2 px-3 py-4 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 sm:flex-none sm:px-5 ${
+                activeTab === id
+                  ? 'border-[#0B3470] text-[#0B3470]'
+                  : 'border-transparent text-slate-500 hover:border-slate-200 hover:text-slate-800'
+              }`}
+            >
+              <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+              {label}
+            </button>
+          ))}
         </div>
-      </div>
+      </header>
 
-      {/* ========================================================================= */}
-      {/* TAB 0: UPLOAD & CONFIGURATION FLOW */}
-      {/* ========================================================================= */}
+      {/* TAB 0: UPLOAD SECTION */}
       {activeTab === 0 && (
-        <div className="space-y-6">
-          {/* Site Quota & Subscription Status Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Card 1: Subscription Tier */}
-            <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex items-center gap-3.5">
-              <div className="w-11 h-11 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center border border-blue-200/60 shrink-0">
-                <Sparkles className="w-5 h-5" />
-              </div>
-              <div>
-                <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                  Subscription Tier
-                </span>
-                <strong className="text-sm font-extrabold text-slate-900">{planLimits.planName}</strong>
-                <span className="text-[11px] text-slate-500 block truncate max-w-44">
-                  {planLimits.description}
-                </span>
-              </div>
+        <section
+          id="drawings-panel-0"
+          role="tabpanel"
+          aria-labelledby="drawings-tab-0"
+          className="space-y-5"
+        >
+          {/* Compact quota summary */}
+          <div className="grid grid-cols-1 divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+            <div className="p-4">
+              <p className="text-xs font-medium text-slate-500">
+                Active drawings
+              </p>
+              <p className="mt-1 text-sm font-semibold text-slate-900">
+                {activeDocsCountForSite} / {planLimits.maxActiveDocsPerSite}{' '}
+                allowed
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                {Math.max(
+                  0,
+                  planLimits.maxActiveDocsPerSite - activeDocsCountForSite
+                )}{' '}
+                remaining capacity
+              </p>
             </div>
 
-            {/* Card 2: Active Capacity */}
-            <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex items-center gap-3.5">
-              <div className="w-11 h-11 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center border border-indigo-200/60 shrink-0">
-                <Compass className="w-5 h-5" />
-              </div>
-              <div>
-                <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                  Site Active Blueprints
-                </span>
-                <strong className="text-sm font-extrabold text-slate-900">
-                  {activeDocsCountForSite} / {planLimits.maxActiveDocsPerSite} Allowed
-                </strong>
-                <span className="text-[11px] text-slate-500 block">
-                  {Math.max(0, planLimits.maxActiveDocsPerSite - activeDocsCountForSite)} remaining capacity
-                </span>
-              </div>
-            </div>
-
-            {/* Card 3: Re-upload Usage */}
-            <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex items-center gap-3.5">
-              <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center border border-emerald-200/60 shrink-0">
-                <RefreshCw className="w-5 h-5" />
-              </div>
-              <div>
-                <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                  Re-upload Allowance
-                </span>
-                <strong className="text-sm font-extrabold text-slate-900">
-                  {!planLimits.allowReupload
-                    ? 'None (View Only)'
-                    : planLimits.maxReuploadsPerSite === Infinity
+            <div className="p-4">
+              <p className="text-xs font-medium text-slate-500">
+                Re-upload allowance
+              </p>
+              <p className="mt-1 text-sm font-semibold text-slate-900">
+                {!planLimits.allowReupload
+                  ? 'None (View Only)'
+                  : planLimits.maxReuploadsPerSite === Infinity
                     ? 'Unlimited'
-                    : `${siteUsage.reuploadCount} / ${planLimits.maxReuploadsPerSite} Used`}
-                </strong>
-                <span className="text-[11px] text-slate-500 block">
-                  Total uploads: {siteUsage.totalUploadCount || 0}
-                </span>
-              </div>
+                    : `${siteUsage.reuploadCount} / ${planLimits.maxReuploadsPerSite} used`}
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                Total uploads: {siteUsage.totalUploadCount || 0}
+              </p>
             </div>
 
-            {/* Card 4: Deletion Allowance */}
-            <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex items-center gap-3.5">
-              <div className="w-11 h-11 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center border border-purple-200/60 shrink-0">
-                <Trash2 className="w-5 h-5" />
-              </div>
-              <div>
-                <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                  Delete Allowance
-                </span>
-                <strong className="text-sm font-extrabold text-slate-900">
-                  {!planLimits.allowDelete
-                    ? 'Restricted'
-                    : planLimits.maxDeletesPerSite === Infinity
+            <div className="p-4">
+              <p className="text-xs font-medium text-slate-500">
+                Delete allowance
+              </p>
+              <p className="mt-1 text-sm font-semibold text-slate-900">
+                {!planLimits.allowDelete
+                  ? 'Restricted'
+                  : planLimits.maxDeletesPerSite === Infinity
                     ? 'Unlimited'
-                    : `${siteUsage.deleteCount} / ${planLimits.maxDeletesPerSite} Used`}
-                </strong>
-                <span className="text-[11px] text-slate-500 block">
-                  {planLimits.allowDelete ? 'Replacements enabled' : 'Silver view-only'}
-                </span>
-              </div>
+                    : `${siteUsage.deleteCount} / ${planLimits.maxDeletesPerSite} used`}
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                {planLimits.allowDelete
+                  ? 'Replacements enabled'
+                  : 'Silver view-only'}
+              </p>
             </div>
           </div>
 
-          {/* Locked Notice Banner */}
           {isUploadLocked && (
-            <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
-                <div className="text-xs text-amber-900">
-                  <strong>Upload capacity locked for {formProjectName}:</strong> You have reached your limit of{' '}
-                  {planLimits.maxActiveDocsPerSite} active blueprint(s) under the {planLimits.planName} tier.
-                </div>
+            <div className="flex flex-col justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                <p className="text-xs leading-relaxed text-amber-900">
+                  <strong>Adding more files is currently restricted.</strong>{' '}
+                  The active-document or re-upload allowance for{' '}
+                  {formProjectName} has been reached under your{' '}
+                  {planLimits.planName} plan.
+                </p>
               </div>
               <a
                 href="/organization/subscription"
-                className="px-3.5 py-1.5 bg-[#0B3470] hover:bg-[#082855] text-white text-xs font-bold rounded-xl shrink-0 transition-all cursor-pointer flex items-center gap-1.5"
+                className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-amber-900 hover:underline"
               >
-                <span>Upgrade Plan</span>
-                <ArrowUpRight className="w-3.5 h-3.5" />
+                View Plans
+                <ArrowUpRight className="h-3.5 w-3.5" />
               </a>
             </div>
           )}
 
-          {/* Configuration Form Card */}
-          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-6 space-y-6">
-            <div className="border-b border-slate-100 pb-4">
-              <h2 className="text-base font-bold text-slate-900">Step 1: Target Site Selection & Auto-Fill</h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Select the target project site. Supervisor in-charge and current project phase will automatically
-                populate.
+          {/* Site configuration */}
+          <div className="rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
+            <div className="mb-5">
+              <h2 className="text-base font-bold text-slate-900">
+                Site Details
+              </h2>
+              <p className="mt-1 text-xs text-slate-500">
+                Select a site and confirm the project information.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              {/* Site Dropdown */}
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Target Construction Site <span className="text-rose-500">*</span>
+                <label htmlFor="drawing-site" className={labelClass}>
+                  Construction Site <span className="text-rose-500">*</span>
                 </label>
                 <select
+                  id="drawing-site"
                   value={formSiteId}
                   onChange={(e) => handleSiteSelect(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-medium"
+                  className={inputClass}
                 >
                   {sites.map((s) => {
                     const sId = s.id || s.siteId
-                    const sName = s.siteName || s.projectName || s.name || sId
+                    const sName =
+                      s.siteName || s.projectName || s.name || sId
+
                     return (
                       <option key={sId} value={sId}>
                         {sName} ({formatCanonicalSiteId(s.siteId || s.id)})
@@ -1090,78 +1132,334 @@ export default function BlueprintsDrawings({
                 </select>
               </div>
 
-              {/* Project Name (Auto-filled) */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Project Name</label>
+                <label htmlFor="drawing-project" className={labelClass}>
+                  Project Name
+                </label>
                 <input
+                  id="drawing-project"
                   type="text"
                   value={formProjectName}
                   onChange={(e) => setFormProjectName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-medium"
+                  className={inputClass}
                   placeholder="e.g. Prestige Tech Park"
                 />
               </div>
 
-              {/* Supervisor Name (Auto-filled) */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Supervisor Assigned</label>
+                <label htmlFor="drawing-supervisor" className={labelClass}>
+                  Supervisor Assigned
+                </label>
                 <input
+                  id="drawing-supervisor"
                   type="text"
                   value={formSupervisorName}
                   onChange={(e) => setFormSupervisorName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-medium"
+                  className={inputClass}
                   placeholder="e.g. Ramesh Kumar"
                 />
               </div>
 
-              {/* Project Phase / Stage */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Project Stage / Phase</label>
+                <label htmlFor="drawing-stage" className={labelClass}>
+                  Project Stage / Phase
+                </label>
                 <input
+                  id="drawing-stage"
                   type="text"
                   value={formProjectStage}
                   onChange={(e) => setFormProjectStage(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-medium"
+                  className={inputClass}
                   placeholder="e.g. Foundation & Framing"
                 />
               </div>
             </div>
+          </div>
 
-            {/* Document Staging Entry Box */}
-            <div className="pt-4 border-t border-slate-100">
-              <div className="mb-4">
-                <h3 className="text-base font-bold text-slate-900">Step 2: Attach Blueprint File & Add to Staging</h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Enter drawing details, attach PDF, CAD (DWG/DXF), or blueprint images, then add to the upload queue.
+          {/* Document entry */}
+          <div className="rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
+            <div className="mb-5">
+              <h2 className="text-base font-bold text-slate-900">
+                Add Drawing
+              </h2>
+              <p className="mt-1 text-xs text-slate-500">
+                Enter the document details and attach a file to the upload
+                queue.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+              <div>
+                <label htmlFor="drawing-title" className={labelClass}>
+                  Document Title <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  id="drawing-title"
+                  type="text"
+                  value={docName}
+                  onChange={(e) => setDocName(e.target.value)}
+                  placeholder="e.g. Ground Floor Structural Layout"
+                  className={inputClass}
+                />
+              </div>
+
+              <div>
+                <label htmlFor="drawing-purpose" className={labelClass}>
+                  Discipline / Purpose
+                </label>
+                <select
+                  id="drawing-purpose"
+                  value={docPurpose}
+                  onChange={(e) => setDocPurpose(e.target.value)}
+                  className={inputClass}
+                >
+                  {DRAWING_PURPOSES.map((purpose) => (
+                    <option key={purpose} value={purpose}>
+                      {purpose}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="blueprint-file-picker"
+                  className={labelClass}
+                >
+                  Blueprint File <span className="text-rose-500">*</span>
+                </label>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.dwg,.dxf"
+                    onChange={handleFileAttach}
+                    className="sr-only"
+                    id="blueprint-file-picker"
+                  />
+                  <label
+                    htmlFor="blueprint-file-picker"
+                    className={`${secondaryButtonClass} min-w-0 flex-1 cursor-pointer`}
+                  >
+                    <UploadCloud className="h-4 w-4 shrink-0 text-blue-700" />
+                    <span className="truncate">
+                      {attachedFileName || 'Choose File'}
+                    </span>
+                  </label>
+
+                  {attachedFileName && (
+                    <span className="shrink-0 text-xs text-slate-500">
+                      {attachedFileSize}
+                    </span>
+                  )}
+                </div>
+
+                <p className="mt-1.5 text-[11px] text-slate-400">
+                  PDF, CAD drawings, documents, and images.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={handleAddToStaging}
+                disabled={isUploadLocked}
+                className={primaryButtonClass}
+              >
+                <Plus className="h-4 w-4" />
+                Add to Upload Queue
+              </button>
+            </div>
+          </div>
+
+          {/* Upload queue */}
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <div className="flex flex-col justify-between gap-4 border-b border-slate-100 p-5 sm:flex-row sm:items-center">
+              <div>
+                <h2 className="text-base font-bold text-slate-900">
+                  Upload Queue
+                  <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
+                    {stagedDocuments.length}
+                  </span>
+                </h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  Review your files before saving and uploading.
                 </p>
               </div>
 
-              <div className="bg-slate-50/80 p-5 rounded-2xl border border-slate-200/80 space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {/* Document Name */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Document Title / Name <span className="text-rose-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={docName}
-                      onChange={(e) => setDocName(e.target.value)}
-                      placeholder="e.g. Ground Floor Structural Layout"
-                      className="w-full px-3.5 py-2.5 text-xs bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-medium"
-                    />
+              {stagedDocuments.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleSaveAndUpload}
+                  disabled={saving}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {saving ? (
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4" />
+                  )}
+                  {saving ? 'Uploading...' : 'Save & Upload Drawings'}
+                </button>
+              )}
+            </div>
+
+            {stagedDocuments.length === 0 ? (
+              <div className="px-5 py-10 text-center">
+                <UploadCloud className="mx-auto mb-3 h-8 w-8 text-slate-300" />
+                <p className="text-sm font-medium text-slate-600">
+                  No files in the upload queue
+                </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  Attach a file and select “Add to Upload Queue”.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="border-b border-slate-200 bg-slate-50 text-slate-500">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">Document</th>
+                      <th className="px-4 py-3 font-semibold">Discipline</th>
+                      <th className="px-4 py-3 font-semibold">File Name</th>
+                      <th className="px-4 py-3 font-semibold">Size</th>
+                      <th className="px-4 py-3 font-semibold">Format</th>
+                      <th className="px-4 py-3 text-right font-semibold">
+                        Action
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {stagedDocuments.map((item, index) => (
+                      <tr key={item.docId} className="hover:bg-slate-50/60">
+                        <td className="px-4 py-3 font-semibold text-slate-800">
+                          {item.docName}
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">
+                          {item.purpose}
+                        </td>
+                        <td className="max-w-48 truncate px-4 py-3 text-slate-500">
+                          {item.fileName}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-slate-600">
+                          {item.fileSize}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="rounded bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase text-slate-600">
+                            {item.fileType}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveStagedItem(index)}
+                            aria-label={`Remove ${item.docName} from queue`}
+                            title="Remove from upload queue"
+                            className="rounded-lg p-2 text-rose-500 hover:bg-rose-50"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* TAB 1: UPLOADED FILES */}
+      {activeTab === 1 && (
+        <section
+          id="drawings-panel-1"
+          role="tabpanel"
+          aria-labelledby="drawings-tab-1"
+          className="space-y-5"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-bold text-slate-900">
+                Uploaded Files
+              </h2>
+              <p className="mt-1 text-xs text-slate-500">
+                Find, preview, update, and manage your site drawings.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              aria-pressed={showFieldView}
+              onClick={() => setShowFieldView((previous) => !previous)}
+              className={secondaryButtonClass}
+            >
+              {showFieldView ? (
+                <FolderOpen className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
+              {showFieldView ? 'Back to Files' : 'Field View'}
+            </button>
+          </div>
+
+          {showFieldView ? (
+            <ConstructionDocuments
+              orgId={orgId}
+              sites={sites}
+              currentUser={currentUser}
+              onNotify={onNotify}
+              initialSiteId={formSiteId}
+            />
+          ) : (
+            <>
+              {/* Search and filters */}
+              <div className="flex flex-col justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 xl:flex-row xl:items-center">
+                <div className="relative w-full xl:max-w-sm">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="search"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    aria-label="Search uploaded drawings"
+                    placeholder="Search site, project, or document..."
+                    className={`${inputClass} pl-10`}
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex min-w-0 flex-1 items-center gap-2 sm:flex-none">
+                    <Building2 className="h-4 w-4 shrink-0 text-slate-400" />
+                    <select
+                      value={selectedSiteFilter}
+                      onChange={(e) => setSelectedSiteFilter(e.target.value)}
+                      aria-label="Filter by construction site"
+                      className={`${inputClass} sm:max-w-56`}
+                    >
+                      <option value="ALL">
+                        All Project Sites ({sites.length})
+                      </option>
+                      {sites.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.siteName || s.projectName}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
-                  {/* Discipline / Purpose */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Discipline / Purpose <span className="text-rose-500">*</span>
-                    </label>
+                  <div className="flex min-w-0 flex-1 items-center gap-2 sm:flex-none">
+                    <Layers className="h-4 w-4 shrink-0 text-slate-400" />
                     <select
-                      value={docPurpose}
-                      onChange={(e) => setDocPurpose(e.target.value)}
-                      className="w-full px-3.5 py-2.5 text-xs bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-medium"
+                      value={selectedPurposeFilter}
+                      onChange={(e) =>
+                        setSelectedPurposeFilter(e.target.value)
+                      }
+                      aria-label="Filter by discipline"
+                      className={`${inputClass} sm:max-w-56`}
                     >
+                      <option value="ALL">All Disciplines</option>
                       {DRAWING_PURPOSES.map((purpose) => (
                         <option key={purpose} value={purpose}>
                           {purpose}
@@ -1170,456 +1468,319 @@ export default function BlueprintsDrawings({
                     </select>
                   </div>
 
-                  {/* File Attachment Control */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Attach Blueprint File <span className="text-rose-500">*</span>
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.dwg,.dxf"
-                        onChange={handleFileAttach}
-                        className="hidden"
-                        id="blueprint-file-picker"
-                      />
-                      <label
-                        htmlFor="blueprint-file-picker"
-                        className="flex-1 px-3.5 py-2.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer transition-all truncate"
-                      >
-                        <UploadCloud className="w-4 h-4 text-blue-600 shrink-0" />
-                        <span className="truncate">
-                          {attachedFileName ? attachedFileName : 'Choose File (PDF, DWG, PNG...)'}
-                        </span>
-                      </label>
-
-                      {attachedFileName && (
-                        <span className="text-[10px] font-mono font-bold text-slate-600 bg-slate-200 px-2 py-2 rounded-xl shrink-0">
-                          {attachedFileSize}
-                        </span>
-                      )}
-                    </div>
+                  <div className="flex shrink-0 gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setDirectoryViewMode('cards')}
+                      aria-label="Cards view"
+                      aria-pressed={directoryViewMode === 'cards'}
+                      title="Cards view"
+                      className={`rounded-md p-2 transition-colors ${
+                        directoryViewMode === 'cards'
+                          ? 'bg-white text-[#0B3470] shadow-sm'
+                          : 'text-slate-400 hover:text-slate-700'
+                      }`}
+                    >
+                      <LayoutGrid className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDirectoryViewMode('table')}
+                      aria-label="Table view"
+                      aria-pressed={directoryViewMode === 'table'}
+                      title="Table view"
+                      className={`rounded-md p-2 transition-colors ${
+                        directoryViewMode === 'table'
+                          ? 'bg-white text-[#0B3470] shadow-sm'
+                          : 'text-slate-400 hover:text-slate-700'
+                      }`}
+                    >
+                      <Table className="h-4 w-4" />
+                    </button>
                   </div>
                 </div>
-
-                <div className="flex justify-end pt-2">
-                  <button
-                    type="button"
-                    onClick={handleAddToStaging}
-                    disabled={isUploadLocked}
-                    className="px-5 py-2.5 bg-[#0B3470] hover:bg-[#082855] disabled:opacity-40 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-2 transition-all cursor-pointer"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>ADD TO STAGING LIST</span>
-                  </button>
-                </div>
               </div>
-            </div>
 
-            {/* Staging Queue List */}
-            <div className="pt-4 border-t border-slate-100 space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-base font-bold text-slate-900">
-                    Step 3: Staged Queue ({stagedDocuments.length} document{stagedDocuments.length === 1 ? '' : 's'})
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Review blueprints staged in memory before committing to Firebase Storage and Firestore ledger.
+              {loading ? (
+                <div className="rounded-xl border border-slate-200 bg-white px-5 py-16 text-center">
+                  <RefreshCw className="mx-auto mb-3 h-7 w-7 animate-spin text-[#0B3470]" />
+                  <p className="text-sm font-medium text-slate-600">
+                    Loading uploaded files...
                   </p>
                 </div>
+              ) : filteredDirectorySets.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-300 bg-white px-5 py-16 text-center">
+                  <Compass className="mx-auto mb-3 h-10 w-10 text-slate-300" />
+                  <h3 className="text-sm font-semibold text-slate-800">
+                    No drawing configurations found
+                  </h3>
+                  <p className="mx-auto mt-2 max-w-md text-xs leading-relaxed text-slate-500">
+                    No site drawings match the selected filters. Switch to
+                    “Upload Section” to publish blueprints.
+                  </p>
+                </div>
+              ) : directoryViewMode === 'cards' ? (
+                <div className="space-y-5">
+                  {filteredDirectorySets.map((drawingSet) => {
+                    const subDocs = Array.isArray(drawingSet.siteDocs)
+                      ? drawingSet.siteDocs
+                      : []
 
-                {stagedDocuments.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleSaveAndUpload}
-                    disabled={saving}
-                    className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold shadow-md flex items-center gap-2 transition-all cursor-pointer"
-                  >
-                    {saving ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>UPLOADING TO STORAGE...</span>
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>SAVE & UPLOAD DRAWINGS</span>
-                      </>
-                    )}
-                  </button>
-                )}
-              </div>
+                    return (
+                      <article
+                        key={drawingSet.id || drawingSet.docId}
+                        className="overflow-hidden rounded-xl border border-slate-200 bg-white"
+                      >
+                        <div className="flex flex-col justify-between gap-4 border-b border-slate-100 bg-slate-50/60 p-5 lg:flex-row lg:items-center">
+                          <div className="min-w-0">
+                            <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                              <span>Site: {drawingSet.siteId}</span>
+                              <span aria-hidden="true">·</span>
+                              <span>
+                                {drawingSet.date ||
+                                  drawingSet.formattedDate ||
+                                  'N/A'}
+                              </span>
+                            </div>
 
-              {stagedDocuments.length === 0 ? (
-                <div className="p-8 text-center bg-slate-50/60 rounded-2xl border border-dashed border-slate-200 text-slate-400">
-                  <FolderOpen className="w-10 h-10 mx-auto mb-2 text-slate-300" />
-                  <p className="text-xs font-medium">Staging list is currently empty.</p>
-                  <span className="text-[11px] text-slate-400">
-                    Attach blueprint files above and tap "ADD TO STAGING LIST" to prepare your upload set.
-                  </span>
+                            <h3 className="text-base font-bold text-slate-900">
+                              {drawingSet.projectName}
+                            </h3>
+
+                            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                              <span>
+                                Supervisor: {drawingSet.supervisorName}
+                              </span>
+                              <span>Phase: {drawingSet.projectPhase}</span>
+                              <span>{subDocs.length} documents</span>
+                            </div>
+                          </div>
+
+                          <div className="flex shrink-0 flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleLoadInEditor(drawingSet)}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                            >
+                              <Edit3 className="h-3.5 w-3.5" />
+                              Load in Editor
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeleteSetConfirm(drawingSet)}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Delete Set
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-4 p-5 md:grid-cols-2 xl:grid-cols-3">
+                          {subDocs.map((item, sIdx) => {
+                            const ext = (
+                              item.fileType ||
+                              item.fileName?.split('.').pop() ||
+                              'pdf'
+                            ).toLowerCase()
+
+                            return (
+                              <div
+                                key={item.docId || sIdx}
+                                className="flex flex-col justify-between rounded-xl border border-slate-200 p-4 transition-colors hover:border-slate-300"
+                              >
+                                <div>
+                                  <div className="mb-3 flex items-start justify-between gap-2">
+                                    <div className="rounded-lg bg-blue-50 p-2 text-blue-700">
+                                      <FileText className="h-5 w-5" />
+                                    </div>
+                                    <span className="rounded bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase text-slate-500">
+                                      {ext}
+                                    </span>
+                                  </div>
+
+                                  <h4 className="break-words text-sm font-semibold text-slate-900">
+                                    {item.docName}
+                                  </h4>
+                                  <p className="mt-1 text-xs text-blue-700">
+                                    {item.purpose || 'Architectural'}
+                                  </p>
+
+                                  <p
+                                    title={item.fileName}
+                                    className="mt-3 truncate text-xs text-slate-500"
+                                  >
+                                    {item.fileName}
+                                  </p>
+                                  <p className="mt-1 text-xs text-slate-400">
+                                    {item.fileSize || 'Standard'}
+                                  </p>
+                                </div>
+
+                                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setActivePreviewDoc({
+                                        ...item,
+                                        orgId,
+                                        siteId: drawingSet.siteId,
+                                      })
+                                    }
+                                    className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#0B3470] px-3 py-2 text-xs font-semibold text-white hover:bg-[#082855]"
+                                  >
+                                    <Eye className="h-3.5 w-3.5" />
+                                    Preview
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleOpenEditModal(
+                                        drawingSet.id || drawingSet.docId,
+                                        drawingSet.siteId,
+                                        item
+                                      )
+                                    }
+                                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                    title="Update details or replace file"
+                                  >
+                                    <Edit3 className="h-3.5 w-3.5" />
+                                    Update
+                                  </button>
+
+                                  <a
+                                    href={item.fileUrl || item.docUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    download={item.fileName}
+                                    title="Download blueprint"
+                                    aria-label={`Download ${item.docName}`}
+                                    className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                                  >
+                                    <Download className="h-4 w-4" />
+                                  </a>
+
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setDeleteSingleConfirm({
+                                        parentDocId:
+                                          drawingSet.id || drawingSet.docId,
+                                        docId: item.docId,
+                                        docName: item.docName,
+                                        siteId: drawingSet.siteId,
+                                      })
+                                    }
+                                    title="Delete blueprint"
+                                    aria-label={`Delete ${item.docName}`}
+                                    className="rounded-lg p-2 text-rose-500 hover:bg-rose-50"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </article>
+                    )
+                  })}
                 </div>
               ) : (
-                <div className="bg-white rounded-2xl border border-slate-200/80 overflow-hidden shadow-xs">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider text-[11px]">
-                        <th className="py-3 px-4">Document Title</th>
-                        <th className="py-3 px-4">Discipline</th>
-                        <th className="py-3 px-4">File Name</th>
-                        <th className="py-3 px-4">Size</th>
-                        <th className="py-3 px-4">Format</th>
-                        <th className="py-3 px-4 text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {stagedDocuments.map((item, index) => (
-                        <tr key={item.docId} className="hover:bg-slate-50/60">
-                          <td className="py-3 px-4 font-bold text-slate-800">{item.docName}</td>
-                          <td className="py-3 px-4 text-slate-600">{item.purpose}</td>
-                          <td className="py-3 px-4 font-mono text-slate-500 truncate max-w-48">
-                            {item.fileName}
-                          </td>
-                          <td className="py-3 px-4 text-slate-600">{item.fileSize}</td>
-                          <td className="py-3 px-4">
-                            <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-blue-100 text-blue-800">
-                              {item.fileType}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 text-right">
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveStagedItem(index)}
-                              title="Remove from staging"
-                              className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-all cursor-pointer"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </td>
+                <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="border-b border-slate-200 bg-slate-50 text-slate-500">
+                        <tr>
+                          <th className="px-4 py-3 font-semibold">Site ID</th>
+                          <th className="px-4 py-3 font-semibold">
+                            Project Name
+                          </th>
+                          <th className="px-4 py-3 font-semibold">
+                            Supervisor
+                          </th>
+                          <th className="px-4 py-3 font-semibold">
+                            Total Docs
+                          </th>
+                          <th className="px-4 py-3 font-semibold">
+                            Upload Date
+                          </th>
+                          <th className="px-4 py-3 text-right font-semibold">
+                            Actions
+                          </th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+
+                      <tbody className="divide-y divide-slate-100">
+                        {filteredDirectorySets.map((set) => (
+                          <tr
+                            key={set.id || set.docId}
+                            className="hover:bg-slate-50/60"
+                          >
+                            <td className="px-4 py-4 font-semibold text-slate-800">
+                              {set.siteId}
+                            </td>
+                            <td className="px-4 py-4 font-semibold text-slate-900">
+                              {set.projectName}
+                            </td>
+                            <td className="px-4 py-4 text-slate-600">
+                              {set.supervisorName}
+                            </td>
+                            <td className="px-4 py-4 font-semibold text-blue-700">
+                              {set.totalDocuments ||
+                                set.siteDocs?.length ||
+                                0}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-4 text-slate-500">
+                              {set.date || set.formattedDate}
+                            </td>
+                            <td className="px-4 py-4">
+                              <div className="flex justify-end gap-2">
+                                {set.siteDocs?.length > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setActivePreviewDoc({
+                                        ...set.siteDocs[0],
+                                        orgId,
+                                        siteId: set.siteId,
+                                      })
+                                    }
+                                    className="rounded-lg bg-[#0B3470] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#082855]"
+                                    title="Preview first blueprint"
+                                  >
+                                    Preview
+                                  </button>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleLoadInEditor(set)}
+                                  className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200"
+                                >
+                                  Edit
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => setDeleteSetConfirm(set)}
+                                  className="rounded-lg bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* TAB 1: DRAWINGS DIRECTORY & MANAGEMENT FLOW */}
-      {/* ========================================================================= */}
-      {activeTab === 1 && (
-        <div className="space-y-6">
-          {/* Search and Filters Bar */}
-          <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col md:flex-row gap-3 items-center justify-between">
-            <div className="relative w-full md:w-80">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by site, project, document..."
-                className="w-full pl-10 pr-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-              />
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
-              {/* Site Filter */}
-              <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
-                <Building2 className="w-3.5 h-3.5 text-slate-400" />
-                <select
-                  value={selectedSiteFilter}
-                  onChange={(e) => setSelectedSiteFilter(e.target.value)}
-                  className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                >
-                  <option value="ALL">All Project Sites ({sites.length})</option>
-                  {sites.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.siteName || s.projectName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Purpose Discipline Filter */}
-              <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
-                <Layers className="w-3.5 h-3.5 text-slate-400" />
-                <select
-                  value={selectedPurposeFilter}
-                  onChange={(e) => setSelectedPurposeFilter(e.target.value)}
-                  className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                >
-                  <option value="ALL">All Disciplines</option>
-                  {DRAWING_PURPOSES.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* View Switcher */}
-              <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80">
-                <button
-                  type="button"
-                  onClick={() => setDirectoryViewMode('cards')}
-                  className={`p-1.5 rounded-lg transition-all cursor-pointer ${
-                    directoryViewMode === 'cards'
-                      ? 'bg-[#0B3470] text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                  title="Cards View"
-                >
-                  <LayoutGrid className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDirectoryViewMode('table')}
-                  className={`p-1.5 rounded-lg transition-all cursor-pointer ${
-                    directoryViewMode === 'table'
-                      ? 'bg-[#0B3470] text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                  title="Table View"
-                >
-                  <Table className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Directory Content */}
-          {loading ? (
-            <div className="bg-white rounded-2xl border border-slate-200/80 p-16 text-center">
-              <RefreshCw className="w-8 h-8 text-[#0B3470] animate-spin mx-auto mb-2" />
-              <p className="text-xs font-bold text-slate-700">Loading drawings catalog...</p>
-            </div>
-          ) : filteredDirectorySets.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-16 text-center">
-              <Compass className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-              <h3 className="text-sm font-bold text-slate-800">No drawing configurations found</h3>
-              <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-                No site drawings match the selected filters. Switch to "Upload & Configure" to publish blueprints.
-              </p>
-            </div>
-          ) : directoryViewMode === 'cards' ? (
-            /* CARDS FORMAT: Set Cards with Expanded Sub-Documents */
-            <div className="space-y-6">
-              {filteredDirectorySets.map((drawingSet) => {
-                const subDocs = Array.isArray(drawingSet.siteDocs) ? drawingSet.siteDocs : []
-
-                return (
-                  <div
-                    key={drawingSet.id || drawingSet.docId}
-                    className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden"
-                  >
-                    {/* Set Card Header */}
-                    <div className="p-5 bg-gradient-to-r from-slate-50 via-slate-50/80 to-white border-b border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-[10px] font-extrabold uppercase tracking-wider text-blue-700 bg-blue-100/80 px-2 py-0.5 rounded-md">
-                            Site ID: {drawingSet.siteId}
-                          </span>
-                          <span className="text-xs font-semibold text-slate-500">
-                            Set Date: {drawingSet.date || drawingSet.formattedDate || 'N/A'}
-                          </span>
-                        </div>
-                        <h3 className="text-base font-extrabold text-slate-900">
-                          {drawingSet.projectName}
-                        </h3>
-                        <div className="flex items-center gap-4 text-xs text-slate-500 mt-1">
-                          <span>Supervisor: {drawingSet.supervisorName}</span>
-                          <span>•</span>
-                          <span>Phase: {drawingSet.projectPhase}</span>
-                          <span>•</span>
-                          <span>
-                            Total Documents:{' '}
-                            <strong className="text-slate-800 font-bold">{subDocs.length}</strong>
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Header Actions */}
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleLoadInEditor(drawingSet)}
-                          className="px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 rounded-xl text-xs font-bold border border-slate-200 shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                          <span>Load in Editor</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDeleteSetConfirm(drawingSet)}
-                          title="Delete Drawing Set"
-                          className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl text-xs font-bold border border-rose-200 transition-all cursor-pointer flex items-center gap-1.5"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          <span>Delete Set</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Sub-Documents List */}
-                    <div className="p-5">
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {subDocs.map((item, sIdx) => {
-                          const ext = (item.fileType || item.fileName?.split('.').pop() || 'pdf').toLowerCase()
-                          const isCad = ['dwg', 'dxf'].includes(ext)
-
-                          return (
-                            <div
-                              key={item.docId || sIdx}
-                              className="p-4 rounded-xl border border-slate-200/80 bg-slate-50/50 hover:bg-white hover:shadow-xs transition-all flex flex-col justify-between"
-                            >
-                              <div>
-                                <div className="flex items-start justify-between gap-2 mb-2">
-                                  <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200/60">
-                                    {item.purpose || 'Architectural'}
-                                  </span>
-                                  <span className="text-[10px] font-mono font-bold uppercase px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">
-                                    {ext}
-                                  </span>
-                                </div>
-                                <h4 className="text-xs font-bold text-slate-900 line-clamp-2">
-                                  {item.docName}
-                                </h4>
-                                <div className="mt-2 text-[11px] text-slate-400 space-y-0.5">
-                                  <div className="truncate font-mono">{item.fileName}</div>
-                                  <div>Size: {item.fileSize || 'Standard'}</div>
-                                </div>
-                              </div>
-
-                              {/* Document Action Buttons */}
-                              <div className="mt-4 pt-3 border-t border-slate-200/60 flex items-center justify-between gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => setActivePreviewDoc({ ...item, orgId, siteId: drawingSet.siteId })}
-                                  className="flex-1 py-1.5 px-2 bg-[#0B3470] hover:bg-[#082855] text-white rounded-lg text-[11px] font-bold shadow-xs flex items-center justify-center gap-1 transition-all cursor-pointer"
-                                  title="Preview existing stored blueprint"
-                                >
-                                  <Eye className="w-3 h-3" />
-                                  <span>Preview</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenEditModal(drawingSet.id || drawingSet.docId, drawingSet.siteId, item)}
-                                  className="py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[11px] font-bold shadow-xs flex items-center justify-center gap-1 transition-all cursor-pointer"
-                                  title="Update title, discipline, or replace stored file"
-                                >
-                                  <Edit3 className="w-3 h-3" />
-                                  <span>Update</span>
-                                </button>
-                                <a
-                                  href={item.fileUrl || item.docUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  download={item.fileName}
-                                  className="p-1.5 bg-white hover:bg-slate-100 text-slate-700 rounded-lg border border-slate-200 text-[11px] font-semibold flex items-center justify-center transition-all cursor-pointer"
-                                  title="Download blueprint"
-                                >
-                                  <Download className="w-3.5 h-3.5" />
-                                </a>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setDeleteSingleConfirm({
-                                      parentDocId: drawingSet.id || drawingSet.docId,
-                                      docId: item.docId,
-                                      docName: item.docName,
-                                      siteId: drawingSet.siteId,
-                                    })
-                                  }
-                                  title="Delete individual blueprint"
-                                  className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-all cursor-pointer"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          ) : (
-            /* TABLE FORMAT VIEW */
-            <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider text-[11px]">
-                      <th className="py-3 px-4">Site ID</th>
-                      <th className="py-3 px-4">Project Name</th>
-                      <th className="py-3 px-4">Supervisor</th>
-                      <th className="py-3 px-4">Total Docs</th>
-                      <th className="py-3 px-4">Upload Date</th>
-                      <th className="py-3 px-4 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filteredDirectorySets.map((set) => (
-                      <tr key={set.id || set.docId} className="hover:bg-slate-50/60">
-                        <td className="py-3 px-4 font-bold text-slate-800">{set.siteId}</td>
-                        <td className="py-3 px-4 font-semibold text-slate-900">{set.projectName}</td>
-                        <td className="py-3 px-4 text-slate-600">{set.supervisorName}</td>
-                        <td className="py-3 px-4 font-bold text-blue-700">
-                          {set.totalDocuments || set.siteDocs?.length || 0}
-                        </td>
-                        <td className="py-3 px-4 text-slate-500">{set.date || set.formattedDate}</td>
-                        <td className="py-3 px-4 text-right space-x-2">
-                          {set.siteDocs?.length > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => setActivePreviewDoc({ ...set.siteDocs[0], orgId, siteId: set.siteId })}
-                              className="px-2.5 py-1 bg-[#0B3470] hover:bg-[#082855] text-white rounded-lg font-semibold text-[11px] cursor-pointer"
-                              title="Preview first blueprint"
-                            >
-                              Preview
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => handleLoadInEditor(set)}
-                            className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-semibold text-[11px] cursor-pointer"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDeleteSetConfirm(set)}
-                            className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg font-semibold text-[11px]"
-                          >
-                            Delete
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            </>
           )}
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* TAB 2: FIELD SUPERVISOR VIEWER (CONSTRUCTION DOCUMENTS) */}
-      {/* ========================================================================= */}
-      {activeTab === 2 && (
-        <ConstructionDocuments
-          orgId={orgId}
-          sites={sites}
-          currentUser={currentUser}
-          onNotify={onNotify}
-          initialSiteId={formSiteId}
-        />
+        </section>
       )}
     </div>
   )

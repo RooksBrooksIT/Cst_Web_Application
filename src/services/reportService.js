@@ -350,12 +350,15 @@ export function calculateDailySiteExpenses({
           const billKey = `${docId || 'mgr'}_${b.id || b.billId || b.billNumber || idx}_${amt}_${desc}`
           if (seenBillKeys.has(billKey)) return
           seenBillKeys.add(billKey)
+          const rawQty = b.quantity !== undefined ? b.quantity : (b.qty !== undefined ? b.qty : (entry.quantity !== undefined ? entry.quantity : (entry.qty !== undefined ? entry.qty : null)))
+          const parsedQty = rawQty !== null && rawQty !== undefined && rawQty !== '' ? (Number.isFinite(Number(rawQty)) ? Number(rawQty) : rawQty) : null
           bills.push({
             source: 'Manager Voucher',
             description: desc,
             amount: amt,
             vendor: b.vendor || b.vendorName || entry.vendorName || 'Voucher',
-            billNumber: b.billNumber || b.billId || `VOU-${idx + 1}`,
+            billNumber: b.billNumber || b.billId || b.billNo || `VOU-${idx + 1}`,
+            quantity: parsedQty,
           })
         })
       } else if (entry.amount || entry.totalAmount) {
@@ -364,12 +367,15 @@ export function calculateDailySiteExpenses({
         const billKey = `${docId || 'mgr'}_${amt}_${desc}`
         if (!seenBillKeys.has(billKey)) {
           seenBillKeys.add(billKey)
+          const rawQty = entry.quantity !== undefined ? entry.quantity : (entry.qty !== undefined ? entry.qty : null)
+          const parsedQty = rawQty !== null && rawQty !== undefined && rawQty !== '' ? (Number.isFinite(Number(rawQty)) ? Number(rawQty) : rawQty) : null
           bills.push({
             source: 'Manager Voucher',
             description: desc,
             amount: amt,
             vendor: entry.vendorName || entry.managerName || 'Manager Approved',
             billNumber: entry.billNumber || 'VOU',
+            quantity: parsedQty,
           })
         }
       }
@@ -394,12 +400,15 @@ export function calculateDailySiteExpenses({
         if (!seenBillKeys.has(billKey)) {
           seenBillKeys.add(billKey)
           if (docId) seenManagerDocIds.add(docId)
+          const rawQty = sumDoc.quantity !== undefined ? sumDoc.quantity : (sumDoc.qty !== undefined ? sumDoc.qty : null)
+          const parsedQty = rawQty !== null && rawQty !== undefined && rawQty !== '' ? (Number.isFinite(Number(rawQty)) ? Number(rawQty) : rawQty) : null
           bills.push({
             source: 'Manager Voucher',
             description: desc,
             amount: amt,
             vendor: sumDoc.managerName || 'Operations Manager',
             billNumber: 'MGR-SUM',
+            quantity: parsedQty,
           })
         }
       }
@@ -424,15 +433,18 @@ export function calculateDailySiteExpenses({
         entry.bills.forEach((b, idx) => {
           const amt = parseAmount(b.amount || b.totalAmount || b.billAmount)
           const desc = b.description || b.category || entry.description || 'Central Office Expense'
-          const billKey = `${docId || 'org'}_${b.id || b.billId || b.billNumber || idx}_${amt}_${desc}`
+          const billKey = `${docId || 'org'}_${b.id || b.billId || b.billNumber || b.billNo || idx}_${amt}_${desc}`
           if (seenBillKeys.has(billKey)) return
           seenBillKeys.add(billKey)
+          const rawQty = b.quantity !== undefined ? b.quantity : (b.qty !== undefined ? b.qty : (entry.quantity !== undefined ? entry.quantity : (entry.qty !== undefined ? entry.qty : null)))
+          const parsedQty = rawQty !== null && rawQty !== undefined && rawQty !== '' ? (Number.isFinite(Number(rawQty)) ? Number(rawQty) : rawQty) : null
           bills.push({
             source: 'Direct Org Bill',
             description: desc,
             amount: amt,
             vendor: b.vendor || b.vendorName || entry.vendorName || entry.partyName || 'Direct Bill',
-            billNumber: b.billNumber || b.billId || `ORG-${idx + 1}`,
+            billNumber: b.billNumber || b.billId || b.billNo || `ORG-${idx + 1}`,
+            quantity: parsedQty,
           })
         })
       } else {
@@ -441,12 +453,15 @@ export function calculateDailySiteExpenses({
         const billKey = `${docId || 'org'}_${amt}_${desc}`
         if (!seenBillKeys.has(billKey)) {
           seenBillKeys.add(billKey)
+          const rawQty = entry.quantity !== undefined ? entry.quantity : (entry.qty !== undefined ? entry.qty : null)
+          const parsedQty = rawQty !== null && rawQty !== undefined && rawQty !== '' ? (Number.isFinite(Number(rawQty)) ? Number(rawQty) : rawQty) : null
           bills.push({
             source: 'Direct Org Bill',
             description: desc,
             amount: amt,
             vendor: entry.vendorName || entry.partyName || 'Direct Bill',
             billNumber: entry.billNumber || 'ORG-BILL',
+            quantity: parsedQty,
           })
         }
       }
@@ -471,12 +486,15 @@ export function calculateDailySiteExpenses({
         if (!seenBillKeys.has(billKey)) {
           seenBillKeys.add(billKey)
           if (docId) seenOrgDocIds.add(docId)
+          const rawQty = sumDoc.quantity !== undefined ? sumDoc.quantity : (sumDoc.qty !== undefined ? sumDoc.qty : null)
+          const parsedQty = rawQty !== null && rawQty !== undefined && rawQty !== '' ? (Number.isFinite(Number(rawQty)) ? Number(rawQty) : rawQty) : null
           bills.push({
             source: 'Direct Org Bill',
             description: desc,
             amount: amt,
             vendor: sumDoc.projectName || 'Central Office',
             billNumber: 'ORG-SUM',
+            quantity: parsedQty,
           })
         }
       }
@@ -496,12 +514,15 @@ export function calculateDailySiteExpenses({
       const billKey = `${b.id || 'cont'}_${amt}_${desc}`
       if (!seenBillKeys.has(billKey)) {
         seenBillKeys.add(billKey)
+        const rawQty = b.quantity !== undefined ? b.quantity : (b.qty !== undefined ? b.qty : null)
+        const parsedQty = rawQty !== null && rawQty !== undefined && rawQty !== '' ? (Number.isFinite(Number(rawQty)) ? Number(rawQty) : rawQty) : null
         bills.push({
           source: 'Contractor Payout',
           description: desc,
           amount: amt,
           vendor: b.contractorName || 'Contractor',
           billNumber: b.billNumber || 'CONT',
+          quantity: parsedQty,
         })
       }
     }
