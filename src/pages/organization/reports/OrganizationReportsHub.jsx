@@ -29,7 +29,7 @@ import PettyCashInsightsReportHub from './PettyCashInsightsReportHub'
 import DomainInventoryReportsHub from './DomainInventoryReportsHub'
 import WorkerAttendanceReport from './WorkerAttendanceReport'
 import { money, parseAmount } from '../../../services/reportService'
-import { exportToCSV, printReport } from '../../../services/exportService'
+import { exportToCSV, printReport, fetchOrgNameFromFirestore, getActiveOrgId } from '../../../services/exportService'
 import { useAuth } from '../../../hooks/useAuth'
 import { CONFIG_SECTIONS, subscribeConfigItems } from '../../../services/projectConfigService'
 import {
@@ -117,6 +117,25 @@ export default function OrganizationReportsHub(props) {
   const activeRole = role || authRole || 'Organization'
   const location = useLocation()
   const navigate = useNavigate()
+
+  const [orgName, setOrgName] = useState(props.orgName || '')
+
+  useEffect(() => {
+    let isMounted = true
+    async function resolveOrgName() {
+      const resolvedOrgId = activeOrgId || getActiveOrgId()
+      if (resolvedOrgId) {
+        const name = await fetchOrgNameFromFirestore(resolvedOrgId)
+        if (isMounted && name) {
+          setOrgName(name)
+        }
+      }
+    }
+    resolveOrgName()
+    return () => {
+      isMounted = false
+    }
+  }, [activeOrgId])
 
   const [stagesFromConfig, setStagesFromConfig] = useState([])
   const [internalMaterialsAvailability, setInternalMaterialsAvailability] = useState([])
@@ -427,7 +446,7 @@ export default function OrganizationReportsHub(props) {
       ['Operating Liquidity Balance', cashInHand],
       ['Budget Collection Rate', `${collectionRate}%`],
       ['Capital Burn Rate', `${burnRate}%`],
-    ])
+    ], { orgName })
     setShowExportMenu(false)
   }
 
@@ -435,6 +454,7 @@ export default function OrganizationReportsHub(props) {
     const content = `
       <div style="margin-bottom: 24px; padding-bottom: 12px; border-bottom: 2px solid #0B3470;">
         <h2 style="margin: 0; color: #0B3470; font-size: 20px;">Executive Portfolio Statement</h2>
+        ${orgName ? `<p style="margin: 3px 0 6px 0; color: #0B3470; font-weight: bold; font-size: 14px;">Organization: ${orgName}</p>` : ''}
         <p style="margin: 4px 0; color: #64748b; font-size: 12px;">Verified real-time multi-site financial telemetry</p>
       </div>
 
@@ -494,7 +514,7 @@ export default function OrganizationReportsHub(props) {
         </tbody>
       </table>
     `
-    printReport('Executive Portfolio Financial Statement', content)
+    printReport('Executive Portfolio Financial Statement', content, { orgName })
     setShowExportMenu(false)
   }
 
@@ -934,6 +954,7 @@ export default function OrganizationReportsHub(props) {
               hideHeaderFilters={true}
               orgId={activeOrgId}
               role={activeRole}
+              orgName={orgName}
             />
           )}
 
@@ -949,6 +970,7 @@ export default function OrganizationReportsHub(props) {
                   subReport={currentSubReport}
                   initialSiteId={filterSiteId}
                   hideHeaderFilters={true}
+                  orgName={orgName}
                 />
               )}
               {currentSubReport === 'petty_cash' && (
@@ -960,6 +982,7 @@ export default function OrganizationReportsHub(props) {
                   subReport="audit"
                   initialSiteId={filterSiteId}
                   hideHeaderFilters={true}
+                  orgName={orgName}
                 />
               )}
             </>
@@ -974,6 +997,7 @@ export default function OrganizationReportsHub(props) {
                   initialSiteId={filterSiteId}
                   initialStage={filterStage}
                   hideHeaderFilters={true}
+                  orgName={orgName}
                 />
               ) : (
                 <ProjectStageReportsHub
@@ -986,6 +1010,7 @@ export default function OrganizationReportsHub(props) {
                   initialStage={filterStage}
                   projectStages={configuredStageNames}
                   hideHeaderFilters={true}
+                  orgName={orgName}
                 />
               )}
             </>
@@ -1001,6 +1026,7 @@ export default function OrganizationReportsHub(props) {
                   initialMonth={filterDate ? filterDate.slice(0, 7) : currentMonthStr}
                   initialSiteId={filterSiteId}
                   hideHeaderFilters={true}
+                  orgName={orgName}
                 />
               )}
               {currentSubReport === 'incentives' && (
@@ -1026,6 +1052,7 @@ export default function OrganizationReportsHub(props) {
                   initialStage={filterStage}
                   projectStages={configuredStageNames}
                   hideHeaderFilters={true}
+                  orgName={orgName}
                 />
               )}
             </>
@@ -1055,6 +1082,7 @@ export default function OrganizationReportsHub(props) {
               initialStage={filterStage}
               projectStages={configuredStageNames}
               hideHeaderFilters={true}
+              orgName={orgName}
             />
           )}
         </div>

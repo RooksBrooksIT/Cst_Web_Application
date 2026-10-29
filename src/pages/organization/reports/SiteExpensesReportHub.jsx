@@ -8,7 +8,7 @@ import {
   calculateDateRangeExpenses,
   calculateSiteLifetimeSummary,
 } from '../../../services/reportService'
-import { exportToCSV, printReport } from '../../../services/exportService'
+import { exportToCSV, printReport, fetchOrgNameFromFirestore, getActiveOrgId } from '../../../services/exportService'
 import { useAuth } from '../../../hooks/useAuth'
 import { CONFIG_SECTIONS, subscribeConfigItems } from '../../../services/projectConfigService'
 import { getNormalizedSiteOptions } from '../../../utils/siteUtils.js'
@@ -38,11 +38,32 @@ export default function SiteExpensesReportHub({
   orgId = null,
   role = null,
   hideHeaderFilters = false,
+  orgName = null,
 }) {
   const { orgId: authOrgId, role: authRole, userData } = useAuth()
   const activeOrgId = orgId || authOrgId
   const activeRole = role || authRole || userData?.role || userData?.userRole || 'Organization'
   const [stagesFromConfig, setStagesFromConfig] = useState([])
+  const [internalOrgName, setInternalOrgName] = useState(orgName || '')
+
+  React.useEffect(() => {
+    let isMounted = true
+    async function loadOrgName() {
+      if (orgName) {
+        setInternalOrgName(orgName)
+        return
+      }
+      const targetOrgId = activeOrgId || getActiveOrgId()
+      if (targetOrgId) {
+        const fetched = await fetchOrgNameFromFirestore(targetOrgId)
+        if (isMounted && fetched) setInternalOrgName(fetched)
+      }
+    }
+    loadOrgName()
+    return () => { isMounted = false }
+  }, [orgName, activeOrgId])
+
+  const effectiveOrgName = orgName || internalOrgName
 
   // Real-time synchronization for role-based Firestore collections
   const [realtimeData, setRealtimeData] = useState({
@@ -258,13 +279,14 @@ export default function SiteExpensesReportHub({
       ['Transport & Fuel', 'Vehicle / Site Fuel', 'Site Transport', dailyReport.transportAmount],
       ...dailyReport.bills.map((b) => [b.source, b.description, b.vendor, b.amount]),
     ]
-    exportToCSV(`Daily_Report_${selectedSite?.projectName || 'Site'}_${selectedDate}`, ['Category', 'Item / Description', 'Unit / Details', 'Amount (INR)'], rows)
+    exportToCSV(`Daily_Report_${selectedSite?.projectName || 'Site'}_${selectedDate}`, ['Category', 'Item / Description', 'Unit / Details', 'Amount (INR)'], rows, { orgName: effectiveOrgName })
   }
 
   const handlePrintDailyPDF = () => {
     const content = `
       <div style="margin-bottom: 20px;">
         <h2 style="margin: 0; color: #0B3470;">Daily Site Expenses Report</h2>
+        ${effectiveOrgName ? `<p style="margin: 4px 0; color: #0B3470; font-weight: bold;"><strong>Organization:</strong> ${effectiveOrgName}</p>` : ''}
         <p style="margin: 4px 0; color: #475569;"><strong>Site:</strong> ${dailyReport.siteName} (${dailyReport.siteLocation})</p>
         <p style="margin: 4px 0; color: #475569;"><strong>Date:</strong> ${formatDateDisplay(dailyReport.date)} | <strong>Stage:</strong> ${dailyReport.projectStage} | <strong>Supervisor:</strong> ${dailyReport.supervisorName}</p>
         <div style="background: #0B3470; color: white; padding: 12px; border-radius: 8px; margin-top: 12px; font-size: 16px; font-weight: bold;">
@@ -305,7 +327,7 @@ export default function SiteExpensesReportHub({
         </tbody>
       </table>
     `
-    printReport(`Daily Site Expenses - ${dailyReport.siteName}`, content)
+    printReport(`Daily Site Expenses - ${dailyReport.siteName}`, content, { orgName: effectiveOrgName })
   }
 
   const handleExportRangeCSV = () => {
@@ -319,13 +341,14 @@ export default function SiteExpensesReportHub({
       day.totalBills,
       day.grandTotal,
     ])
-    exportToCSV(`Date_Range_Report_${selectedSite?.projectName || 'Site'}_${fromDate}_to_${toDate}`, ['Date', 'Day', 'Labour (INR)', 'Materials (INR)', 'Food (INR)', 'Transport (INR)', 'Bills (INR)', 'Daily Total (INR)'], rows)
+    exportToCSV(`Date_Range_Report_${selectedSite?.projectName || 'Site'}_${fromDate}_to_${toDate}`, ['Date', 'Day', 'Labour (INR)', 'Materials (INR)', 'Food (INR)', 'Transport (INR)', 'Bills (INR)', 'Daily Total (INR)'], rows, { orgName: effectiveOrgName })
   }
 
   const handlePrintRangePDF = () => {
     const content = `
       <div style="margin-bottom: 20px;">
         <h2 style="margin: 0; color: #0B3470;">Date Range Site Expenses Statement</h2>
+        ${effectiveOrgName ? `<p style="margin: 4px 0; color: #0B3470; font-weight: bold;"><strong>Organization:</strong> ${effectiveOrgName}</p>` : ''}
         <p style="margin: 4px 0; color: #475569;"><strong>Site:</strong> ${rangeReport.siteName}</p>
         <p style="margin: 4px 0; color: #475569;"><strong>Period:</strong> ${rangeReport.fromDate} to ${rangeReport.toDate} (${rangeReport.daysCount} active days)</p>
       </div>
@@ -374,7 +397,7 @@ export default function SiteExpensesReportHub({
         </tbody>
       </table>
     `
-    printReport(`Range Report - ${rangeReport.siteName}`, content)
+    printReport(`Range Report - ${rangeReport.siteName}`, content, { orgName: effectiveOrgName })
   }
 
   const handleExportSummaryCSV = () => {
@@ -387,7 +410,7 @@ export default function SiteExpensesReportHub({
       ['Contract Budget Remaining Cushion', kpis.budgetRemaining],
       ['Budget Utilization Rate', `${kpis.usagePercent}%`],
     ]
-    exportToCSV(`Site_Summary_${selectedSite?.projectName || 'Site'}`, ['Metric', 'Amount (INR)'], rows)
+    exportToCSV(`Site_Summary_${selectedSite?.projectName || 'Site'}`, ['Metric', 'Amount (INR)'], rows, { orgName: effectiveOrgName })
   }
 
   return (
