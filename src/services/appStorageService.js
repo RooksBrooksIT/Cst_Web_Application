@@ -68,9 +68,14 @@ export async function ensureStorageAuthenticated(orgId) {
 
       if ((!orgData?.email && !orgData?.Email) || (!orgData?.password && !orgData?.Password)) {
         try {
-          const adminDataSnap = await getDoc(doc(db, 'organisation', targetOrgId, 'admin', 'data'))
-          if (adminDataSnap.exists()) {
-            orgData = { ...(orgData || {}), ...adminDataSnap.data() }
+          const [adminDataSnap1, adminDataSnap2] = await Promise.all([
+            getDoc(doc(db, 'organisation', targetOrgId, 'data', 'admin')),
+            getDoc(doc(db, 'organisation', targetOrgId, 'admin', 'data')),
+          ])
+          if (adminDataSnap1.exists()) {
+            orgData = { ...(orgData || {}), ...adminDataSnap1.data() }
+          } else if (adminDataSnap2.exists()) {
+            orgData = { ...(orgData || {}), ...adminDataSnap2.data() }
           }
         } catch (e) {
           console.warn('Could not read admin/data doc for storage auth:', e?.message)

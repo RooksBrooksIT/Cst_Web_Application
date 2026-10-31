@@ -9,6 +9,7 @@ import {
   formatDateToKey,
   formatDateToISO,
   calculateDailySiteExpenses,
+  calculateDateRangeExpenses,
   calculateSiteLifetimeSummary,
   calculateProjectStageReport,
   calculateSiteStatusReport,
@@ -561,6 +562,104 @@ describe('Reports Data Accuracy & De-duplication Tests', () => {
       assert.equal(result.grandTotal, 3000)
       assert.equal(result.labours.length, 2)
       assert.equal(result.siteName, 'All Managed Sites')
+    })
+
+    it('fetches Food, Transport, and Fuel as three distinct values without cross-pollution', () => {
+      const supEntries = [
+        {
+          id: 'SUP_OPS_1',
+          siteId: 'ST001',
+          date: '2026-10-31',
+          foodAllowance: 650,
+          transportAmount: 400,
+          fuelCost: 1250,
+          labours: [{ role: 'Carpenter', count: 2, rate: 800, amount: 1600 }],
+          materials: [{ name: 'Nails & Glue', quantity: 1, unitPrice: 500, amount: 500 }],
+        },
+      ]
+
+      const result = calculateDailySiteExpenses({
+        site: { id: 'ST001', siteName: 'Site 1' },
+        selectedDate: '2026-10-31',
+        siteSupervisorEntries: supEntries,
+      })
+
+      assert.equal(result.totalLabour, 1600)
+      assert.equal(result.totalMaterial, 500)
+      assert.equal(result.foodAmount, 650)
+      assert.equal(result.transportAmount, 400)
+      assert.equal(result.fuelAmount, 1250)
+      // 1600 + 500 + 650 + 400 + 1250 = 4400
+      assert.equal(result.grandTotal, 4400)
+    })
+
+    it('correctly extracts food, transport, and fuel from dailySiteLogs and nested expenses object', () => {
+      const dailySiteLogs = [
+        {
+          id: 'LOG_1',
+          siteId: 'ST001',
+          date: '2026-10-31',
+          expenses: {
+            foodCost: 350,
+            transportCost: 250,
+            fuelCost: 800,
+          },
+        },
+      ]
+
+      const result = calculateDailySiteExpenses({
+        site: { id: 'ST001', siteName: 'Site 1' },
+        selectedDate: '2026-10-31',
+        siteSupervisorEntries: [],
+        dailySiteLogs,
+      })
+
+      assert.equal(result.foodAmount, 350)
+      assert.equal(result.transportAmount, 250)
+      assert.equal(result.fuelAmount, 800)
+      assert.equal(result.grandTotal, 1400)
+    })
+  })
+
+  describe('calculateDateRangeExpenses: Food, Transport & Fuel KPI tracking', () => {
+    it('accurately tracks totalFood, totalTransport, and totalFuel across date ranges', () => {
+      const supEntries = [
+        {
+          id: 'SUP_DAY_1',
+          siteId: 'ST001',
+          date: '2026-10-25',
+          foodAllowance: 400,
+          transportAmount: 200,
+          fuelCost: 500,
+          totalLabourAmount: 2000,
+        },
+        {
+          id: 'SUP_DAY_2',
+          siteId: 'ST001',
+          date: '2026-10-26',
+          foodAllowance: 600,
+          transportAmount: 300,
+          fuelCost: 700,
+          totalLabourAmount: 3000,
+        },
+      ]
+
+      const rangeResult = calculateDateRangeExpenses({
+        site: { id: 'ST001', siteName: 'Site 1' },
+        fromDate: '2026-10-25',
+        toDate: '2026-10-26',
+        siteSupervisorEntries: supEntries,
+      })
+
+      assert.equal(rangeResult.kpis.totalLabour, 5000)
+      assert.equal(rangeResult.kpis.totalFood, 1000)
+      assert.equal(rangeResult.kpis.totalTransport, 500)
+      assert.equal(rangeResult.kpis.totalFuel, 1200)
+      // 5000 + 1000 + 500 + 1200 = 7700
+      assert.equal(rangeResult.kpis.grandTotal, 7700)
+      assert.equal(rangeResult.dayCards.length, 2)
+      assert.equal(rangeResult.dayCards[0].fuelAmount, 500)
+      assert.equal(rangeResult.dayCards[1].fuelAmount, 700)
     })
   })
 })

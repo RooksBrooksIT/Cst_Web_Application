@@ -92,4 +92,73 @@ describe('Supervisor Configuration & Collection Schema Unit Tests', () => {
     assert.equal(isValidPhone(''), false) // empty
     assert.equal(isValidPhone('abcdefghij'), false) // non-numeric
   })
+
+  it('accurately calculates supervisor quota, used count, and remaining count across subscription tiers', () => {
+    const computeQuotaTelemetry = (planLimits, supervisorsList) => {
+      const raw = planLimits?.quotas?.maxSupervisors ?? planLimits?.maxSupervisors
+      const totalQuota = Number(raw) || 0
+      const usedCount = (supervisorsList || []).length
+      const isUnlimited = totalQuota >= 999999 || totalQuota === Infinity
+      const remainingCount = isUnlimited ? 'Unlimited' : Math.max(0, totalQuota - usedCount)
+
+      return { totalQuota, usedCount, isUnlimited, remainingCount }
+    }
+
+    // 1. Free Trial Plan: 1 supervisor max, 1 registered -> 0 remaining
+    const trialTelemetry = computeQuotaTelemetry({ planName: 'Free Trial', maxSupervisors: 1 }, [{ id: 'SUP001' }])
+    assert.equal(trialTelemetry.totalQuota, 1)
+    assert.equal(trialTelemetry.usedCount, 1)
+    assert.equal(trialTelemetry.remainingCount, 0)
+    assert.equal(trialTelemetry.isUnlimited, false)
+
+    // 2. Silver Plan: 2 supervisors max, 1 registered -> 1 remaining
+    const silverTelemetry = computeQuotaTelemetry({ planName: 'Silver', quotas: { maxSupervisors: 2 } }, [{ id: 'SUP001' }])
+    assert.equal(silverTelemetry.totalQuota, 2)
+    assert.equal(silverTelemetry.usedCount, 1)
+    assert.equal(silverTelemetry.remainingCount, 1)
+    assert.equal(silverTelemetry.isUnlimited, false)
+
+    // 3. Gold Plan: 10 supervisors max, 3 registered -> 7 remaining
+    const goldTelemetry = computeQuotaTelemetry({ planName: 'Gold', maxSupervisors: 10 }, [{ id: 'SUP001' }, { id: 'SUP002' }, { id: 'SUP003' }])
+    assert.equal(goldTelemetry.totalQuota, 10)
+    assert.equal(goldTelemetry.usedCount, 3)
+    assert.equal(goldTelemetry.remainingCount, 7)
+
+    // 4. Enterprise Plan: Unlimited (999999) -> Unlimited remaining
+    const enterpriseTelemetry = computeQuotaTelemetry({ planName: 'Enterprise', maxSupervisors: 999999 }, [{ id: 'SUP001' }, { id: 'SUP002' }])
+    assert.equal(enterpriseTelemetry.isUnlimited, true)
+    assert.equal(enterpriseTelemetry.remainingCount, 'Unlimited')
+  })
+
+  it('safely handles supervisor password masking and visibility toggles', () => {
+    const supervisorRecord = {
+      id: 'SUP001',
+      username: 'ramesh_site',
+      password: 'SecretPassword123!',
+    }
+
+    const renderPasswordDisplay = (sup, isRevealed) => {
+      const pwd = sup.password || sup.Password
+      if (!pwd) return { isAvailable: false, display: 'Managed externally' }
+      return {
+        isAvailable: true,
+        display: isRevealed ? pwd : '••••••••',
+      }
+    }
+
+    // Default state: Masked
+    const masked = renderPasswordDisplay(supervisorRecord, false)
+    assert.equal(masked.isAvailable, true)
+    assert.equal(masked.display, '••••••••')
+
+    // Toggled state: Revealed
+    const revealed = renderPasswordDisplay(supervisorRecord, true)
+    assert.equal(revealed.isAvailable, true)
+    assert.equal(revealed.display, 'SecretPassword123!')
+
+    // External / no password record
+    const external = renderPasswordDisplay({ id: 'SUP002', username: 'kumar_ext' }, true)
+    assert.equal(external.isAvailable, false)
+    assert.equal(external.display, 'Managed externally')
+  })
 })

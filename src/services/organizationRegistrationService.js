@@ -135,12 +135,12 @@ export function calculatePasswordEntropy(password) {
  */
 export function isPendingRegistrationDoc(data) {
   if (!data || typeof data !== 'object') return false
-  const isSubActive = data.isSubscriptionActive === true
+  const isSubActive = data.isSubscriptionActive === true || data.subscription?.isSubscriptionActive === true
   if (isSubActive) return false
 
-  const step = data.onboardingStep
-  const subPlan = data.subscriptionPlan
-  const paymentStatus = data.paymentStatus
+  const step = data.onboardingStep || data.subscription?.onboardingStep
+  const subPlan = data.subscriptionPlan || data.subscription?.subscriptionPlan
+  const paymentStatus = data.paymentStatus || data.subscription?.paymentStatus
 
   return (
     step === 'PAYMENT_PENDING' ||
@@ -180,11 +180,18 @@ export async function isOrgNameUnique(orgName) {
         docIdLower.startsWith(`cst_${cleanNoSpaceLower}_`)
 
       if (isMatch) {
-        const isPending = isPendingRegistrationDoc(data)
+        let mergedData = { id: d.id, ...data }
+        if (data.isSubscriptionActive === undefined || data.schemaVersion === 2) {
+          try {
+            const subSnap = await getDoc(doc(db, 'organisation', d.id, 'data', 'subscription'))
+            if (subSnap.exists()) mergedData = { ...mergedData, ...subSnap.data() }
+          } catch (_) {}
+        }
+        const isPending = isPendingRegistrationDoc(mergedData)
         return {
           isUnique: false,
           isPending,
-          pendingData: isPending ? { id: d.id, ...data } : null,
+          pendingData: isPending ? mergedData : null,
           message: isPending
             ? 'A pending registration exists for this organization. You can resume payment.'
             : 'Organization name already exists. Please use a different name.',
@@ -222,17 +229,35 @@ export async function isGlobalEmailUnique(email) {
   }
 
   try {
-    // 1. Root organisation documents
+    // 1. Root organisation documents & data/admin subdocuments
     const orgSnap = await getDocs(collection(db, 'organisation'))
     for (const d of orgSnap.docs) {
       const data = d.data() || {}
-      const docEmail = String(data.email || data.Email || '').trim().toLowerCase()
+      let docEmail = String(data.email || data.Email || '').trim().toLowerCase()
+      let mergedData = { id: d.id, ...data }
+
+      if (!docEmail || data.schemaVersion === 2) {
+        try {
+          const [adminSnap, subSnap] = await Promise.all([
+            getDoc(doc(db, 'organisation', d.id, 'data', 'admin')),
+            getDoc(doc(db, 'organisation', d.id, 'data', 'subscription')),
+          ])
+          if (adminSnap.exists()) {
+            mergedData = { ...mergedData, ...adminSnap.data() }
+            docEmail = String(mergedData.email || mergedData.Email || '').trim().toLowerCase()
+          }
+          if (subSnap.exists()) {
+            mergedData = { ...mergedData, ...subSnap.data() }
+          }
+        } catch (_) {}
+      }
+
       if (docEmail === clean) {
-        const isPending = isPendingRegistrationDoc(data)
+        const isPending = isPendingRegistrationDoc(mergedData)
         return {
           isUnique: false,
           isPending,
-          pendingData: isPending ? { id: d.id, ...data } : null,
+          pendingData: isPending ? mergedData : null,
           message: 'Email address already registered.',
         }
       }
@@ -281,22 +306,50 @@ export async function isGlobalPhoneUnique(phone) {
   }
 
   try {
-    // 1. Root organisation documents
+    // 1. Root organisation documents & data/admin subdocuments
     const orgSnap = await getDocs(collection(db, 'organisation'))
     const phoneKeys = ['phone', 'phoneNumber', 'mobile', 'contactNo', 'ContactNo']
 
     for (const d of orgSnap.docs) {
       const data = d.data() || {}
+      let mergedData = { id: d.id, ...data }
+      let docPhone = ''
       for (const k of phoneKeys) {
-        const val = String(data[k] || '').replace(/\D/g, '')
-        if (val === digits) {
-          const isPending = isPendingRegistrationDoc(data)
-          return {
-            isUnique: false,
-            isPending,
-            pendingData: isPending ? { id: d.id, ...data } : null,
-            message: 'Phone number already registered.',
+        if (data[k]) {
+          docPhone = data[k]
+          break
+        }
+      }
+
+      if (!docPhone || data.schemaVersion === 2) {
+        try {
+          const [adminSnap, subSnap] = await Promise.all([
+            getDoc(doc(db, 'organisation', d.id, 'data', 'admin')),
+            getDoc(doc(db, 'organisation', d.id, 'data', 'subscription')),
+          ])
+          if (adminSnap.exists()) {
+            mergedData = { ...mergedData, ...adminSnap.data() }
+            for (const k of phoneKeys) {
+              if (mergedData[k]) {
+                docPhone = mergedData[k]
+                break
+              }
+            }
           }
+          if (subSnap.exists()) {
+            mergedData = { ...mergedData, ...subSnap.data() }
+          }
+        } catch (_) {}
+      }
+
+      const digitsFromDoc = String(docPhone || '').replace(/\D/g, '')
+      if (digitsFromDoc === digits) {
+        const isPending = isPendingRegistrationDoc(mergedData)
+        return {
+          isUnique: false,
+          isPending,
+          pendingData: isPending ? mergedData : null,
+          message: 'Phone number already registered.',
         }
       }
     }
@@ -390,9 +443,23 @@ export async function findPendingRegistration(identifier) {
     const snap = await getDocs(collection(db, 'organisation'))
     for (const d of snap.docs) {
       const data = d.data() || {}
-      const orgName = String(data.org_name || data.orgName || '').toLowerCase()
-      const email = String(data.email || '').toLowerCase()
-      const username = String(data.username || '').toLowerCase()
+      let mergedData = { id: d.id, ...data }
+
+      // Check if root doc lacks email/username or is canonical schemaVersion: 2
+      if (!data.email || !data.username || data.schemaVersion === 2 || data.isSubscriptionActive === undefined) {
+        try {
+          const [adminSnap, subSnap] = await Promise.all([
+            getDoc(doc(db, 'organisation', d.id, 'data', 'admin')),
+            getDoc(doc(db, 'organisation', d.id, 'data', 'subscription')),
+          ])
+          if (adminSnap.exists()) mergedData = { ...mergedData, ...adminSnap.data() }
+          if (subSnap.exists()) mergedData = { ...mergedData, ...subSnap.data() }
+        } catch (_) {}
+      }
+
+      const orgName = String(mergedData.org_name || mergedData.orgName || '').toLowerCase()
+      const email = String(mergedData.email || '').toLowerCase()
+      const username = String(mergedData.username || '').toLowerCase()
       const id = d.id.toLowerCase()
 
       if (
@@ -402,8 +469,8 @@ export async function findPendingRegistration(identifier) {
         id === cleanLower ||
         id.includes(cleanLower)
       ) {
-        if (isPendingRegistrationDoc(data)) {
-          return { id: d.id, ...data }
+        if (isPendingRegistrationDoc(mergedData)) {
+          return mergedData
         }
       }
     }
@@ -434,46 +501,33 @@ export async function createPendingOrganizationRegistration({
 
   const batch = writeBatch(db)
 
-  // Doc 1: /organisation/{orgId} (Root doc)
+  // Doc 1: /organisation/{orgId} (Root doc: canonical tenant root metadata)
   const rootRef = doc(db, 'organisation', orgId)
   batch.set(rootRef, {
-    app_id: CST_APP_ID,
-    app_type: CST_APP_ID,
-    is_cst_app: true,
+    orgId,
     org_name: orgName,
-    app_name: finalAppName,
-    theme_color: themeColor,
-    email: email.trim().toLowerCase(),
-    phone: phone.trim(),
-    username: username.trim().toLowerCase(),
-    password: password,
-    role: 'Organization',
-    registrationStatus: 'COMPLETED',
-    onboardingStep: 'PAYMENT_PENDING',
-    isSubscriptionActive: false,
-    paymentStatus: 'PENDING',
-    subscriptionPlan: 'Pending Selection',
-    subscriptionType: '',
-    referralCode: finalReferralCode,
+    schemaVersion: 2,
+    dataMode: 'canonical',
     created_at: serverTimestamp(),
     updated_at: serverTimestamp(),
   }, { merge: true })
 
-  // Doc 2: /organisation/{orgId}/data/admin
+  // Doc 2: /organisation/{orgId}/data/admin (Authoritative Administrator Credentials & Identity)
   const adminRef = doc(db, 'organisation', orgId, 'data', 'admin')
   batch.set(adminRef, {
     app_id: CST_APP_ID,
     is_cst_app: true,
+    org_name: orgName,
     username: username.trim().toLowerCase(),
     password: password,
     email: email.trim().toLowerCase(),
     phone: phone.trim(),
     role: 'Organization',
-    org_name: orgName,
     created_at: serverTimestamp(),
+    updated_at: serverTimestamp(),
   }, { merge: true })
 
-  // Doc 3: /organisation/{orgId}/data/branding
+  // Doc 3: /organisation/{orgId}/data/branding (Branding, App Name & Color Theme)
   const brandingRef = doc(db, 'organisation', orgId, 'data', 'branding')
   batch.set(brandingRef, {
     app_id: CST_APP_ID,
@@ -481,10 +535,11 @@ export async function createPendingOrganizationRegistration({
     app_name: finalAppName,
     primaryColor: themeColor,
     theme_color: themeColor,
+    created_at: serverTimestamp(),
     updated_at: serverTimestamp(),
   }, { merge: true })
 
-  // Doc 4: /organisation/{orgId}/data/referralCode
+  // Doc 4: /organisation/{orgId}/data/referralCode (Referral Identification)
   const referralRef = doc(db, 'organisation', orgId, 'data', 'referralCode')
   batch.set(referralRef, {
     app_id: CST_APP_ID,
@@ -493,27 +548,37 @@ export async function createPendingOrganizationRegistration({
     created_at: serverTimestamp(),
   }, { merge: true })
 
-  // Doc 5: /organisation/{orgId}/data/subscription
+  // Doc 5: /organisation/{orgId}/data/subscription (Authoritative Subscription State & Quotas)
   const subRef = doc(db, 'organisation', orgId, 'data', 'subscription')
   batch.set(subRef, {
     app_id: CST_APP_ID,
     isSubscriptionActive: false,
     subscriptionPlan: 'Pending Selection',
+    subscriptionType: '',
     onboardingStep: 'PAYMENT_PENDING',
     paymentStatus: 'PENDING',
+    paymentAmount: 0,
+    maxProjects: 1,
+    maxUsers: 3,
+    maxManagers: 1,
+    maxSupervisors: 1,
+    payerName: orgName,
+    payerEmail: email.trim().toLowerCase(),
+    payerPhone: phone.trim(),
+    createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   }, { merge: true })
 
-  // Doc 6: /organisation/{orgId}/organizationUser/{username}
+  // Doc 6: /organisation/{orgId}/organizationUser/{username} (Lookup index by username)
   const userRef = doc(db, 'organisation', orgId, 'organizationUser', username.trim().toLowerCase())
   batch.set(userRef, {
     app_id: CST_APP_ID,
+    org_name: orgName,
     username: username.trim().toLowerCase(),
     password: password,
     email: email.trim().toLowerCase(),
     phone: phone.trim(),
     role: 'Organization',
-    org_name: orgName,
     created_at: serverTimestamp(),
   }, { merge: true })
 

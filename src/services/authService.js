@@ -3,6 +3,7 @@ import { collection, collectionGroup, doc, getDoc, getDocs } from 'firebase/fire
 import { auth, db, persistenceReady } from './firebase.js'
 import { ensureStorageAuthenticated } from './appStorageService.js'
 import { resolveAuthoritativeSubscription, syncSubscriptionAcrossDocs } from './subscriptionService.js'
+import { setOrganizationSchema } from './schemaResolverService.js'
 
 
 const SESSION_KEY = 'constructa_session'
@@ -73,16 +74,27 @@ export function createSession(uid, email, orgId, role, profile) {
     email ||
     'User'
 
+  const schemaVersion = profile?.schemaVersion !== undefined ? Number(profile.schemaVersion) : undefined
+  const dataMode = profile?.dataMode || undefined
+
+  if (orgId && schemaVersion !== undefined) {
+    setOrganizationSchema(orgId, schemaVersion, dataMode)
+  }
+
   const session = {
     isLoggedIn: true,
     uid: String(uid || extractFieldValue(profile, ['ManagerId', 'managerId', 'uid', 'userId']) || 'user_' + Date.now()),
     email: email || extractFieldValue(profile, ['Email', 'email', 'UserEmail']) || '',
     orgId: String(orgId || 'default_org'),
     role: role || 'Organization',
+    schemaVersion,
+    dataMode,
     userData: {
       ...profile,
       fullName,
       email: email || extractFieldValue(profile, ['Email', 'email', 'UserEmail']) || '',
+      schemaVersion,
+      dataMode,
     },
   }
   if (typeof localStorage !== 'undefined' && localStorage?.setItem) {
@@ -445,7 +457,13 @@ async function loginOrganization(identifier, password) {
     try {
       const directDoc = await getDoc(doc(db, 'organisation', rawId))
       if (directDoc.exists()) {
-        const dData = directDoc.data() || {}
+        let dData = directDoc.data() || {}
+        try {
+          const adminSnap = await getDoc(doc(db, 'organisation', directDoc.id, 'data', 'admin'))
+          if (adminSnap.exists()) {
+            dData = { ...dData, ...adminSnap.data() }
+          }
+        } catch (_subErr) {}
         seenOrgDocKeys.add(`${directDoc.id}_root`)
         orgCandidates.push({ data: dData, orgId: directDoc.id, source: 'root' })
       }
@@ -458,22 +476,24 @@ async function loginOrganization(identifier, password) {
       const snap = await getDocs(collection(db, 'organisation'))
       for (const orgDoc of snap.docs) {
         const orgDocData = orgDoc.data() || {}
-        if (checkOrgCandidateMatch(orgDoc.id, orgDocData)) {
-          let data = orgDocData
-          // Only fetch admin subdocs if credentials are not in root doc
-          if (!data.password && !data.Password) {
-            try {
-              const [adminDataSnap, dataAdminSnap] = await Promise.all([
-                getDoc(doc(db, 'organisation', orgDoc.id, 'admin', 'data')),
-                getDoc(doc(db, 'organisation', orgDoc.id, 'data', 'admin')),
-              ])
-              if (adminDataSnap.exists()) {
-                data = { ...data, ...adminDataSnap.data() }
-              } else if (dataAdminSnap.exists()) {
-                data = { ...data, ...dataAdminSnap.data() }
-              }
-            } catch (_subErr) {}
-          }
+        let data = orgDocData
+
+        // For canonical schemaVersion: 2 or if credentials/identity not in root doc, fetch data/admin
+        if ((!data.password && !data.Password) || orgDocData.schemaVersion === 2 || !data.email) {
+          try {
+            const [adminDataSnap, dataAdminSnap] = await Promise.all([
+              getDoc(doc(db, 'organisation', orgDoc.id, 'admin', 'data')),
+              getDoc(doc(db, 'organisation', orgDoc.id, 'data', 'admin')),
+            ])
+            if (dataAdminSnap.exists()) {
+              data = { ...data, ...dataAdminSnap.data() }
+            } else if (adminDataSnap.exists()) {
+              data = { ...data, ...adminDataSnap.data() }
+            }
+          } catch (_subErr) {}
+        }
+
+        if (checkOrgCandidateMatch(orgDoc.id, data)) {
           const hasAccountIdentity = data.username || data.email || data.password || data.Password
           if (hasAccountIdentity) {
             seenOrgDocKeys.add(`${orgDoc.id}_root`)
@@ -491,6 +511,48 @@ async function loginOrganization(identifier, password) {
   // 3. Fallback: only execute if primary collection had no match
   if (orgCandidates.length === 0) {
     const fallbackTasks = [
+      getDocs(query(collectionGroup(db, 'organizationUser'), where('username', '==', idLower), limit(1)))
+        .then(async (snap) => {
+          for (const d of snap.docs) {
+            const parentOrgId = d.ref.parent?.parent?.id
+            if (parentOrgId) {
+              const key = `${parentOrgId}_org_user`
+              if (!seenOrgDocKeys.has(key)) {
+                seenOrgDocKeys.add(key)
+                let cData = d.data() || {}
+                try {
+                  const rootSnap = await getDoc(doc(db, 'organisation', parentOrgId))
+                  if (rootSnap.exists()) cData = { ...rootSnap.data(), ...cData }
+                } catch (_) {}
+                orgCandidates.push({ data: cData, orgId: parentOrgId, source: 'organizationUser' })
+              }
+            }
+          }
+        })
+        .catch(() => {}),
+      ...(rawId.includes('@')
+        ? [
+            getDocs(query(collectionGroup(db, 'organizationUser'), where('email', '==', idLower), limit(1)))
+              .then(async (snap) => {
+                for (const d of snap.docs) {
+                  const parentOrgId = d.ref.parent?.parent?.id
+                  if (parentOrgId) {
+                    const key = `${parentOrgId}_org_user_email`
+                    if (!seenOrgDocKeys.has(key)) {
+                      seenOrgDocKeys.add(key)
+                      let cData = d.data() || {}
+                      try {
+                        const rootSnap = await getDoc(doc(db, 'organisation', parentOrgId))
+                        if (rootSnap.exists()) cData = { ...rootSnap.data(), ...cData }
+                      } catch (_) {}
+                      orgCandidates.push({ data: cData, orgId: parentOrgId, source: 'organizationUser' })
+                    }
+                  }
+                }
+              })
+              .catch(() => {}),
+          ]
+        : []),
       getDocs(collectionGroup(db, 'admin'))
         .then((snap) => {
           snap.forEach((d) => {

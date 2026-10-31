@@ -18,11 +18,13 @@ import {
   Eye,
   EyeOff,
   User,
+  Trash2,
 } from 'lucide-react'
 import {
   fetchSupervisors,
   createSupervisor,
   updateSupervisor,
+  deleteSupervisor,
   toggleSupervisorStatus,
   checkSupervisorUniqueness,
   getNextSupervisorId,
@@ -56,9 +58,13 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
   const [formEmail, setFormEmail] = useState('')
   const [formPassword, setFormPassword] = useState('')
   const [formDesignation, setFormDesignation] = useState('Site Supervisor')
-  const [formAssignedSites, setFormAssignedSites] = useState([])
   const [showPassword, setShowPassword] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+
+  // Password visibility state in table & edit modal
+  const [visiblePasswordIds, setVisiblePasswordIds] = useState({})
+  const [showCurrentEditPassword, setShowCurrentEditPassword] = useState(false)
+  const [showNewPasswordInEdit, setShowNewPasswordInEdit] = useState(false)
 
   // Uniqueness validation errors
   const [uniquenessError, setUniquenessError] = useState(null)
@@ -90,6 +96,16 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
     }
   }
 
+  const refreshQuotaAndLimits = async () => {
+    if (!orgId) return
+    try {
+      const limits = await SubscriptionLimitService.getActivePlanLimits(orgId)
+      setPlanLimits(limits)
+    } catch (err) {
+      console.warn('Could not refresh subscription plan limits:', err)
+    }
+  }
+
   const loadData = async () => {
     if (!orgId) return
     setLoading(true)
@@ -108,11 +124,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
     warmupUsernameCache()
     loadData()
     refreshNextSupervisorId()
-    if (orgId) {
-      SubscriptionLimitService.getActivePlanLimits(orgId)
-        .then(setPlanLimits)
-        .catch(console.error)
-    }
+    refreshQuotaAndLimits()
   }, [orgId])
 
   const handleSwitchToCreate = async () => {
@@ -266,7 +278,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
           email: formEmail.trim(),
           password: formPassword.trim(),
           designation: formDesignation,
-          assignedSites: formAssignedSites,
+          assignedSites: [],
         },
         currentUser
       )
@@ -282,17 +294,13 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
       setPhoneError('')
       setFormEmail('')
       setFormPassword('')
-      setFormAssignedSites([])
       setIsCheckingUsername(false)
       setUsernameStatusText(null)
       setIsUsernameValid(null)
       setActiveTab('directory')
       await loadData()
       refreshNextSupervisorId()
-      // Refresh limits
-      if (orgId) {
-        SubscriptionLimitService.getActivePlanLimits(orgId).then(setPlanLimits).catch(console.error)
-      }
+      await refreshQuotaAndLimits()
     } catch (err) {
       console.error(err)
       if (err.code === 'SUBSCRIPTION_LIMIT_REACHED' || err.code === 'SUBSCRIPTION_EXPIRED' || err.details) {
@@ -322,6 +330,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
         'info'
       )
       await loadData()
+      await refreshQuotaAndLimits()
     } catch (err) {
       console.error(err)
       onNotify?.('Failed to update supervisor status', 'error')
@@ -334,6 +343,8 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
     setEditEmail(sup.email || sup.Email || '')
     setEditDesignation(sup.designation || sup.Designation || 'Site Supervisor')
     setEditNewPassword('')
+    setShowCurrentEditPassword(false)
+    setShowNewPasswordInEdit(false)
   }
 
   const handleSaveEdit = async (e) => {
@@ -362,12 +373,41 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
       onNotify?.('Supervisor details updated', 'success')
       setEditingSupervisor(null)
       await loadData()
+      await refreshQuotaAndLimits()
     } catch (err) {
       console.error(err)
       onNotify?.(err.message || 'Failed to update supervisor', 'error')
     } finally {
       setSubmitting(false)
     }
+  }
+
+  const handleDeleteSupervisor = async (sup) => {
+    const targetId = sup.SupervisorId || sup.supervisorId || sup.id
+    const supName = sup.fullName || sup.FullName || sup.name || targetId
+    if (!window.confirm(`Are you sure you want to remove supervisor "${supName}" (${targetId})? This will delete their mobile login access.`)) {
+      return
+    }
+    setLoading(true)
+    try {
+      await deleteSupervisor(orgId, targetId)
+      onNotify?.(`Supervisor "${supName}" has been removed.`, 'info')
+      await loadData()
+      await refreshQuotaAndLimits()
+      await refreshNextSupervisorId()
+    } catch (err) {
+      console.error(err)
+      onNotify?.(err.message || 'Failed to remove supervisor', 'error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const togglePasswordVisibility = (id) => {
+    setVisiblePasswordIds((prev) => ({
+      ...prev,
+      [id]: !prev[id],
+    }))
   }
 
   // Filtered supervisors
@@ -410,39 +450,26 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
           </p>
         </div>
 
-        {/* Action Toggle & Quota */}
-        <div className="flex flex-wrap items-center gap-3">
-          {planLimits && (
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs shadow-2xs">
-              <span className="text-slate-500 font-medium">Supervisor Quota:</span>
-              <span className="font-bold text-slate-800 font-mono">
-                {supervisors.length} / {(planLimits.quotas?.maxSupervisors ?? planLimits.maxSupervisors) >= 999999 ? '∞' : (planLimits.quotas?.maxSupervisors ?? planLimits.maxSupervisors)}
-              </span>
-              <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
-                {planLimits.planName}
-              </span>
-            </div>
-          )}
-          <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl">
-            <button
-              onClick={() => setActiveTab('directory')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                activeTab === 'directory' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Users className={`w-4 h-4 ${activeTab === 'directory' ? 'text-white' : 'text-slate-500'}`} />
-              <span>Staff Directory ({supervisors.length})</span>
-            </button>
-            <button
-              onClick={handleSwitchToCreate}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                activeTab === 'create' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <UserPlus className={`w-4 h-4 ${activeTab === 'create' ? 'text-white' : 'text-slate-500'}`} />
-              <span>Create Supervisor</span>
-            </button>
-          </div>
+        {/* Action Toggle */}
+        <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl">
+          <button
+            onClick={() => setActiveTab('directory')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              activeTab === 'directory' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Users className={`w-4 h-4 ${activeTab === 'directory' ? 'text-white' : 'text-slate-500'}`} />
+            <span>Staff Directory ({supervisors.length})</span>
+          </button>
+          <button
+            onClick={handleSwitchToCreate}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              activeTab === 'create' ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <UserPlus className={`w-4 h-4 ${activeTab === 'create' ? 'text-white' : 'text-slate-500'}`} />
+            <span>Create Supervisor</span>
+          </button>
         </div>
       </div>
 
@@ -461,35 +488,7 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
             </div>
           </div>
 
-          {/* Assigned Supervisor ID Banner */}
-          <div className="p-4 mb-6 bg-gradient-to-r from-blue-50/90 to-indigo-50/70 border border-blue-200/90 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-[#0B3470] text-white flex items-center justify-center font-mono font-bold text-sm shadow-xs">
-                ID
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                    Assigned Supervisor ID
-                  </span>
-                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100/90 border border-emerald-300/60 px-2 py-0.5 rounded-full">
-                    Sequential Format (SUP###)
-                  </span>
-                </div>
-                <p className="font-mono text-xl font-extrabold text-[#0B3470] tracking-wide mt-0.5">
-                  {loadingNextId ? 'Determining next ID...' : nextSupervisorId}
-                </p>
-              </div>
-            </div>
-            <div className="text-left sm:text-right text-xs bg-white/90 px-3.5 py-2 rounded-xl border border-blue-200/60 shadow-2xs">
-              <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">
-                Firestore Document ID
-              </span>
-              <span className="font-mono font-bold text-slate-800 text-xs">
-                {loadingNextId ? '...' : nextSupervisorId}
-              </span>
-            </div>
-          </div>
+          
 
           {uniquenessError && (
             <div className="p-3.5 mb-6 bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-2.5 text-xs font-medium text-rose-700">
@@ -504,17 +503,12 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
                   Supervisor ID (Auto Generated)
                 </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    disabled
-                    value={nextSupervisorId}
-                    className="w-full px-3.5 py-2.5 text-sm bg-slate-100/80 border border-slate-200 rounded-xl text-[#0B3470] font-mono font-bold cursor-not-allowed select-none"
-                  />
-                  <span className="text-[10px] font-semibold text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 font-mono">
-                    Doc ID
-                  </span>
-                </div>
+                <input
+                  type="text"
+                  disabled
+                  value={nextSupervisorId}
+                  className="w-full px-3.5 py-2.5 text-sm bg-slate-100/80 border border-slate-200 rounded-xl text-[#0B3470] font-mono font-bold cursor-not-allowed select-none"
+                />
               </div>
 
               <div>
@@ -681,44 +675,6 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
               </select>
             </div>
 
-            {/* Assigned Sites Multi-Select */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                Initial Construction Sites Assignment
-              </label>
-              <div className="max-h-40 overflow-y-auto p-3 bg-slate-50 border border-slate-200 rounded-xl divide-y divide-slate-100">
-                {sites.length === 0 ? (
-                  <p className="text-xs text-slate-400">No sites available in project portfolio.</p>
-                ) : (
-                  sites.map((site) => {
-                    const isChecked = formAssignedSites.includes(site.id)
-                    return (
-                      <label
-                        key={site.id}
-                        className="flex items-center gap-3 py-2 cursor-pointer hover:bg-white px-2 rounded-lg transition-colors"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setFormAssignedSites([...formAssignedSites, site.id])
-                            } else {
-                              setFormAssignedSites(formAssignedSites.filter((id) => id !== site.id))
-                            }
-                          }}
-                          className="w-4 h-4 text-blue-600 rounded border-slate-300"
-                        />
-                        <span className="text-xs font-medium text-slate-800">
-                          {site.siteName || site.projectName}
-                        </span>
-                      </label>
-                    )
-                  })
-                )}
-              </div>
-            </div>
-
             <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
               <button
                 type="button"
@@ -823,10 +779,34 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
                           </td>
 
                           <td className="py-3.5 px-4">
-                            <div className="space-y-0.5 text-xs">
-                              <div className="font-mono text-slate-700 flex items-center gap-1">
+                            <div className="space-y-1 text-xs">
+                              <div className="font-mono text-slate-700 flex items-center gap-1.5">
                                 <span className="text-slate-400">User:</span>
-                                <span className="font-semibold">{sup.username || sup.UserName}</span>
+                                <span className="font-semibold text-slate-900">{sup.username || sup.UserName}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-slate-400">Pass:</span>
+                                {sup.password || sup.Password ? (
+                                  <div className="flex items-center gap-1.5 font-mono">
+                                    <span className="text-slate-800 font-semibold bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">
+                                      {visiblePasswordIds[supId] ? (sup.password || sup.Password) : '••••••••'}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => togglePasswordVisibility(supId)}
+                                      title={visiblePasswordIds[supId] ? 'Hide password' : 'View password'}
+                                      className="p-0.5 text-slate-400 hover:text-slate-700 rounded transition-colors cursor-pointer"
+                                    >
+                                      {visiblePasswordIds[supId] ? (
+                                        <EyeOff className="w-3.5 h-3.5" />
+                                      ) : (
+                                        <Eye className="w-3.5 h-3.5" />
+                                      )}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span className="text-[11px] text-slate-400 italic">Managed externally</span>
+                                )}
                               </div>
                               <div className="text-slate-500 flex items-center gap-1.5">
                                 <Phone className="w-3 h-3 text-slate-400" />
@@ -888,6 +868,13 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
                               >
                                 <Power className="w-4 h-4" />
                               </button>
+                              <button
+                                onClick={() => handleDeleteSupervisor(sup)}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                title="Remove Supervisor"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -923,6 +910,37 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
             </div>
 
             <form onSubmit={handleSaveEdit} className="space-y-4">
+              {/* Existing Password Display */}
+              {(editingSupervisor.password || editingSupervisor.Password) && (
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                      Current Mobile Password
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowCurrentEditPassword(!showCurrentEditPassword)}
+                      className="text-xs text-blue-600 hover:text-blue-800 font-medium inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      {showCurrentEditPassword ? (
+                        <>
+                          <EyeOff className="w-3.5 h-3.5" />
+                          <span>Hide</span>
+                        </>
+                      ) : (
+                        <>
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>View</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <p className="font-mono text-sm font-bold text-slate-800 mt-1">
+                    {showCurrentEditPassword ? (editingSupervisor.password || editingSupervisor.Password) : '••••••••'}
+                  </p>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
                   Contact Phone
@@ -972,13 +990,26 @@ export default function SupervisorSetup({ orgId, sites = [], currentUser, onNoti
                   <KeyRound className="w-3.5 h-3.5 text-amber-600" />
                   Reset Mobile Password
                 </label>
-                <input
-                  type="password"
-                  placeholder="Leave blank to keep existing password"
-                  value={editNewPassword}
-                  onChange={(e) => setEditNewPassword(e.target.value)}
-                  className="w-full px-3.5 py-2 text-sm bg-white border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500/20"
-                />
+                <div className="relative">
+                  <input
+                    type={showNewPasswordInEdit ? 'text' : 'password'}
+                    placeholder="Leave blank to keep existing password"
+                    value={editNewPassword}
+                    onChange={(e) => setEditNewPassword(e.target.value)}
+                    minLength={6}
+                    className="w-full px-3.5 pr-10 py-2 text-sm bg-white border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500/20"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPasswordInEdit(!showNewPasswordInEdit)}
+                    className="p-1 text-amber-700/60 hover:text-amber-900 absolute right-2.5 top-1/2 -translate-y-1/2 cursor-pointer"
+                  >
+                    {showNewPasswordInEdit ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <p className="text-[10px] text-amber-700/80 mt-1">
+                  Enter a new password (min 6 characters) to update mobile app login credentials.
+                </p>
               </div>
 
               <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">

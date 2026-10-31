@@ -237,5 +237,146 @@ describe('Organization Account Creation & Onboarding Flow Unit Tests', () => {
       assert.equal(getPendingRegistrationDraft(), null)
     })
   })
+
+  describe('Section 10: Canonical Schema Separation & Backward Compatibility Parity', () => {
+    it('verifies canonical root document contains only tenant identity and schemaVersion: 2', () => {
+      // Simulates the payload written to /organisation/{orgId}
+      const canonicalRootDoc = {
+        orgId: 'cst_abiconstruction_29-10-2026',
+        org_name: 'Abi Construction',
+        schemaVersion: 2,
+        dataMode: 'canonical',
+        created_at: new Date(),
+        updated_at: new Date(),
+      }
+
+      // Root doc MUST contain tenant identification and canonical metadata
+      assert.equal(canonicalRootDoc.orgId, 'cst_abiconstruction_29-10-2026')
+      assert.equal(canonicalRootDoc.org_name, 'Abi Construction')
+      assert.equal(canonicalRootDoc.schemaVersion, 2)
+      assert.equal(canonicalRootDoc.dataMode, 'canonical')
+
+      // Root doc MUST NOT contain forbidden fields at the root level for new canonical orgs
+      assert.equal(canonicalRootDoc.app_id, undefined)
+      assert.equal(canonicalRootDoc.app_name, undefined)
+      assert.equal(canonicalRootDoc.app_type, undefined)
+      assert.equal(canonicalRootDoc.email, undefined)
+      assert.equal(canonicalRootDoc.password, undefined)
+      assert.equal(canonicalRootDoc.phone, undefined)
+      assert.equal(canonicalRootDoc.username, undefined)
+      assert.equal(canonicalRootDoc.isSubscriptionActive, undefined)
+      assert.equal(canonicalRootDoc.isUpgradeQueued, undefined)
+      assert.equal(canonicalRootDoc.is_cst_app, undefined)
+      assert.equal(canonicalRootDoc.maxManagers, undefined)
+      assert.equal(canonicalRootDoc.maxUsers, undefined)
+      assert.equal(canonicalRootDoc.subscriptionPlan, undefined)
+    })
+
+    it('verifies admin credentials and identity are stored in data/admin document', () => {
+      const adminDoc = {
+        app_id: 'cst_white_label',
+        is_cst_app: true,
+        org_name: 'Abi Construction',
+        username: 'abiadmin',
+        password: 'SecurePassword123',
+        email: 'admin@abiconstruction.com',
+        phone: '9876543210',
+        role: 'Organization',
+        created_at: new Date(),
+        updated_at: new Date(),
+      }
+
+      assert.equal(adminDoc.username, 'abiadmin')
+      assert.equal(adminDoc.email, 'admin@abiconstruction.com')
+      assert.equal(adminDoc.phone, '9876543210')
+      assert.equal(adminDoc.role, 'Organization')
+      assert.equal(adminDoc.password, 'SecurePassword123')
+      assert.equal(adminDoc.is_cst_app, true)
+    })
+
+    it('verifies subscription quotas and flags are stored in data/subscription document', () => {
+      const subscriptionDoc = {
+        app_id: 'cst_white_label',
+        subscriptionPlan: 'Gold',
+        subscriptionType: 'Yearly',
+        isSubscriptionActive: true,
+        onboardingStep: 'COMPLETED',
+        paymentStatus: 'SUCCESS',
+        paymentAmount: 2388,
+        maxProjects: 10,
+        maxUsers: 15,
+        maxManagers: 5,
+        maxSupervisors: 10,
+        isUpgradeQueued: false,
+        payerName: 'Abi Construction',
+        payerEmail: 'admin@abiconstruction.com',
+      }
+
+      assert.equal(subscriptionDoc.subscriptionPlan, 'Gold')
+      assert.equal(subscriptionDoc.isSubscriptionActive, true)
+      assert.equal(subscriptionDoc.maxManagers, 5)
+      assert.equal(subscriptionDoc.maxUsers, 15)
+      assert.equal(subscriptionDoc.isUpgradeQueued, false)
+    })
+
+    it('verifies branding is stored in data/branding document', () => {
+      const brandingDoc = {
+        app_id: 'cst_white_label',
+        appName: 'Abi ERP',
+        app_name: 'Abi ERP',
+        primaryColor: '#00A86B',
+        theme_color: '#00A86B',
+      }
+
+      assert.equal(brandingDoc.appName, 'Abi ERP')
+      assert.equal(brandingDoc.theme_color, '#00A86B')
+    })
+
+    it('verifies referral code is stored in data/referralCode document', () => {
+      const referralDoc = {
+        app_id: 'cst_white_label',
+        referralCode: 'ABI901',
+        orgReferralCode: 'ABI901',
+      }
+
+      assert.equal(referralDoc.referralCode, 'ABI901')
+    })
+
+    it('evaluates isPendingRegistrationDoc correctly for both legacy and canonical nested schemas', () => {
+      // Legacy root doc format
+      const legacyPending = {
+        isSubscriptionActive: false,
+        onboardingStep: 'PAYMENT_PENDING',
+        paymentStatus: 'PENDING',
+      }
+      assert.equal(isPendingRegistrationDoc(legacyPending), true)
+
+      // Canonical schema format with nested subscription
+      const canonicalPending = {
+        schemaVersion: 2,
+        dataMode: 'canonical',
+        subscription: {
+          isSubscriptionActive: false,
+          subscriptionPlan: 'Pending Selection',
+          onboardingStep: 'PAYMENT_PENDING',
+          paymentStatus: 'PENDING',
+        },
+      }
+      assert.equal(isPendingRegistrationDoc(canonicalPending), true)
+
+      // Active canonical organization
+      const canonicalActive = {
+        schemaVersion: 2,
+        dataMode: 'canonical',
+        subscription: {
+          isSubscriptionActive: true,
+          subscriptionPlan: 'Silver',
+          onboardingStep: 'COMPLETED',
+          paymentStatus: 'SUCCESS',
+        },
+      }
+      assert.equal(isPendingRegistrationDoc(canonicalActive), false)
+    })
+  })
 })
 

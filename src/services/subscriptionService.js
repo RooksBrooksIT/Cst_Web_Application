@@ -524,73 +524,89 @@ export async function syncSubscriptionAcrossDocs(orgId, subscriptionPayload) {
   batch.set(subRef, removeUndefinedFields(subscriptionPayload), { merge: true })
 
   // 2. Synchronize to root organisation doc /organisation/{orgId}
-  // Keep minimal flat fields for backward compatibility with loginOrganization and
-  // isPendingRegistrationDoc reads. All detailed subscription data lives in the
-  // nested `subscription` map and in /data/subscription subcollection.
+  // For canonical schemaVersion: 2 organizations, subscription data strictly lives in
+  // /data/subscription and root doc holds only tenant metadata.
+  // For legacy organizations, maintain backward-compatible root fields and subdoc sync.
   const rootRef = doc(db, 'organisation', orgId)
-  const rootSyncFields = {
-    // Minimal flat fields required for backward-compatible reads
-    isSubscriptionActive: subscriptionPayload.isSubscriptionActive,
-    subscriptionPlan: subscriptionPayload.subscriptionPlan,
-    onboardingStep: subscriptionPayload.onboardingStep || 'COMPLETED',
-    registrationStatus: subscriptionPayload.registrationStatus || 'COMPLETED',
-    updatedAt: serverTimestamp(),
-    updated_at: serverTimestamp(),
-    // All subscription detail lives in the nested `subscription` map
-    subscription: {
-      subscriptionPlan: subscriptionPayload.subscriptionPlan,
-      subscriptionType: subscriptionPayload.subscriptionType,
-      subscriptionStartDate: subscriptionPayload.subscriptionStartDate,
-      subscriptionEndDate: subscriptionPayload.subscriptionEndDate,
+  let isCanonical = false
+  try {
+    const rootSnap = await getDoc(rootRef)
+    if (rootSnap.exists()) {
+      const rootData = rootSnap.data() || {}
+      isCanonical = rootData.schemaVersion === 2 || rootData.dataMode === 'canonical'
+    }
+  } catch (_e) {}
+
+  if (isCanonical) {
+    batch.set(rootRef, {
+      updated_at: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }, { merge: true })
+  } else {
+    const rootSyncFields = {
+      // Minimal flat fields required for backward-compatible reads
       isSubscriptionActive: subscriptionPayload.isSubscriptionActive,
+      subscriptionPlan: subscriptionPayload.subscriptionPlan,
       onboardingStep: subscriptionPayload.onboardingStep || 'COMPLETED',
       registrationStatus: subscriptionPayload.registrationStatus || 'COMPLETED',
-      maxProjects: subscriptionPayload.maxProjects,
-      maxUsers: subscriptionPayload.maxUsers,
-      maxManagers: subscriptionPayload.maxManagers,
-      maxSupervisors: subscriptionPayload.maxSupervisors,
-      paymentGateway: subscriptionPayload.paymentGateway || 'PayU',
-      paymentTxnId: subscriptionPayload.paymentTxnId || '',
-      payuMoneyId: subscriptionPayload.payuMoneyId || '',
-      paymentStatus: subscriptionPayload.paymentStatus || 'SUCCESS',
-      paymentAmount: subscriptionPayload.paymentAmount !== undefined ? subscriptionPayload.paymentAmount : 0,
-      paymentMethod: subscriptionPayload.paymentMethod || 'PayU Gateway',
-      platinumProjects: subscriptionPayload.platinumProjects || null,
-      isUpgradeQueued: subscriptionPayload.isUpgradeQueued || false,
-    },
-  }
-  batch.set(rootRef, removeUndefinedFields(rootSyncFields), { merge: true })
+      updatedAt: serverTimestamp(),
+      updated_at: serverTimestamp(),
+      // All subscription detail lives in the nested `subscription` map
+      subscription: {
+        subscriptionPlan: subscriptionPayload.subscriptionPlan,
+        subscriptionType: subscriptionPayload.subscriptionType,
+        subscriptionStartDate: subscriptionPayload.subscriptionStartDate,
+        subscriptionEndDate: subscriptionPayload.subscriptionEndDate,
+        isSubscriptionActive: subscriptionPayload.isSubscriptionActive,
+        onboardingStep: subscriptionPayload.onboardingStep || 'COMPLETED',
+        registrationStatus: subscriptionPayload.registrationStatus || 'COMPLETED',
+        maxProjects: subscriptionPayload.maxProjects,
+        maxUsers: subscriptionPayload.maxUsers,
+        maxManagers: subscriptionPayload.maxManagers,
+        maxSupervisors: subscriptionPayload.maxSupervisors,
+        paymentGateway: subscriptionPayload.paymentGateway || 'PayU',
+        paymentTxnId: subscriptionPayload.paymentTxnId || '',
+        payuMoneyId: subscriptionPayload.payuMoneyId || '',
+        paymentStatus: subscriptionPayload.paymentStatus || 'SUCCESS',
+        paymentAmount: subscriptionPayload.paymentAmount !== undefined ? subscriptionPayload.paymentAmount : 0,
+        paymentMethod: subscriptionPayload.paymentMethod || 'PayU Gateway',
+        platinumProjects: subscriptionPayload.platinumProjects || null,
+        isUpgradeQueued: subscriptionPayload.isUpgradeQueued || false,
+      },
+    }
+    batch.set(rootRef, removeUndefinedFields(rootSyncFields), { merge: true })
 
-  // 3. Synchronize existing legacy subcollection documents (preserving all credentials & admin profile fields)
-  const legacySubdocs = [
-    ['data', 'admin'],
-    ['admin', 'data'],
-    ['data', 'data'],
-  ]
+    // 3. Synchronize existing legacy subcollection documents (preserving all credentials & admin profile fields)
+    const legacySubdocs = [
+      ['data', 'admin'],
+      ['admin', 'data'],
+      ['data', 'data'],
+    ]
 
-  const legacySyncFields = {
-    subscriptionPlan: subscriptionPayload.subscriptionPlan,
-    isSubscriptionActive: subscriptionPayload.isSubscriptionActive,
-    paymentStatus: subscriptionPayload.paymentStatus,
-    onboardingStep: subscriptionPayload.onboardingStep || 'COMPLETED',
-    registrationStatus: subscriptionPayload.registrationStatus || 'COMPLETED',
-    updatedAt: serverTimestamp(),
-    updated_at: serverTimestamp(),
-  }
+    const legacySyncFields = {
+      subscriptionPlan: subscriptionPayload.subscriptionPlan,
+      isSubscriptionActive: subscriptionPayload.isSubscriptionActive,
+      paymentStatus: subscriptionPayload.paymentStatus,
+      onboardingStep: subscriptionPayload.onboardingStep || 'COMPLETED',
+      registrationStatus: subscriptionPayload.registrationStatus || 'COMPLETED',
+      updatedAt: serverTimestamp(),
+      updated_at: serverTimestamp(),
+    }
 
-  await Promise.all(
-    legacySubdocs.map(async ([subCol, docName]) => {
-      try {
-        const legacyRef = doc(db, 'organisation', orgId, subCol, docName)
-        const snap = await getDoc(legacyRef)
-        if (snap.exists()) {
-          batch.set(legacyRef, removeUndefinedFields(legacySyncFields), { merge: true })
+    await Promise.all(
+      legacySubdocs.map(async ([subCol, docName]) => {
+        try {
+          const legacyRef = doc(db, 'organisation', orgId, subCol, docName)
+          const snap = await getDoc(legacyRef)
+          if (snap.exists()) {
+            batch.set(legacyRef, removeUndefinedFields(legacySyncFields), { merge: true })
+          }
+        } catch (err) {
+          console.warn(`[syncSubscriptionAcrossDocs] Warning reading legacy doc ${subCol}/${docName}:`, err.message)
         }
-      } catch (err) {
-        console.warn(`[syncSubscriptionAcrossDocs] Warning reading legacy doc ${subCol}/${docName}:`, err.message)
-      }
-    })
-  )
+      })
+    )
+  }
 
   await batch.commit()
   return { success: true, orgId, payload: subscriptionPayload }

@@ -9,6 +9,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore'
 import { db } from './firebase.js'
+import { isNewOrganization } from './schemaResolverService.js'
 
 /**
  * CST Incentive & Expense Rollup Engine
@@ -143,13 +144,16 @@ export async function _sumSupervisorExpenses(orgId, siteId) {
 }
 
 /**
- * Sums Manager Expenses (queries 'managerExpenses' & 'managerEntries' -> sums bills/amount)
+ * Sums Manager Expenses:
+ * - For new organizations: queries 'managerExpenses' only
+ * - For existing organizations: queries 'managerExpenses' & 'managerEntries' with deduplication
  * Section 4.2 Write 3 Step 1.b
  */
 export async function _sumManagerExpenses(orgId, siteId) {
   if (!orgId || !siteId) return 0
   try {
-    const collectionsToQuery = ['managerExpenses', 'managerEntries']
+    const isNewOrg = await isNewOrganization(orgId)
+    const collectionsToQuery = isNewOrg ? ['managerExpenses'] : ['managerExpenses', 'managerEntries']
     const dedupedDocs = new Map()
 
     for (const colName of collectionsToQuery) {
@@ -195,13 +199,16 @@ export async function _sumManagerExpenses(orgId, siteId) {
 }
 
 /**
- * Sums Organization Expenses (queries 'organizationExpenses' & 'organizationEntries' -> sums bills/amount)
+ * Sums Organization Expenses:
+ * - For new organizations: queries 'organizationExpenses' only
+ * - For existing organizations: queries 'organizationExpenses' & 'organizationEntries' with deduplication
  * Section 4.2 Write 3 Step 1.c
  */
 export async function _sumOrganizationExpenses(orgId, siteId) {
   if (!orgId || !siteId) return 0
   try {
-    const collectionsToQuery = ['organizationExpenses', 'organizationEntries']
+    const isNewOrg = await isNewOrganization(orgId)
+    const collectionsToQuery = isNewOrg ? ['organizationExpenses'] : ['organizationExpenses', 'organizationEntries']
     const dedupedDocs = new Map()
 
     for (const colName of collectionsToQuery) {

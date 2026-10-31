@@ -13,6 +13,7 @@ import {
 import { db } from './firebase.js'
 import { normalizeExpenseRecord } from './expenseNormalizationService.js'
 import { recalcTotalsAndSyncProject } from './expenseService.js'
+import { isNewOrganization, isNewOrganizationSync } from './schemaResolverService.js'
 
 /**
  * CST White Label - Manager Direct Expenses Service
@@ -178,7 +179,8 @@ export async function fetchDayManagerExpense(orgId, siteId, dateInput, extraPara
 
 export async function fetchManagerExpenses(orgId) {
   if (!orgId) return []
-  const collectionsToRead = ['managerExpenses', 'managerEntries']
+  const isNewOrg = await isNewOrganization(orgId)
+  const collectionsToRead = isNewOrg ? ['managerExpenses'] : ['managerExpenses', 'managerEntries']
   const dedupedMap = new Map()
 
   for (const colName of collectionsToRead) {
@@ -212,23 +214,32 @@ export async function fetchManagerExpenses(orgId) {
 export function subscribeManagerExpenses(orgId, onData, onError) {
   if (!orgId) return () => {}
 
-  const recordsByCol = {
-    managerExpenses: new Map(),
-    managerEntries: new Map(),
-  }
+  const isNewOrg = isNewOrganizationSync(orgId)
+  const collectionsToListen = isNewOrg ? ['managerExpenses'] : ['managerExpenses', 'managerEntries']
+
+  const recordsByCol = {}
+  collectionsToListen.forEach((col) => {
+    recordsByCol[col] = new Map()
+  })
 
   const emitMerged = () => {
     const deduped = new Map()
-    for (const [id, rec] of recordsByCol.managerEntries.entries()) {
-      deduped.set(id, rec)
-    }
-    for (const [id, rec] of recordsByCol.managerExpenses.entries()) {
-      if (!deduped.has(id)) {
+    // 1. Ingest mobile entries as base/fallback (legacy orgs only)
+    if (recordsByCol.managerEntries) {
+      for (const [id, rec] of recordsByCol.managerEntries.entries()) {
         deduped.set(id, rec)
-      } else {
-        const existing = deduped.get(id)
-        if ((!existing.bills || existing.bills.length === 0) && (rec.bills && rec.bills.length > 0)) {
+      }
+    }
+    // 2. Overlay / merge primary managerExpenses (authoritative source)
+    if (recordsByCol.managerExpenses) {
+      for (const [id, rec] of recordsByCol.managerExpenses.entries()) {
+        if (!deduped.has(id)) {
           deduped.set(id, rec)
+        } else {
+          const existing = deduped.get(id)
+          if ((!existing.bills || existing.bills.length === 0) && (rec.bills && rec.bills.length > 0)) {
+            deduped.set(id, rec)
+          }
         }
       }
     }
@@ -243,7 +254,7 @@ export function subscribeManagerExpenses(orgId, onData, onError) {
   }
 
   const unsubs = []
-  for (const colName of ['managerExpenses', 'managerEntries']) {
+  for (const colName of collectionsToListen) {
     try {
       const colRef = collection(db, 'organisation', orgId, colName)
       const unsub = onSnapshot(
@@ -403,33 +414,35 @@ export async function recordManagerExpense(orgId, expenseData, managerActor) {
     updatedAt: serverTimestamp(),
   }
 
-  // 1. Primary write to managerExpenses (docId: ST001_newProject_28102026)
+  // 1. Primary write to managerExpenses (docId: ST001_newProject_28102026 - Authoritative source)
   await setDoc(primaryDocRef, payload, { merge: true })
 
-  // 2. Cross-platform mirror to managerEntries (docId: ST001_newProject_28102026)
-  try {
-    const entryRef = doc(db, 'organisation', orgId, 'managerEntries', docId)
-    await setDoc(entryRef, payload, { merge: true })
-  } catch (err) {
-    console.warn('[recordManagerExpense] Could not mirror to managerEntries:', err?.message)
-  }
+  // 2. Dual-sync to legacy collections ONLY for existing organizations (Preserves 100% backward compatibility)
+  const isNewOrg = await isNewOrganization(orgId)
+  if (!isNewOrg) {
+    try {
+      const entryRef = doc(db, 'organisation', orgId, 'managerEntries', docId)
+      await setDoc(entryRef, payload, { merge: true })
+    } catch (err) {
+      console.warn('[recordManagerExpense] Could not mirror to managerEntries:', err?.message)
+    }
 
-  // 3. Daily Aggregate Summary to managerExpenseSummary (docId: ST001_newProject_28102026)
-  try {
-    const summaryRef = doc(db, 'organisation', orgId, 'managerExpenseSummary', docId)
-    await setDoc(summaryRef, {
-      siteId: canonicalSiteKey,
-      projectName: payload.projectName,
-      projectStage: payload.projectStage,
-      managerExpenseTotalAmount: totalAmount,
-      quantity: totalQuantity,
-      managerId,
-      managerName,
-      date: new Date().toISOString(),
-      updatedAt: serverTimestamp(),
-    }, { merge: true })
-  } catch (err) {
-    console.warn('[recordManagerExpense] Could not write managerExpenseSummary:', err?.message)
+    try {
+      const summaryRef = doc(db, 'organisation', orgId, 'managerExpenseSummary', docId)
+      await setDoc(summaryRef, {
+        siteId: canonicalSiteKey,
+        projectName: payload.projectName,
+        projectStage: payload.projectStage,
+        managerExpenseTotalAmount: totalAmount,
+        quantity: totalQuantity,
+        managerId,
+        managerName,
+        date: new Date().toISOString(),
+        updatedAt: serverTimestamp(),
+      }, { merge: true })
+    } catch (err) {
+      console.warn('[recordManagerExpense] Could not write managerExpenseSummary:', err?.message)
+    }
   }
 
   // 4. Financial Rollup Engine: Recalculate totals and atomically sync project balance (Section 2.6 & Section 4)
@@ -458,16 +471,20 @@ export async function deleteManagerExpense(orgId, expenseId, siteId = null) {
 
   // Resolve canonical site key (ST001_newProject) so totalSiteExpensesPerDay is updated with ST001_newProject
   const canonicalSiteKey = targetSiteId ? resolveCanonicalSiteKey(targetSiteId) : null
+  const isNewOrg = await isNewOrganization(orgId)
 
   try {
     await deleteDoc(doc(db, 'organisation', orgId, 'managerExpenses', expenseId))
   } catch (e) {}
-  try {
-    await deleteDoc(doc(db, 'organisation', orgId, 'managerEntries', expenseId))
-  } catch (e) {}
-  try {
-    await deleteDoc(doc(db, 'organisation', orgId, 'managerExpenseSummary', expenseId))
-  } catch (e) {}
+
+  if (!isNewOrg) {
+    try {
+      await deleteDoc(doc(db, 'organisation', orgId, 'managerEntries', expenseId))
+    } catch (e) {}
+    try {
+      await deleteDoc(doc(db, 'organisation', orgId, 'managerExpenseSummary', expenseId))
+    } catch (e) {}
+  }
 
   if (canonicalSiteKey) {
     try {

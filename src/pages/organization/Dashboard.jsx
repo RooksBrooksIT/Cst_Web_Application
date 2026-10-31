@@ -860,152 +860,152 @@ export default function OrganizationDashboard() {
                 />
               </section>
 
-              {/* Operations & Projects Split Grid */}
-              <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Progress Portfolio Table */}
-                <div className="lg:col-span-2 p-6 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-4">
+              {/* Project Portfolio & Governance Operations */}
+              <section className="space-y-6">
+                {/* Project Portfolio Table */}
+                <div className="w-full p-6 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
                     <div>
                       <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">PROJECT PORTFOLIO</p>
                       <h2 className="text-base font-bold text-slate-900 tracking-tight">Construction Site Milestones & Telemetry</h2>
                     </div>
-                    <Link to="/organization/sites" className="text-xs font-semibold text-blue-600 hover:text-blue-700">
-                      View all sites →
+                    <Link to="/organization/sites" className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1">
+                      <span>View all sites</span>
+                      <span>→</span>
                     </Link>
                   </div>
 
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs text-slate-700">
-                      <thead className="bg-slate-50/80 text-slate-500 font-semibold border-b border-slate-100">
+                      <thead className="bg-slate-50/80 text-slate-600 font-semibold border-b border-slate-100">
                         <tr>
-                          <th className="p-3">Project / Location</th>
-                          <th className="p-3">Stage & Risk Alerts</th>
-                          <th className="p-3">Progress</th>
-                          <th className="p-3 text-right">Sanctioned Budget</th>
-                          <th className="p-3 text-center">Status</th>
+                          <th className="p-3.5 text-left font-semibold">Project / Location</th>
+                          <th className="p-3.5 text-left font-semibold">Stage & Risk Alerts</th>
+                          <th className="p-3.5 text-right font-semibold">Budget</th>
+                          <th className="p-3.5 text-center font-semibold">Status</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {searchedSites.slice(0, 5).map((site) => (
-                          <tr key={site.id} className="hover:bg-slate-50/80 transition-colors">
-                            <td className="p-3">
-                              <div className="flex items-start gap-2.5">
-                                <div className="w-8 h-8 rounded-lg bg-blue-50 text-[#0B3470] font-bold text-xs flex items-center justify-center shrink-0 mt-0.5 border border-blue-100">
-                                  <Building2 className="w-4 h-4" />
-                                </div>
-                                <div>
-                                  <strong className="text-slate-900 block font-bold">
-                                    {value(site, ['projectName', 'siteName', 'name'], site.id)}
-                                  </strong>
-                                  <small className="text-slate-400">
-                                    {value(site, ['siteLocation', 'location'], 'Site registered')}
-                                  </small>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="p-3">
-                              <div className="space-y-1">
-                                <span className="font-medium text-slate-800">
-                                  {value(site, ['projectStage', 'stage'], 'Foundation')}
-                                </span>
-                                <div className="mt-0.5">
-                                  <ProjectAlertBadge project={site} showDetails={true} />
-                                </div>
-                              </div>
-                            </td>
-                            <td className="p-3 min-w-[140px]">
-                              <ProgressBar percent={progressOf(site)} />
-                            </td>
-                            <td className="p-3 text-right font-bold text-emerald-700">
-                              {money(number(site, ['projectBudget', 'budget', 'estimatedBudget']))}
-                            </td>
-                            <td className="p-3 text-center">
-                              <StatusBadge status={statusOf(site)} />
+                        {searchedSites.length === 0 ? (
+                          <tr>
+                            <td colSpan={4} className="p-8 text-center text-slate-400">
+                              No construction projects found matching the selected filter.
                             </td>
                           </tr>
-                        ))}
+                        ) : (
+                          searchedSites.slice(0, 8).map((site) => (
+                            <tr key={site.id} className="hover:bg-slate-50/80 transition-colors">
+                              <td className="p-3.5">
+                                <div className="flex items-start gap-3">
+                                  <div className="w-9 h-9 rounded-xl bg-blue-50 text-[#0B3470] font-bold text-xs flex items-center justify-center shrink-0 mt-0.5 border border-blue-100">
+                                    <Building2 className="w-4 h-4" />
+                                  </div>
+                                  <div>
+                                    <strong className="text-slate-900 block font-bold text-xs sm:text-sm">
+                                      {value(site, ['projectName', 'siteName', 'name'], site.id)}
+                                    </strong>
+                                    <small className="text-slate-400 text-xs">
+                                      {value(site, ['siteLocation', 'location'], 'Site registered')}
+                                    </small>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="p-3.5">
+                                <div className="space-y-1">
+                                  <span className="font-semibold text-slate-800 block text-xs">
+                                    {value(site, ['projectStage', 'stage'], 'Foundation')}
+                                  </span>
+                                  <div className="mt-0.5">
+                                    <ProjectAlertBadge project={site} showDetails={true} />
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="p-3.5 text-right font-bold text-emerald-700 text-xs sm:text-sm whitespace-nowrap">
+                                {money(
+                                  number(site, [
+                                    'projectBudget',
+                                    'budget',
+                                    'totalBudget',
+                                    'estimatedBudget',
+                                    'plannedBudget',
+                                    'project_budget',
+                                    'contractValue',
+                                    'total_budget',
+                                  ])
+                                )}
+                              </td>
+                              <td className="p-3.5 text-center whitespace-nowrap">
+                                <StatusBadge status={statusOf(site)} />
+                              </td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>
                 </div>
 
-                {/* Right Sidebar Column: Execution Pipeline & Quick Governance */}
-                <div className="space-y-6">
-                  {/* Stage Distribution */}
-                  <div className="p-6 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-4">
-                    <SectionHeading eyebrow="STAGE DISTRIBUTION" title="Execution Pipeline" />
-                    <div className="space-y-3">
-                      {stageNames.map((stage) => {
-                        const stageSites = filteredSites.filter((s) => String(value(s, ['projectStage', 'stage'], '')).toLowerCase() === stage.toLowerCase())
-                        const progressValues = stageSites.map(progressOf).filter((p) => p !== null)
-                        const p = progressValues.length ? Math.round(progressValues.reduce((t, i) => t + i, 0) / progressValues.length) : 0
-                        return (
-                          <div key={stage} className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-1.5">
-                            <div className="flex justify-between text-xs">
-                              <span className="font-semibold text-slate-800">{stage}</span>
-                              <span className="text-slate-500 font-medium">{stageSites.length} sites ({p}%)</span>
-                            </div>
-                            <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
-                              <div className="bg-[#0B3470] h-1.5 rounded-full transition-all duration-500" style={{ width: `${p}%` }} />
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Executive Governance Quick Hub */}
-                  <div className="p-6 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-3">
+                {/* Executive Governance & Controls Quick Hub */}
+                <div className="p-6 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-4">
+                  <div>
                     <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">GOVERNANCE & CONTROLS</p>
                     <h3 className="text-sm font-bold text-slate-900">Executive Modules</h3>
+                  </div>
 
-                    <div className="space-y-2 pt-1">
-                      <Link
-                        to="/organization/approvals"
-                        className="flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-blue-50/60 border border-slate-200/70 transition-colors group"
-                      >
-                        <div className="flex items-center gap-2.5 text-xs font-bold text-slate-800 group-hover:text-blue-900">
-                          <ShieldCheck className="w-4 h-4 text-blue-600" />
-                          <span>Tier-2 HQ Approvals</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                    <Link
+                      to="/organization/approvals"
+                      className="flex items-center justify-between p-3.5 rounded-xl bg-slate-50 hover:bg-blue-50/70 border border-slate-200/70 hover:border-blue-200 transition-all group"
+                    >
+                      <div className="flex items-center gap-2.5 text-xs font-bold text-slate-800 group-hover:text-blue-900">
+                        <div className="p-2 rounded-lg bg-blue-100 text-[#0B3470] group-hover:bg-blue-200 transition-colors">
+                          <ShieldCheck className="w-4 h-4 text-blue-700" />
                         </div>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-900">
-                          {pendingApprovals} Pending
-                        </span>
-                      </Link>
+                        <span>Tier-2 HQ Approvals</span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-900">
+                        {pendingApprovals} Pending
+                      </span>
+                    </Link>
 
-                      <Link
-                        to="/organization/petty-cash"
-                        className="flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-emerald-50/60 border border-slate-200/70 transition-colors group"
-                      >
-                        <div className="flex items-center gap-2.5 text-xs font-bold text-slate-800 group-hover:text-emerald-900">
-                          <Wallet className="w-4 h-4 text-emerald-600" />
-                          <span>Petty Cash Governance</span>
+                    <Link
+                      to="/organization/petty-cash"
+                      className="flex items-center justify-between p-3.5 rounded-xl bg-slate-50 hover:bg-emerald-50/70 border border-slate-200/70 hover:border-emerald-200 transition-all group"
+                    >
+                      <div className="flex items-center gap-2.5 text-xs font-bold text-slate-800 group-hover:text-emerald-900">
+                        <div className="p-2 rounded-lg bg-emerald-100 text-emerald-800 group-hover:bg-emerald-200 transition-colors">
+                          <Wallet className="w-4 h-4 text-emerald-700" />
                         </div>
-                        <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-emerald-700" />
-                      </Link>
+                        <span>Petty Cash Governance</span>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-emerald-700" />
+                    </Link>
 
-                      <Link
-                        to="/organization/reports"
-                        className="flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-purple-50/60 border border-slate-200/70 transition-colors group"
-                      >
-                        <div className="flex items-center gap-2.5 text-xs font-bold text-slate-800 group-hover:text-purple-900">
-                          <BarChart3 className="w-4 h-4 text-purple-600" />
-                          <span>Executive Reports & Audit</span>
+                    <Link
+                      to="/organization/reports"
+                      className="flex items-center justify-between p-3.5 rounded-xl bg-slate-50 hover:bg-purple-50/70 border border-slate-200/70 hover:border-purple-200 transition-all group"
+                    >
+                      <div className="flex items-center gap-2.5 text-xs font-bold text-slate-800 group-hover:text-purple-900">
+                        <div className="p-2 rounded-lg bg-purple-100 text-purple-800 group-hover:bg-purple-200 transition-colors">
+                          <BarChart3 className="w-4 h-4 text-purple-700" />
                         </div>
-                        <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-purple-700" />
-                      </Link>
+                        <span>Executive Reports & Audit</span>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-purple-700" />
+                    </Link>
 
-                      <Link
-                        to="/organization/incentive-calculation"
-                        className="flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-amber-50/60 border border-slate-200/70 transition-colors group"
-                      >
-                        <div className="flex items-center gap-2.5 text-xs font-bold text-slate-800 group-hover:text-amber-900">
-                          <Award className="w-4 h-4 text-amber-600" />
-                          <span>Incentive Calculation Engine</span>
+                    <Link
+                      to="/organization/incentive-calculation"
+                      className="flex items-center justify-between p-3.5 rounded-xl bg-slate-50 hover:bg-amber-50/70 border border-slate-200/70 hover:border-amber-200 transition-all group"
+                    >
+                      <div className="flex items-center gap-2.5 text-xs font-bold text-slate-800 group-hover:text-amber-900">
+                        <div className="p-2 rounded-lg bg-amber-100 text-amber-800 group-hover:bg-amber-200 transition-colors">
+                          <Award className="w-4 h-4 text-amber-700" />
                         </div>
-                        <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-amber-700" />
-                      </Link>
-                    </div>
+                        <span>Incentive Calculation Engine</span>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-amber-700" />
+                    </Link>
                   </div>
                 </div>
               </section>

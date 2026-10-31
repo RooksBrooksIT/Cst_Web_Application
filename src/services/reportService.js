@@ -301,13 +301,43 @@ export function calculateDailySiteExpenses({
     totalMaterial = materials.reduce((acc, curr) => acc + curr.amount, 0)
   }
 
-  // Food and Transport allowances across matching entries
+  // Food, Transport, and Fuel expenses across matching entries (separately fetched and calculated)
   let foodAmount = 0
   let transportAmount = 0
+  let fuelAmount = 0
 
   matchingSupervisorEntries.forEach((supEntry) => {
-    foodAmount += parseAmount(supEntry.foodAllowance || supEntry.foodCost || supEntry.foodExpense || supEntry.food || 0)
-    transportAmount += parseAmount(supEntry.transportAmount || supEntry.transportCost || supEntry.fuelCost || supEntry.fuelExpense || supEntry.transport || supEntry.fuel || 0)
+    // 1. Food Expense
+    const foodVal =
+      supEntry.foodAllowance !== undefined && supEntry.foodAllowance !== null ? supEntry.foodAllowance :
+      supEntry.foodCost !== undefined && supEntry.foodCost !== null ? supEntry.foodCost :
+      supEntry.foodExpense !== undefined && supEntry.foodExpense !== null ? supEntry.foodExpense :
+      supEntry.food !== undefined && supEntry.food !== null ? supEntry.food :
+      supEntry.expenses?.foodCost !== undefined && supEntry.expenses?.foodCost !== null ? supEntry.expenses.foodCost :
+      0
+    foodAmount += parseAmount(foodVal)
+
+    // 2. Transport Expense
+    const transportVal =
+      supEntry.transportAmount !== undefined && supEntry.transportAmount !== null ? supEntry.transportAmount :
+      supEntry.transportCost !== undefined && supEntry.transportCost !== null ? supEntry.transportCost :
+      supEntry.transportExpense !== undefined && supEntry.transportExpense !== null ? supEntry.transportExpense :
+      supEntry.transport !== undefined && supEntry.transport !== null ? supEntry.transport :
+      supEntry.expenses?.transportCost !== undefined && supEntry.expenses?.transportCost !== null ? supEntry.expenses.transportCost :
+      0
+    transportAmount += parseAmount(transportVal)
+
+    // 3. Fuel Expense
+    const fuelVal =
+      supEntry.fuelCost !== undefined && supEntry.fuelCost !== null ? supEntry.fuelCost :
+      supEntry.fuelExpense !== undefined && supEntry.fuelExpense !== null ? supEntry.fuelExpense :
+      supEntry.fuelAmount !== undefined && supEntry.fuelAmount !== null ? supEntry.fuelAmount :
+      supEntry.fuel !== undefined && supEntry.fuel !== null ? supEntry.fuel :
+      supEntry.dieselCost !== undefined && supEntry.dieselCost !== null ? supEntry.dieselCost :
+      supEntry.petrolCost !== undefined && supEntry.petrolCost !== null ? supEntry.petrolCost :
+      supEntry.expenses?.fuelCost !== undefined && supEntry.expenses?.fuelCost !== null ? supEntry.expenses.fuelCost :
+      0
+    fuelAmount += parseAmount(fuelVal)
   })
 
   // Supervisor name & stage resolution
@@ -529,7 +559,7 @@ export function calculateDailySiteExpenses({
   })
 
   const totalBills = bills.reduce((acc, curr) => acc + curr.amount, 0)
-  const grandTotal = totalLabour + totalMaterial + foodAmount + transportAmount + totalBills
+  const grandTotal = totalLabour + totalMaterial + foodAmount + transportAmount + fuelAmount + totalBills
 
   return {
     siteName: isAllSites ? 'All Managed Sites' : (site?.projectName || site?.siteName || site?.name || 'Selected Site'),
@@ -543,10 +573,11 @@ export function calculateDailySiteExpenses({
     totalMaterial,
     foodAmount,
     transportAmount,
+    fuelAmount,
     bills,
     totalBills,
     grandTotal,
-    hasData: grandTotal > 0 || labours.length > 0 || materials.length > 0 || bills.length > 0,
+    hasData: grandTotal > 0 || labours.length > 0 || materials.length > 0 || bills.length > 0 || foodAmount > 0 || transportAmount > 0 || fuelAmount > 0,
   }
 }
 
@@ -562,9 +593,12 @@ export function calculateDateRangeExpenses({
   selectedStage,
   siteSupervisorEntries = [],
   managerExpenses = [],
+  managerEntries = [],
   organizationEntries = [],
+  organizationExpenses = [],
   contractorEntries = [],
   totalSiteExpensesPerDay = [],
+  dailySiteLogs = [],
 }) {
   const start = new Date(fromDate)
   const end = new Date(toDate)
@@ -574,6 +608,7 @@ export function calculateDateRangeExpenses({
   let totalRangeMaterial = 0
   let totalRangeFood = 0
   let totalRangeTransport = 0
+  let totalRangeFuel = 0
   let totalRangeBills = 0
   let grandRangeTotal = 0
 
@@ -587,9 +622,12 @@ export function calculateDateRangeExpenses({
         selectedStage,
         siteSupervisorEntries,
         managerExpenses,
+        managerEntries,
         organizationEntries,
+        organizationExpenses,
         contractorEntries,
         totalSiteExpensesPerDay,
+        dailySiteLogs,
       })
 
       if (dayData.hasData || dayData.grandTotal > 0) {
@@ -602,6 +640,7 @@ export function calculateDateRangeExpenses({
         totalRangeMaterial += dayData.totalMaterial
         totalRangeFood += dayData.foodAmount
         totalRangeTransport += dayData.transportAmount
+        totalRangeFuel += (dayData.fuelAmount || 0)
         totalRangeBills += dayData.totalBills
         grandRangeTotal += dayData.grandTotal
       }
@@ -630,6 +669,7 @@ export function calculateDateRangeExpenses({
       totalMaterial: totalRangeMaterial,
       totalFood: totalRangeFood,
       totalTransport: totalRangeTransport,
+      totalFuel: totalRangeFuel,
       totalBills: totalRangeBills,
       grandTotal: grandRangeTotal,
       avgDailySpend,
@@ -675,6 +715,9 @@ export function calculateSiteLifetimeSummary({
       breakdown: {
         labour: 0,
         material: 0,
+        food: 0,
+        transport: 0,
+        fuel: 0,
         foodTransport: 0,
         bills: 0,
         incentives: 0,
@@ -694,7 +737,9 @@ export function calculateSiteLifetimeSummary({
   const matchingDayRollups = totalSiteExpensesPerDay.filter((r) => matchesSite(r, site))
   let totalLabour = 0
   let totalMaterial = 0
-  let totalFoodTransport = 0
+  let totalFood = 0
+  let totalTransport = 0
+  let totalFuel = 0
   let totalBills = 0
   let totalIncentives = 0
 
@@ -702,7 +747,9 @@ export function calculateSiteLifetimeSummary({
     matchingDayRollups.forEach((r) => {
       totalLabour += parseAmount(r.totalLabour || r.labourAmount || 0)
       totalMaterial += parseAmount(r.totalMaterial || r.materialAmount || 0)
-      totalFoodTransport += parseAmount(r.totalFood || r.foodExpense || 0) + parseAmount(r.totalTransport || r.transportExpense || 0)
+      totalFood += parseAmount(r.totalFood || r.foodExpense || r.food || 0)
+      totalTransport += parseAmount(r.totalTransport || r.transportExpense || r.transport || 0)
+      totalFuel += parseAmount(r.totalFuel || r.fuelExpense || r.fuelCost || r.fuel || 0)
       totalBills += parseAmount(r.totalBills || r.billsAmount || 0)
     })
   } else {
@@ -711,13 +758,16 @@ export function calculateSiteLifetimeSummary({
     supEntries.forEach((e) => {
       totalLabour += parseAmount(e.totalLabourAmount || e.labourTotal || 0)
       totalMaterial += parseAmount(e.totalMaterialAmount || e.materialTotal || 0)
-      totalFoodTransport += parseAmount(e.foodAllowance || 0) + parseAmount(e.transportAmount || 0)
+      totalFood += parseAmount(e.foodAllowance ?? e.foodCost ?? e.foodExpense ?? e.food ?? e.expenses?.foodCost ?? 0)
+      totalTransport += parseAmount(e.transportAmount ?? e.transportCost ?? e.transportExpense ?? e.transport ?? e.expenses?.transportCost ?? 0)
+      totalFuel += parseAmount(e.fuelCost ?? e.fuelExpense ?? e.fuelAmount ?? e.fuel ?? e.dieselCost ?? e.petrolCost ?? e.expenses?.fuelCost ?? 0)
     })
   }
 
   const matchingIncentives = siteSupervisorIncentives.filter((inc) => matchesSite(inc, site))
   totalIncentives = matchingIncentives.reduce((acc, inc) => acc + parseAmount(inc.incentiveAmount || inc.amount || 0), 0)
 
+  const totalFoodTransport = totalFood + totalTransport + totalFuel
   const rollupsTotal = totalLabour + totalMaterial + totalFoodTransport + totalBills + totalIncentives
   const directSpent = parseAmount(site.amountSpent || site.spentAmount || 0)
   const totalSpent = rollupsTotal > 0 ? rollupsTotal : directSpent
@@ -751,6 +801,9 @@ export function calculateSiteLifetimeSummary({
     breakdown: {
       labour: totalLabour,
       material: totalMaterial,
+      food: totalFood,
+      transport: totalTransport,
+      fuel: totalFuel,
       foodTransport: totalFoodTransport,
       bills: totalBills,
       incentives: totalIncentives,
@@ -818,15 +871,20 @@ export function calculateProjectStageReport({
 
   let stageTotalLabour = 0
   let stageTotalMaterial = 0
-  let stageTotalFoodTransport = 0
+  let stageTotalFood = 0
+  let stageTotalTransport = 0
+  let stageTotalFuel = 0
   let stageTotalBills = 0
 
   stageEntries.forEach((e) => {
     stageTotalLabour += parseAmount(e.totalLabourAmount || e.labourTotal || 0)
     stageTotalMaterial += parseAmount(e.totalMaterialAmount || e.materialTotal || 0)
-    stageTotalFoodTransport += parseAmount(e.foodAllowance || 0) + parseAmount(e.transportAmount || 0)
+    stageTotalFood += parseAmount(e.foodAllowance ?? e.foodCost ?? e.foodExpense ?? e.food ?? 0)
+    stageTotalTransport += parseAmount(e.transportAmount ?? e.transportCost ?? e.transportExpense ?? e.transport ?? 0)
+    stageTotalFuel += parseAmount(e.fuelCost ?? e.fuelExpense ?? e.fuelAmount ?? e.fuel ?? 0)
   })
 
+  const stageTotalFoodTransport = stageTotalFood + stageTotalTransport + stageTotalFuel
   const grandStageSpend = stageTotalLabour + stageTotalMaterial + stageTotalFoodTransport + stageTotalBills
 
   // Match stage schedule budget if available
@@ -857,7 +915,10 @@ export function calculateProjectStageReport({
     
     let spentInStage = 0
     entriesForSiteAndStage.forEach((e) => {
-      spentInStage += parseAmount(e.totalAmount || (parseAmount(e.totalLabourAmount || 0) + parseAmount(e.totalMaterialAmount || 0) + parseAmount(e.foodAllowance || 0) + parseAmount(e.transportAmount || 0)))
+      const food = parseAmount(e.foodAllowance ?? e.foodCost ?? e.foodExpense ?? e.food ?? 0)
+      const trans = parseAmount(e.transportAmount ?? e.transportCost ?? e.transportExpense ?? e.transport ?? 0)
+      const fuel = parseAmount(e.fuelCost ?? e.fuelExpense ?? e.fuelAmount ?? e.fuel ?? 0)
+      spentInStage += parseAmount(e.totalAmount || (parseAmount(e.totalLabourAmount || 0) + parseAmount(e.totalMaterialAmount || 0) + food + trans + fuel))
     })
 
     return {
@@ -883,6 +944,9 @@ export function calculateProjectStageReport({
     alertTone,
     stageTotalLabour,
     stageTotalMaterial,
+    stageTotalFood,
+    stageTotalTransport,
+    stageTotalFuel,
     stageTotalFoodTransport,
     stageTotalBills,
     stageSiteSummary,

@@ -12,6 +12,7 @@ import {
 import { db } from './firebase.js'
 import { normalizeExpenseRecord } from './expenseNormalizationService.js'
 import { recalcTotalsAndSyncProject } from './expenseService.js'
+import { isNewOrganization, isNewOrganizationSync } from './schemaResolverService.js'
 
 /**
  * CST White Label / eBricks - Organization Direct Expenses Service
@@ -136,7 +137,8 @@ export function generateOrganizationExpenseDocId(input) {
 
 export async function fetchOrganizationExpenses(orgId) {
   if (!orgId) return []
-  const collectionsToRead = ['organizationExpenses', 'organizationEntries']
+  const isNewOrg = await isNewOrganization(orgId)
+  const collectionsToRead = isNewOrg ? ['organizationExpenses'] : ['organizationExpenses', 'organizationEntries']
   const dedupedMap = new Map()
 
   for (const colName of collectionsToRead) {
@@ -171,20 +173,27 @@ export async function fetchOrganizationExpenses(orgId) {
 export function subscribeOrganizationExpenses(orgId, onData, onError) {
   if (!orgId) return () => {}
 
-  const recordsByCol = {
-    organizationExpenses: new Map(),
-    organizationEntries: new Map(),
-  }
+  const isNewOrg = isNewOrganizationSync(orgId)
+  const collectionsToListen = isNewOrg ? ['organizationExpenses'] : ['organizationExpenses', 'organizationEntries']
+
+  const recordsByCol = {}
+  collectionsToListen.forEach((col) => {
+    recordsByCol[col] = new Map()
+  })
 
   const emitMerged = () => {
     const deduped = new Map()
-    // 1. Ingest mobile entries as base/fallback
-    for (const [id, rec] of recordsByCol.organizationEntries.entries()) {
-      deduped.set(id, rec)
+    // 1. Ingest mobile entries as base/fallback (if applicable for legacy orgs)
+    if (recordsByCol.organizationEntries) {
+      for (const [id, rec] of recordsByCol.organizationEntries.entries()) {
+        deduped.set(id, rec)
+      }
     }
     // 2. Overlay / merge primary organizationExpenses (authoritative source)
-    for (const [id, rec] of recordsByCol.organizationExpenses.entries()) {
-      deduped.set(id, rec)
+    if (recordsByCol.organizationExpenses) {
+      for (const [id, rec] of recordsByCol.organizationExpenses.entries()) {
+        deduped.set(id, rec)
+      }
     }
 
     const list = Array.from(deduped.values()).sort((a, b) => {
@@ -197,7 +206,7 @@ export function subscribeOrganizationExpenses(orgId, onData, onError) {
   }
 
   const unsubs = []
-  for (const colName of ['organizationExpenses', 'organizationEntries']) {
+  for (const colName of collectionsToListen) {
     try {
       const colRef = collection(db, 'organisation', orgId, colName)
       const unsub = onSnapshot(
@@ -365,30 +374,32 @@ export async function recordOrganizationExpense(orgId, expenseData, orgActor) {
     updatedAt: serverTimestamp(),
   }
 
-  // 1. Primary write to organizationExpenses
+  // 1. Primary write to organizationExpenses (Authoritative source for all users)
   await setDoc(primaryDocRef, payload)
 
-  // 2. Dual-sync to organizationEntries for existing mobile & reporting compatibility
-  try {
-    const entryRef = doc(db, 'organisation', orgId, 'organizationEntries', expenseId)
-    await setDoc(entryRef, payload, { merge: true })
-  } catch (err) {
-    console.warn('Could not mirror to organizationEntries:', err)
-  }
+  // 2. Dual-sync to legacy collections ONLY for existing organizations (Preserves 100% backward compatibility)
+  const isNewOrg = await isNewOrganization(orgId)
+  if (!isNewOrg) {
+    try {
+      const entryRef = doc(db, 'organisation', orgId, 'organizationEntries', expenseId)
+      await setDoc(entryRef, payload, { merge: true })
+    } catch (err) {
+      console.warn('Could not mirror to organizationEntries:', err)
+    }
 
-  // 3. Mirror summary for mobile expense summary screens
-  try {
-    const summaryRef = doc(db, 'organisation', orgId, 'organizationExpenseSummary', expenseId)
-    await setDoc(summaryRef, {
-      siteId: canonicalSiteKey,
-      projectName: payload.projectName,
-      projectStage: payload.projectStage,
-      orgExpenseTotalAmount: totalAmount,
-      quantity: totalQuantity,
-      date: new Date().toISOString(),
-      updatedAt: serverTimestamp(),
-    }, { merge: true })
-  } catch (err) {}
+    try {
+      const summaryRef = doc(db, 'organisation', orgId, 'organizationExpenseSummary', expenseId)
+      await setDoc(summaryRef, {
+        siteId: canonicalSiteKey,
+        projectName: payload.projectName,
+        projectStage: payload.projectStage,
+        orgExpenseTotalAmount: totalAmount,
+        quantity: totalQuantity,
+        date: new Date().toISOString(),
+        updatedAt: serverTimestamp(),
+      }, { merge: true })
+    } catch (err) {}
+  }
 
   // 4. Auto-update project site cumulative expenditure (delta only if existing)
   const previousDocAmount = Number(existingData?.totalAmount || existingData?.amount || 0)
@@ -440,16 +451,20 @@ export async function deleteOrganizationExpense(orgId, expenseId, siteId = null)
   } catch (_) {}
 
   const canonicalSiteKey = targetSiteId ? resolveCanonicalSiteKey(targetSiteId) : null
+  const isNewOrg = await isNewOrganization(orgId)
 
   try {
     await deleteDoc(doc(db, 'organisation', orgId, 'organizationExpenses', expenseId))
   } catch (e) {}
-  try {
-    await deleteDoc(doc(db, 'organisation', orgId, 'organizationEntries', expenseId))
-  } catch (e) {}
-  try {
-    await deleteDoc(doc(db, 'organisation', orgId, 'organizationExpenseSummary', expenseId))
-  } catch (e) {}
+
+  if (!isNewOrg) {
+    try {
+      await deleteDoc(doc(db, 'organisation', orgId, 'organizationEntries', expenseId))
+    } catch (e) {}
+    try {
+      await deleteDoc(doc(db, 'organisation', orgId, 'organizationExpenseSummary', expenseId))
+    } catch (e) {}
+  }
 
   // Adjust site cumulative expenditure
   if (targetSiteId && expenseAmount > 0) {
@@ -557,20 +572,22 @@ export async function deleteOrganizationExpenseBill(orgId, expenseId, billIdOrIn
 
   await updateDoc(docRef, updatedPayload)
 
-  // Mirror to organizationEntries if exists
-  try {
-    const entryRef = doc(db, 'organisation', orgId, 'organizationEntries', expenseId)
-    await updateDoc(entryRef, updatedPayload)
-  } catch (_) {}
+  // Mirror to legacy collections ONLY for existing organizations
+  const isNewOrg = await isNewOrganization(orgId)
+  if (!isNewOrg) {
+    try {
+      const entryRef = doc(db, 'organisation', orgId, 'organizationEntries', expenseId)
+      await updateDoc(entryRef, updatedPayload)
+    } catch (_) {}
 
-  // Mirror to organizationExpenseSummary
-  try {
-    const summaryRef = doc(db, 'organisation', orgId, 'organizationExpenseSummary', expenseId)
-    await updateDoc(summaryRef, {
-      orgExpenseTotalAmount: newTotal,
-      updatedAt: serverTimestamp(),
-    })
-  } catch (_) {}
+    try {
+      const summaryRef = doc(db, 'organisation', orgId, 'organizationExpenseSummary', expenseId)
+      await updateDoc(summaryRef, {
+        orgExpenseTotalAmount: newTotal,
+        updatedAt: serverTimestamp(),
+      })
+    } catch (_) {}
+  }
 
   // Adjust site cumulative expenditure
   const targetSiteId = siteId || existingData.rawSiteId || existingData.siteId

@@ -9,7 +9,7 @@ import {
   where,
 } from 'firebase/firestore'
 import { db } from './firebase.js'
-import { SUBSCRIPTION_PLANS, calculatePlanQuotas, isSubscriptionExpired, calculateDaysRemaining } from './subscriptionService.js'
+import { SUBSCRIPTION_PLANS, calculatePlanQuotas, isSubscriptionExpired, calculateDaysRemaining, resolveAuthoritativeSubscription } from './subscriptionService.js'
 
 export const PLAN_FEATURE_PERMISSIONS = {
   // Free Trial features
@@ -246,16 +246,19 @@ export async function getActivePlanLimits(orgId, subscription = null) {
 
   try {
     if (!subData && orgId) {
-      const subRef = doc(db, 'organisation', orgId, 'data', 'subscription')
-      const subSnap = await getDoc(subRef)
-      if (subSnap.exists()) {
-        subData = subSnap.data()
-      } else {
-        const orgRef = doc(db, 'organisation', orgId)
-        const orgSnap = await getDoc(orgRef)
-        if (orgSnap.exists()) {
-          const orgData = orgSnap.data()
-          subData = orgData?.subscription || orgData?.data?.subscription || null
+      subData = await resolveAuthoritativeSubscription(orgId)
+      if (!subData) {
+        const subRef = doc(db, 'organisation', orgId, 'data', 'subscription')
+        const subSnap = await getDoc(subRef)
+        if (subSnap.exists()) {
+          subData = subSnap.data()
+        } else {
+          const orgRef = doc(db, 'organisation', orgId)
+          const orgSnap = await getDoc(orgRef)
+          if (orgSnap.exists()) {
+            const orgData = orgSnap.data()
+            subData = orgData?.subscription || orgData?.data?.subscription || orgData || null
+          }
         }
       }
     }
@@ -275,20 +278,21 @@ export async function getActivePlanLimits(orgId, subscription = null) {
       const drawingLimits = getDrawingLimitsForPlan(planName, subData)
 
       // Single source of truth: calculatePlanQuotas defines limits for standard plans (Free Trial, Silver, Gold, Platinum).
-      // Only custom Enterprise tier falls back to custom Firestore numbers, or explicit subData override if present.
+      // Only custom Enterprise tier falls back to custom Firestore numbers, or explicit positive subData override if present.
       const isCustomEnterprise = planName.toLowerCase().includes('enterprise') || planName.toLowerCase().includes('custom')
-      const effectiveMaxProjects = subData.maxProjects !== undefined
-        ? Number(subData.maxProjects)
-        : (isCustomEnterprise ? (subData.maxProjects || quotas.maxProjects) : quotas.maxProjects)
-      const effectiveMaxUsers = subData.maxUsers !== undefined
-        ? Number(subData.maxUsers)
-        : (isCustomEnterprise ? (subData.maxUsers || quotas.maxUsers) : quotas.maxUsers)
-      const effectiveMaxManagers = subData.maxManagers !== undefined
-        ? Number(subData.maxManagers)
-        : (isCustomEnterprise ? (subData.maxManagers || quotas.maxManagers) : quotas.maxManagers)
-      const effectiveMaxSupervisors = subData.maxSupervisors !== undefined
-        ? Number(subData.maxSupervisors)
-        : (isCustomEnterprise ? (subData.maxSupervisors || quotas.maxSupervisors) : quotas.maxSupervisors)
+      const parseLimit = (explicitVal, quotaVal) => {
+        if (explicitVal !== undefined && explicitVal !== null && explicitVal !== '' && !isNaN(Number(explicitVal))) {
+          const num = Number(explicitVal)
+          if (num > 0 || isCustomEnterprise) return num
+        }
+        return quotaVal
+      }
+
+      const effectiveMaxProjects = parseLimit(subData.maxProjects, quotas.maxProjects)
+      const effectiveMaxUsers = parseLimit(subData.maxUsers, quotas.maxUsers)
+      const effectiveMaxManagers = parseLimit(subData.maxManagers, quotas.maxManagers)
+      const rawMaxSup = subData.maxSupervisors ?? subData.max_supervisors ?? subData.supervisorQuota
+      const effectiveMaxSupervisors = parseLimit(rawMaxSup, quotas.maxSupervisors)
 
       return {
         planName,

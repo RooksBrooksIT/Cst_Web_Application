@@ -138,14 +138,14 @@ export default function SiteStatusReportHub({
                 onClick={handleExportCSV}
                 className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
               >
-                📥 Export CSV
+               Export CSV
               </button>
               <button
                 type="button"
                 onClick={handlePrintPDF}
                 className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors shadow-2xs cursor-pointer"
               >
-                🖨️ Print PDF
+                Print PDF
               </button>
             </div>
           </div>

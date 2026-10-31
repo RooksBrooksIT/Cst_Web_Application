@@ -15,6 +15,7 @@ import {
   calculateSiteFinancialMetrics,
   parseAmount,
 } from '../../../services/financeService.js'
+import { isNewOrganizationSync } from '../../../services/schemaResolverService.js'
 
 export default function OrgFinancePage({
   sites = [],
@@ -71,6 +72,7 @@ export default function OrgFinancePage({
       const expDoc = totalSiteExpensesPerDay.find((d) => matchesSite(d, site)) || {}
 
       // 3. Assemble sourcesWithDocs from live collection props for real-time deduplicated calculation
+      const isNewOrg = isNewOrganizationSync(orgId)
       const sourcesWithDocs = [
         { col: 'siteSupervisorEntries', category: 'Supervisor Entry', docs: siteSupervisorEntries },
         { col: 'pettyCashTransactions', category: 'Petty Cash', docs: pettyCashTransactions },
@@ -78,8 +80,12 @@ export default function OrgFinancePage({
         { col: 'managerExpenses', category: 'Manager Direct Expense', docs: managerExpenses },
         { col: 'contractorEntries', category: 'Contractor Payment', docs: contractorEntries },
         { col: 'siteSupervisorIncentives', category: 'Supervisor Incentive', docs: siteSupervisorIncentives },
-        { col: 'organizationEntries', category: 'Organization Bill', docs: organizationEntries },
-        { col: 'managerEntries', category: 'Manager Approved', docs: managerEntries },
+        ...(!isNewOrg
+          ? [
+              { col: 'organizationEntries', category: 'Organization Bill', docs: organizationEntries },
+              { col: 'managerEntries', category: 'Manager Approved', docs: managerEntries },
+            ]
+          : []),
         { col: 'petty_cash_expenses', category: 'Petty Cash Voucher', docs: pettyCashExpenses },
       ]
 

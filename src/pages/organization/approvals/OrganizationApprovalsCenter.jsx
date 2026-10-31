@@ -21,20 +21,17 @@ import {
   Check,
   X,
   AlertTriangle,
-  Plus,
   Award,
   MapPin,
   UserCheck,
   Calendar,
-  ArrowRight,
   Building2,
   Filter,
   Search,
   FileText,
-  ShieldCheck,
-  CheckCheck,
-  Inbox,
   RotateCcw,
+  Inbox,
+  ArrowRight,
 } from 'lucide-react'
 
 function money(amount) {
@@ -53,12 +50,20 @@ function formatDate(raw) {
     : new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short' }).format(d)
 }
 
+const APPROVAL_CATEGORIES = [
+  { id: 'all', label: 'All Categories', stream: null },
+  { id: 'MATERIALS', label: 'Material Requests', stream: 'MATERIALS' },
+  { id: 'TOOLS', label: 'Tools & Equipment', stream: 'TOOLS' },
+  { id: 'PETTY_CASH', label: 'Petty Cash & Claims', stream: 'PETTY_CASH' },
+  { id: 'STAGES', label: 'Stage Schedules', stream: 'STAGES' },
+  { id: 'VEHICLES', label: 'Vehicle Movements', stream: 'VEHICLES' },
+]
+
 export default function OrganizationApprovalsCenter({
   sites = [],
   siteMaterialsRequest = [],
   siteToolsRequest = [],
   siteSupervisorProjectStageSchedule = [],
-
   pettyCashRequests = [],
   siteSupervisorEntries = [],
   vehicleMovements = [],
@@ -69,11 +74,14 @@ export default function OrganizationApprovalsCenter({
     displayName: userData?.fullName || userData?.FullName || userData?.name || user?.displayName || 'Organization Admin',
   }
 
-  // Active Stream Tab: 'ALL' | 'AUTHORIZED_FORWARDED' | 'MATERIALS' | 'TOOLS' | 'PETTY_CASH' | 'STAGES' | 'VEHICLES' | 'DECLINED' | 'AUDIT_TRAIL'
+  // Primary status navigation: 'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL_HISTORY'
+  const [statusTab, setStatusTab] = useState('PENDING')
+  // Category filter: 'all' | 'MATERIALS' | 'TOOLS' | 'PETTY_CASH' | 'STAGES' | 'VEHICLES'
+  const [categoryFilter, setCategoryFilter] = useState('all')
+  // Preserved activeTab for backward compatibility
   const [activeTab, setActiveTab] = useState('ALL')
   const [search, setSearch] = useState('')
   const [siteFilter, setSiteFilter] = useState('all')
-  const [logCategoryFilter, setLogCategoryFilter] = useState('all')
   const [logStatusFilter, setLogStatusFilter] = useState('all')
 
   const [feedback, setFeedback] = useState({ type: '', text: '' })
@@ -221,7 +229,7 @@ export default function OrganizationApprovalsCenter({
     siteMap,
   ])
 
-  // Filter items awaiting Organization HQ approval (Stage 3)
+  // Filter items awaiting Organization approval
   const pendingOrgApprovals = useMemo(() => {
     return allRequisitions.filter((item) => {
       const st = String(item.status || item.approvalStatus || '').toLowerCase()
@@ -232,7 +240,7 @@ export default function OrganizationApprovalsCenter({
     })
   }, [allRequisitions])
 
-  // Filter items authorized and forwarded by Organization HQ (Stage 3 -> Stage 4)
+  // Filter items approved & forwarded by Organization
   const authorizedForwardedItems = useMemo(() => {
     return allRequisitions.filter((item) => {
       const st = String(item.status || item.approvalStatus || '').toLowerCase()
@@ -250,7 +258,7 @@ export default function OrganizationApprovalsCenter({
     })
   }, [allRequisitions])
 
-  // Filter items declined by Organization HQ
+  // Filter items rejected by Organization
   const declinedItems = useMemo(() => {
     return allRequisitions.filter((item) => {
       const st = String(item.status || item.approvalStatus || '').toLowerCase()
@@ -276,74 +284,96 @@ export default function OrganizationApprovalsCenter({
     })
   }, [allRequisitions])
 
+  // Active status items source for counting categories
+  const currentStatusSource = useMemo(() => {
+    if (statusTab === 'APPROVED' || activeTab === 'AUTHORIZED_FORWARDED') return authorizedForwardedItems
+    if (statusTab === 'REJECTED' || activeTab === 'DECLINED') return declinedItems
+    if (statusTab === 'ALL_HISTORY' || activeTab === 'AUDIT_TRAIL') return auditTrailItems
+    return pendingOrgApprovals
+  }, [statusTab, activeTab, authorizedForwardedItems, declinedItems, auditTrailItems, pendingOrgApprovals])
+
+  // Category counts within currently selected status
+  const categoryCounts = useMemo(() => {
+    const counts = { all: currentStatusSource.length }
+    APPROVAL_CATEGORIES.forEach((cat) => {
+      if (cat.stream) {
+        counts[cat.id] = currentStatusSource.filter((item) => item.stream === cat.stream).length
+      }
+    })
+    return counts
+  }, [currentStatusSource])
+
   // Filter by Active Tab, Category, Status, Site & Search
   const filteredList = useMemo(() => {
     let source = pendingOrgApprovals
-    if (activeTab === 'AUTHORIZED_FORWARDED') {
+    if (statusTab === 'APPROVED' || activeTab === 'AUTHORIZED_FORWARDED') {
       source = authorizedForwardedItems
-    } else if (activeTab === 'DECLINED') {
+    } else if (statusTab === 'REJECTED' || activeTab === 'DECLINED') {
       source = declinedItems
-    } else if (activeTab === 'AUDIT_TRAIL') {
+    } else if (statusTab === 'ALL_HISTORY' || activeTab === 'AUDIT_TRAIL') {
       source = auditTrailItems
-    } else if (activeTab === 'ALL') {
-      source = pendingOrgApprovals
     } else {
-      source = pendingOrgApprovals.filter((item) => item.stream === activeTab)
+      source = pendingOrgApprovals
     }
 
     return source.filter((item) => {
+      // Category filter
+      if (categoryFilter !== 'all' && item.stream !== categoryFilter) {
+        return false
+      }
+
       // Site filter
-      const matchesSite = siteFilter === 'all' || item.siteId === siteFilter
+      if (siteFilter !== 'all' && item.siteId !== siteFilter) {
+        return false
+      }
 
-      // Category filter (active on Authorized & Forwarded tab)
-      const matchesCategory =
-        activeTab !== 'AUTHORIZED_FORWARDED' ||
-        logCategoryFilter === 'all' ||
-        item.stream === logCategoryFilter
-
-      // Status filter (active on Authorized & Forwarded tab)
-      let matchesStatus = true
-      if (activeTab === 'AUTHORIZED_FORWARDED' && logStatusFilter !== 'all') {
+      // Status filter (on Approved tab)
+      if ((statusTab === 'APPROVED' || activeTab === 'AUTHORIZED_FORWARDED') && logStatusFilter !== 'all') {
         const st = String(item.status || item.approvalStatus || '').toLowerCase()
-        if (logStatusFilter === 'forwarded') {
-          matchesStatus = ['pending_manager_clearance', 'awaiting_disbursement'].includes(st)
-        } else if (logStatusFilter === 'cleared') {
-          matchesStatus = ['approved', 'cleared', 'disbursed'].includes(st)
-        } else if (logStatusFilter === 'received') {
-          matchesStatus = st === 'received'
+        if (logStatusFilter === 'forwarded' && !['pending_manager_clearance', 'awaiting_disbursement'].includes(st)) {
+          return false
+        }
+        if (logStatusFilter === 'cleared' && !['approved', 'cleared', 'disbursed'].includes(st)) {
+          return false
+        }
+        if (logStatusFilter === 'received' && st !== 'received') {
+          return false
         }
       }
 
       // Search filter
       const q = search.trim().toLowerCase()
-      const matchesSearch =
-        !q ||
-        item.title?.toLowerCase().includes(q) ||
-        item.subTitle?.toLowerCase().includes(q) ||
-        item.siteName?.toLowerCase().includes(q) ||
-        item.requester?.toLowerCase().includes(q) ||
-        item.verifier?.toLowerCase().includes(q) ||
-        item.id?.toLowerCase().includes(q) ||
-        item.orgApprovedBy?.toLowerCase().includes(q) ||
-        item.orgApprovalRemarks?.toLowerCase().includes(q) ||
-        item.rejectionReason?.toLowerCase().includes(q) ||
-        item.category?.toLowerCase().includes(q)
+      if (q) {
+        const match =
+          item.title?.toLowerCase().includes(q) ||
+          item.subTitle?.toLowerCase().includes(q) ||
+          item.siteName?.toLowerCase().includes(q) ||
+          item.requester?.toLowerCase().includes(q) ||
+          item.verifier?.toLowerCase().includes(q) ||
+          item.id?.toLowerCase().includes(q) ||
+          item.orgApprovedBy?.toLowerCase().includes(q) ||
+          item.orgApprovalRemarks?.toLowerCase().includes(q) ||
+          item.rejectionReason?.toLowerCase().includes(q) ||
+          item.category?.toLowerCase().includes(q)
+        if (!match) return false
+      }
 
-      return matchesSite && matchesCategory && matchesStatus && matchesSearch
+      return true
     })
   }, [
+    statusTab,
     activeTab,
+    categoryFilter,
     pendingOrgApprovals,
     authorizedForwardedItems,
     declinedItems,
     auditTrailItems,
     siteFilter,
-    logCategoryFilter,
     logStatusFilter,
     search,
   ])
 
-  // Handle HQ Authorization (Approve)
+  // Handle Organization Approval
   const handleAuthorize = async () => {
     if (!selectedItem) return
     setActionLoading(true)
@@ -367,19 +397,19 @@ export default function OrganizationApprovalsCenter({
           approveRemarks
         )
       }
-      showMsg('success', `Request #${selectedItem.id} authorized by HQ and sent for Manager final clearance.`)
+      showMsg('success', `Request #${selectedItem.id} approved successfully and forwarded for operations clearance.`)
       setIsApproveModalOpen(false)
       setIsDetailModalOpen(false)
       setApproveRemarks('')
     } catch (err) {
       console.error(err)
-      showMsg('error', err.message || 'Failed to authorize request')
+      showMsg('error', err.message || 'Failed to approve request')
     } finally {
       setActionLoading(false)
     }
   }
 
-  // Handle HQ Rejection (Decline)
+  // Handle Organization Rejection
   const handleDecline = async () => {
     if (!selectedItem) return
     if (!rejectReason.trim()) {
@@ -407,13 +437,13 @@ export default function OrganizationApprovalsCenter({
           rejectReason
         )
       }
-      showMsg('success', `Request #${selectedItem.id} declined by HQ. Notification sent.`)
+      showMsg('success', `Request #${selectedItem.id} rejected. Notification sent.`)
       setIsRejectModalOpen(false)
       setIsDetailModalOpen(false)
       setRejectReason('')
     } catch (err) {
       console.error(err)
-      showMsg('error', err.message || 'Failed to decline request')
+      showMsg('error', err.message || 'Failed to reject request')
     } finally {
       setActionLoading(false)
     }
@@ -424,23 +454,18 @@ export default function OrganizationApprovalsCenter({
       {/* Top Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-widest bg-blue-100 text-blue-800">
-              Stage 3 HQ Governance
-            </span>
-          </div>
-          <h1 className="text-2xl font-bold text-slate-900 mt-1">Organization Approvals Center</h1>
-          <p className="text-xs text-slate-500">
-            Tier 2 Organization HQ financial and administrative authorization for site requests.
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Organization Approvals</h1>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Review and manage site requisitions, material requests, and operational expense approvals.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
           <Link
             to="/organization/incentive-calculation"
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#0B3470] hover:bg-blue-900 text-white text-xs font-bold transition shadow-xs cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition cursor-pointer border border-slate-200/80 shadow-2xs"
           >
-            <Award className="w-4 h-4 text-blue-200" />
+            <Award className="w-4 h-4 text-amber-600" />
             <span>Incentive Calculation</span>
           </Link>
 
@@ -456,6 +481,7 @@ export default function OrganizationApprovalsCenter({
               Status: i.status || i.approvalStatus,
               CreatedAt: formatDate(i.createdAt),
             }))}
+            title="Export Approvals"
           />
         </div>
       </div>
@@ -463,201 +489,343 @@ export default function OrganizationApprovalsCenter({
       {/* Feedback Alert Banner */}
       {feedback.text && (
         <div
-          className={`p-4 rounded-xl text-xs font-bold flex items-center gap-2 ${feedback.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'
-            }`}
+          className={`p-4 rounded-xl text-xs font-bold flex items-center gap-2 ${
+            feedback.type === 'success'
+              ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+              : 'bg-rose-50 text-rose-800 border border-rose-200'
+          }`}
         >
-          {feedback.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertTriangle className="w-4 h-4 shrink-0" />}
+          {feedback.type === 'success' ? (
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+          ) : (
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+          )}
           <span>{feedback.text}</span>
         </div>
       )}
 
-      {/* Summary Metrics */}
+      {/* Summary Metrics Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {/* Card 1: Pending Approvals */}
         <button
           type="button"
-          onClick={() => setActiveTab('ALL')}
-          className={`p-4 rounded-2xl bg-white border shadow-xs flex items-center justify-between text-left transition-all cursor-pointer ${
-            activeTab === 'ALL' ? 'border-amber-400 ring-2 ring-amber-100 bg-amber-50/20' : 'border-slate-200/80 hover:border-slate-300'
+          onClick={() => {
+            setStatusTab('PENDING')
+            setActiveTab('ALL')
+            setCategoryFilter('all')
+          }}
+          className={`p-5 rounded-2xl bg-white border text-left transition-all cursor-pointer shadow-xs group ${
+            statusTab === 'PENDING'
+              ? 'border-amber-400 ring-2 ring-amber-100 bg-amber-50/20'
+              : 'border-slate-200/90 hover:border-slate-300'
           }`}
         >
-          <div>
-            <p className="text-xs font-medium text-slate-500">Awaiting HQ Authorization</p>
-            <h3 className="text-2xl font-bold text-amber-600 mt-1">{pendingOrgApprovals.length}</h3>
-            <span className="text-[10px] text-amber-700 font-medium">Stage 3 Action Required</span>
+          <div className="flex items-start justify-between">
+            <div>
+              <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wider block">
+                Pending Approvals
+              </span>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-2xl sm:text-3xl font-extrabold text-amber-600 font-mono tracking-tight">
+                  {pendingOrgApprovals.length}
+                </span>
+                <span className="text-xs font-semibold text-slate-500">Requests</span>
+              </div>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center border border-amber-100 group-hover:scale-105 transition-transform">
+              <Clock className="w-5 h-5" />
+            </div>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
-            <Clock className="w-5 h-5" />
+          <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+            <span>Awaiting Review</span>
+            <span className="font-semibold text-amber-700 font-mono text-[11px]">Action Required</span>
           </div>
         </button>
 
+        {/* Card 2: Approved Requests */}
         <button
           type="button"
-          onClick={() => setActiveTab('AUTHORIZED_FORWARDED')}
-          className={`p-4 rounded-2xl bg-white border shadow-xs flex items-center justify-between text-left transition-all cursor-pointer ${
-            activeTab === 'AUTHORIZED_FORWARDED' ? 'border-emerald-500 ring-2 ring-emerald-100 bg-emerald-50/20' : 'border-slate-200/80 hover:border-slate-300'
+          onClick={() => {
+            setStatusTab('APPROVED')
+            setActiveTab('AUTHORIZED_FORWARDED')
+            setCategoryFilter('all')
+          }}
+          className={`p-5 rounded-2xl bg-white border text-left transition-all cursor-pointer shadow-xs group ${
+            statusTab === 'APPROVED'
+              ? 'border-emerald-500 ring-2 ring-emerald-100 bg-emerald-50/20'
+              : 'border-slate-200/90 hover:border-slate-300'
           }`}
         >
-          <div>
-            <p className="text-xs font-medium text-slate-500">Authorized & Forwarded</p>
-            <h3 className="text-2xl font-bold text-emerald-600 mt-1">{authorizedForwardedItems.length}</h3>
-            <span className="text-[10px] text-emerald-700 font-medium">Forwarded to Operations Managers</span>
+          <div className="flex items-start justify-between">
+            <div>
+              <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">
+                Approved Requests
+              </span>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-2xl sm:text-3xl font-extrabold text-emerald-600 font-mono tracking-tight">
+                  {authorizedForwardedItems.length}
+                </span>
+                <span className="text-xs font-semibold text-slate-500">Requests</span>
+              </div>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100 group-hover:scale-105 transition-transform">
+              <CheckCircle2 className="w-5 h-5" />
+            </div>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-            <CheckCircle2 className="w-5 h-5" />
+          <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+            <span>Approved & Forwarded</span>
+            <span className="font-semibold text-emerald-700 font-mono text-[11px]">In Execution</span>
           </div>
         </button>
 
+        {/* Card 3: Rejected Requests */}
         <button
           type="button"
-          onClick={() => setActiveTab('DECLINED')}
-          className={`p-4 rounded-2xl bg-white border shadow-xs flex items-center justify-between text-left transition-all cursor-pointer ${
-            activeTab === 'DECLINED' ? 'border-rose-400 ring-2 ring-rose-100 bg-rose-50/20' : 'border-slate-200/80 hover:border-slate-300'
+          onClick={() => {
+            setStatusTab('REJECTED')
+            setActiveTab('DECLINED')
+            setCategoryFilter('all')
+          }}
+          className={`p-5 rounded-2xl bg-white border text-left transition-all cursor-pointer shadow-xs group ${
+            statusTab === 'REJECTED'
+              ? 'border-rose-400 ring-2 ring-rose-100 bg-rose-50/20'
+              : 'border-slate-200/90 hover:border-slate-300'
           }`}
         >
-          <div>
-            <p className="text-xs font-medium text-slate-500">Declined by HQ</p>
-            <h3 className="text-2xl font-bold text-rose-600 mt-1">{declinedItems.length}</h3>
-            <span className="text-[10px] text-rose-700 font-medium">Rejected with Stated Reasons</span>
+          <div className="flex items-start justify-between">
+            <div>
+              <span className="text-[11px] font-bold text-rose-700 uppercase tracking-wider block">
+                Rejected Requests
+              </span>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-2xl sm:text-3xl font-extrabold text-rose-600 font-mono tracking-tight">
+                  {declinedItems.length}
+                </span>
+                <span className="text-xs font-semibold text-slate-500">Requests</span>
+              </div>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center border border-rose-100 group-hover:scale-105 transition-transform">
+              <XCircle className="w-5 h-5" />
+            </div>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">
-            <XCircle className="w-5 h-5" />
+          <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+            <span>Declined with Reasons</span>
+            <span className="font-semibold text-rose-700 font-mono text-[11px]">Documented</span>
           </div>
         </button>
       </div>
 
-      {/* Filter Bar & Tabs */}
-      <div className="space-y-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-        <div className="flex items-center gap-1 overflow-x-auto w-full scrollbar-none pb-1">
+      {/* Navigation & Filter Hub */}
+      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs p-4 space-y-3.5">
+        {/* Tier 1: Primary Status Navigation Tabs */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none border-b border-slate-100">
           {[
-            { id: 'ALL', label: `Pending HQ Action (${pendingOrgApprovals.length})` },
-            { id: 'AUTHORIZED_FORWARDED', label: `Authorized & Forwarded (${authorizedForwardedItems.length})` },
-            { id: 'MATERIALS', label: 'Material Requests' },
-            { id: 'TOOLS', label: 'Tools & Machinery' },
-            { id: 'PETTY_CASH', label: 'Petty Cash / Payments' },
-            { id: 'STAGES', label: 'Stage Schedules' },
-            { id: 'VEHICLES', label: 'Vehicle Movements' },
-            { id: 'DECLINED', label: `Declined by HQ (${declinedItems.length})` },
-            { id: 'AUDIT_TRAIL', label: `All History (${auditTrailItems.length})` },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
-                activeTab === tab.id ? 'bg-[#0B3470] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+            {
+              id: 'PENDING',
+              legacyKey: 'ALL',
+              label: 'Pending Approvals',
+              count: pendingOrgApprovals.length,
+              icon: Clock,
+            },
+            {
+              id: 'APPROVED',
+              legacyKey: 'AUTHORIZED_FORWARDED',
+              label: 'Approved Requests',
+              count: authorizedForwardedItems.length,
+              icon: CheckCircle2,
+            },
+            {
+              id: 'REJECTED',
+              legacyKey: 'DECLINED',
+              label: 'Rejected Requests',
+              count: declinedItems.length,
+              icon: XCircle,
+            },
+            {
+              id: 'ALL_HISTORY',
+              legacyKey: 'AUDIT_TRAIL',
+              label: 'All History',
+              count: auditTrailItems.length,
+              icon: FileText,
+            },
+          ].map((tab) => {
+            const Icon = tab.icon
+            const isActive = statusTab === tab.id
+
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => {
+                  setStatusTab(tab.id)
+                  setActiveTab(tab.legacyKey)
+                }}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                  isActive
+                    ? 'bg-[#0B3470] text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                }`}
+              >
+                <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-500'}`} />
+                <span>{tab.label}</span>
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                    isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-700'
+                  }`}
+                >
+                  {tab.count}
+                </span>
+              </button>
+            )
+          })}
         </div>
 
-        {/* Sub-Filters & Search Bar */}
-        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5 pt-2 border-t border-slate-100">
-          <div className="flex flex-wrap items-center gap-2">
-            {activeTab === 'AUTHORIZED_FORWARDED' && (
-              <>
-                <select
-                  value={logCategoryFilter}
-                  onChange={(e) => setLogCategoryFilter(e.target.value)}
-                  className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-700 outline-none focus:border-blue-600 font-medium"
-                >
-                  <option value="all">All Request Types</option>
-                  <option value="MATERIALS">Material Requests</option>
-                  <option value="TOOLS">Tools & Machinery</option>
-                  <option value="PETTY_CASH">Petty Cash / Payments</option>
-                  <option value="STAGES">Stage Schedules</option>
-                  <option value="VEHICLES">Vehicle Movements</option>
-                </select>
+        {/* Tier 2: Category Filter Pills */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-1 whitespace-nowrap">
+            Category:
+          </span>
+          {APPROVAL_CATEGORIES.map((cat) => {
+            const isCatActive = categoryFilter === cat.id
+            const count = categoryCounts[cat.id] ?? 0
 
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => {
+                  setCategoryFilter(cat.id)
+                  if (statusTab === 'PENDING') {
+                    setActiveTab(cat.stream || 'ALL')
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 ${
+                  isCatActive
+                    ? 'bg-blue-50 text-blue-800 border border-blue-200/90 font-bold shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50 border border-slate-200/60'
+                }`}
+              >
+                <span>{cat.label}</span>
+                <span
+                  className={`px-1.5 py-0.2 rounded-md text-[10px] font-mono font-bold ${
+                    isCatActive ? 'bg-blue-200/60 text-blue-900' : 'bg-slate-100 text-slate-500'
+                  }`}
+                >
+                  {count}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Tier 3: Search & Dropdown Filters */}
+        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 pt-2.5 border-t border-slate-100">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Construction Site Selector */}
+            <div className="relative min-w-[200px]">
+              <select
+                value={siteFilter}
+                onChange={(e) => setSiteFilter(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-[#0B3470] transition-all cursor-pointer shadow-2xs"
+              >
+                <option value="all">All Construction Sites ({normalizedSites.length})</option>
+                {normalizedSites.map((s, idx) => (
+                  <option key={`appr-site-${s.id || s.siteId || idx}-${idx}`} value={s.id || s.siteId}>
+                    {s.label || s.siteName || s.projectName || s.name || s.id}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Lifecycle Status Selector (on Approved tab) */}
+            {statusTab === 'APPROVED' && (
+              <div className="relative min-w-[190px]">
                 <select
                   value={logStatusFilter}
                   onChange={(e) => setLogStatusFilter(e.target.value)}
-                  className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-700 outline-none focus:border-blue-600 font-medium"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:bg-white focus:border-[#0B3470] transition-all cursor-pointer shadow-2xs"
                 >
                   <option value="all">All Lifecycle Statuses</option>
-                  <option value="forwarded">Forwarded (Awaiting Manager Clearance)</option>
-                  <option value="cleared">Manager Cleared / Released</option>
-                  <option value="received">Delivered / Received at Site</option>
+                  <option value="forwarded">Awaiting Manager Clearance</option>
+                  <option value="cleared">Cleared & Released</option>
+                  <option value="received">Delivered to Site</option>
                 </select>
-              </>
+              </div>
             )}
 
-            <select
-              value={siteFilter}
-              onChange={(e) => setSiteFilter(e.target.value)}
-              className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-700 outline-none focus:border-blue-600 font-medium"
-            >
-              <option value="all">All Construction Sites</option>
-              {normalizedSites.map((s, idx) => (
-                <option key={`appr-site-${s.id || s.siteId || idx}-${idx}`} value={s.id || s.siteId}>
-                  {s.label || s.siteName || s.projectName || s.name || s.id}
-                </option>
-              ))}
-            </select>
-
-            {(siteFilter !== 'all' || logCategoryFilter !== 'all' || logStatusFilter !== 'all' || search) && (
+            {/* Reset Filters */}
+            {(siteFilter !== 'all' || categoryFilter !== 'all' || logStatusFilter !== 'all' || search) && (
               <button
                 type="button"
                 onClick={() => {
                   setSiteFilter('all')
-                  setLogCategoryFilter('all')
+                  setCategoryFilter('all')
                   setLogStatusFilter('all')
                   setSearch('')
+                  if (statusTab === 'PENDING') setActiveTab('ALL')
                 }}
-                className="px-2 py-1 text-[11px] text-slate-500 hover:text-slate-800 font-semibold flex items-center gap-1 cursor-pointer"
+                className="px-2.5 py-1.5 text-xs text-slate-600 hover:text-slate-900 font-semibold flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer border border-slate-200"
               >
-                <RotateCcw className="w-3 h-3" />
-                <span>Reset</span>
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Reset Filters</span>
               </button>
             )}
           </div>
 
-          <div className="relative w-full md:w-72">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+          {/* Search Bar */}
+          <div className="relative w-full md:w-80">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
             <input
               type="text"
-              placeholder="Search request ID, site, requester, remarks..."
+              placeholder="Search by ID, site, requester, item..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-900 outline-none focus:border-blue-600 focus:bg-white transition-all"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-8 py-2 text-xs font-medium text-slate-900 outline-none focus:border-[#0B3470] focus:bg-white transition-all shadow-2xs placeholder:text-slate-400"
             />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         </div>
       </div>
 
-      {/* VIEW A: AUTHORIZED & FORWARDED APPROVAL LOGS TABLE */}
-      {activeTab === 'AUTHORIZED_FORWARDED' ? (
+      {/* VIEW A: APPROVED REQUESTS TABLE */}
+      {statusTab === 'APPROVED' ? (
         <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gradient-to-r from-blue-900 to-[#0B3470] p-4 sm:p-5 rounded-2xl text-white shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#0B3470] p-4 sm:p-5 rounded-2xl text-white shadow-xs">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-blue-500/30 text-blue-200 border border-blue-400/30">
-                  STAGE 3 → STAGE 4 FORWARDED LOGS
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-white/20 text-white">
+                  Approved Requests
                 </span>
                 <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
                   {filteredList.length} Record{filteredList.length === 1 ? '' : 's'}
                 </span>
               </div>
-              <h2 className="text-base sm:text-lg font-bold text-white">Authorized & Forwarded Approval Logs</h2>
+              <h2 className="text-base sm:text-lg font-bold text-white">Approved Requests Log</h2>
               <p className="text-xs text-blue-100/80">
-                Audit trail of requests authorized by Organization HQ and forwarded to Operations Managers for clearance or disbursement.
+                Audit trail of site requisitions approved and forwarded to Operations Managers for clearance and dispatch.
               </p>
             </div>
 
             <ExportButton
-              filename="org_authorized_forwarded_logs.csv"
+              filename="org_approved_requests.csv"
               headers={[
                 'Request ID',
                 'Category',
                 'Request Title',
                 'Construction Site',
                 'Requested By (Supervisor)',
-                'Authorized By (HQ Admin)',
-                'Authorization Date & Time',
-                'Current Lifecycle Status',
-                'Forwarded Next Stage',
-                'HQ Remarks / Instructions',
+                'Approved By',
+                'Approval Date & Time',
+                'Lifecycle Status',
+                'Approval Remarks',
               ]}
               data={filteredList.map((item) => {
                 const approver =
@@ -671,15 +839,7 @@ export default function OrganizationApprovalsCenter({
                   item.orgApprovalRemarks ||
                   item.approvalHistory?.find((h) => String(h.step).includes('3'))?.remarks ||
                   item.remarks ||
-                  'Authorized as per sanctioned budget.'
-                const st = String(item.status || item.approvalStatus || '').toLowerCase()
-                const nextStage = ['pending_manager_clearance', 'awaiting_disbursement'].includes(st)
-                  ? 'Forwarded to Manager for Stage 4 Clearance'
-                  : ['approved', 'cleared'].includes(st)
-                  ? 'Cleared by Manager (Stage 4 Done)'
-                  : ['received'].includes(st)
-                  ? 'Received & Confirmed at Site (Stage 5 Done)'
-                  : 'Forwarded'
+                  'Approved as per sanctioned budget.'
 
                 return [
                   item.id,
@@ -690,11 +850,10 @@ export default function OrganizationApprovalsCenter({
                   approver,
                   apprDate,
                   item.statusDisplay || item.status,
-                  nextStage,
                   remarks,
                 ]
               })}
-              title="Export Approval Logs"
+              title="Export Approved Requests"
             />
           </div>
 
@@ -704,19 +863,19 @@ export default function OrganizationApprovalsCenter({
                 <tr>
                   <th className="p-3.5">Request Ref & Category</th>
                   <th className="p-3.5">Construction Site</th>
-                  <th className="p-3.5">Requested By (Supervisor)</th>
-                  <th className="p-3.5">Authorized By (HQ)</th>
+                  <th className="p-3.5">Requested By</th>
+                  <th className="p-3.5">Approved By</th>
                   <th className="p-3.5">Approval Date & Time</th>
-                  <th className="p-3.5 text-center">Lifecycle & Forwarded Status</th>
-                  <th className="p-3.5">HQ Remarks / Directives</th>
-                  <th className="p-3.5 text-center">Audit Actions</th>
+                  <th className="p-3.5 text-center">Lifecycle Status</th>
+                  <th className="p-3.5">Approval Remarks</th>
+                  <th className="p-3.5 text-center">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredList.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="p-12 text-center text-slate-400">
-                      No authorized and forwarded approval logs matching the selected filter criteria.
+                      No approved requests matching the selected filter criteria.
                     </td>
                   </tr>
                 ) : (
@@ -733,7 +892,7 @@ export default function OrganizationApprovalsCenter({
                       item.approvalHistory?.find((h) => String(h.step).includes('3'))?.remarks ||
                       item.remarks ||
                       item.description ||
-                      'Authorized as per sanctioned budget.'
+                      'Approved as per sanctioned budget.'
                     const status = String(item.status || item.approvalStatus || '').toLowerCase()
                     const isAwaitingManager = ['pending_manager_clearance', 'awaiting_disbursement'].includes(status)
                     const isCleared = ['approved', 'cleared', 'disbursed'].includes(status)
@@ -776,17 +935,17 @@ export default function OrganizationApprovalsCenter({
                           {isAwaitingManager ? (
                             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 whitespace-nowrap">
                               <ArrowRight className="w-3 h-3 text-amber-600" />
-                              <span>Forwarded → Manager Clearance</span>
+                              <span>Awaiting Manager Clearance</span>
                             </span>
                           ) : isCleared ? (
                             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 whitespace-nowrap">
                               <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                              <span>Manager Cleared & Released</span>
+                              <span>Cleared & Released</span>
                             </span>
                           ) : isReceived ? (
                             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-50 text-blue-800 border border-blue-200 whitespace-nowrap">
                               <CheckCircle2 className="w-3 h-3 text-blue-600" />
-                              <span>Delivered at Site (Completed)</span>
+                              <span>Delivered to Site</span>
                             </span>
                           ) : (
                             <StatusBadge status={item.status} />
@@ -805,7 +964,7 @@ export default function OrganizationApprovalsCenter({
                             className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-[11px] transition-colors inline-flex items-center gap-1 cursor-pointer shadow-2xs"
                           >
                             <Eye className="w-3.5 h-3.5 text-blue-600" />
-                            <span>View Log</span>
+                            <span>View Details</span>
                           </button>
                         </td>
                       </tr>
@@ -816,24 +975,51 @@ export default function OrganizationApprovalsCenter({
             </table>
           </div>
         </div>
-      ) : activeTab === 'DECLINED' ? (
-        /* VIEW B: DECLINED BY HQ LOGS TABLE */
+      ) : statusTab === 'REJECTED' ? (
+        /* VIEW B: REJECTED REQUESTS TABLE */
         <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gradient-to-r from-rose-900 to-rose-800 p-4 sm:p-5 rounded-2xl text-white shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-rose-900 p-4 sm:p-5 rounded-2xl text-white shadow-xs">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-rose-500/30 text-rose-200 border border-rose-400/30">
-                  HQ DECLINED REGISTER
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-rose-500/30 text-rose-200 border border-rose-400/30">
+                  Rejected Requests
                 </span>
                 <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-500/20 text-rose-200 border border-rose-400/30">
-                  {filteredList.length} Declined
+                  {filteredList.length} Rejected
                 </span>
               </div>
-              <h2 className="text-base sm:text-lg font-bold text-white">Declined Request Logs</h2>
+              <h2 className="text-base sm:text-lg font-bold text-white">Rejected Requests Log</h2>
               <p className="text-xs text-rose-100/80">
-                Log of site requisitions declined by Organization HQ with documented rejection reasons.
+                Records of site requisitions rejected with documented reasons.
               </p>
             </div>
+
+            <ExportButton
+              filename="org_rejected_requests.csv"
+              headers={[
+                'Request ID',
+                'Category',
+                'Request Title',
+                'Construction Site',
+                'Requested By',
+                'Rejected By',
+                'Rejection Date',
+                'Status',
+                'Rejection Reason',
+              ]}
+              data={filteredList.map((item) => [
+                item.id,
+                item.category,
+                item.title,
+                item.siteName,
+                item.requester,
+                item.rejectedBy || item.orgRejectedBy || 'Organization Admin',
+                formatDate(item.rejectedAt || item.updatedAt),
+                'Rejected',
+                item.rejectionReason || 'Rejected by Organization.',
+              ])}
+              title="Export Rejected Requests"
+            />
           </div>
 
           <div className="overflow-x-auto bg-white rounded-2xl border border-slate-200/90 shadow-xs">
@@ -842,26 +1028,26 @@ export default function OrganizationApprovalsCenter({
                 <tr>
                   <th className="p-3.5">Request Ref & Category</th>
                   <th className="p-3.5">Construction Site</th>
-                  <th className="p-3.5">Requested By (Supervisor)</th>
-                  <th className="p-3.5">Declined By (HQ)</th>
-                  <th className="p-3.5">Decline Date</th>
+                  <th className="p-3.5">Requested By</th>
+                  <th className="p-3.5">Rejected By</th>
+                  <th className="p-3.5">Rejection Date</th>
                   <th className="p-3.5 text-center">Status</th>
                   <th className="p-3.5">Rejection Reason</th>
-                  <th className="p-3.5 text-center">Audit Actions</th>
+                  <th className="p-3.5 text-center">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredList.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="p-12 text-center text-slate-400">
-                      No declined requests recorded.
+                      No rejected requests recorded.
                     </td>
                   </tr>
                 ) : (
                   filteredList.map((item, idx) => {
-                    const decliner = item.rejectedBy || item.orgRejectedBy || 'Organization HQ'
+                    const decliner = item.rejectedBy || item.orgRejectedBy || 'Organization Admin'
                     const decDate = formatDate(item.rejectedAt || item.updatedAt)
-                    const reason = item.rejectionReason || 'Declined by Organization HQ.'
+                    const reason = item.rejectionReason || 'Rejected by Organization.'
 
                     return (
                       <tr key={item.uniqueKey || `dec-${item.id}-${idx}`} className="hover:bg-slate-50/80 transition-colors">
@@ -884,7 +1070,7 @@ export default function OrganizationApprovalsCenter({
                         <td className="p-3.5 text-center">
                           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-50 text-rose-800 border border-rose-200">
                             <XCircle className="w-3 h-3 text-rose-600" />
-                            <span>Declined by HQ</span>
+                            <span>Rejected</span>
                           </span>
                         </td>
                         <td className="p-3.5 text-rose-700 italic text-[11px] max-w-xs truncate" title={reason}>
@@ -900,7 +1086,7 @@ export default function OrganizationApprovalsCenter({
                             className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-[11px] transition-colors inline-flex items-center gap-1 cursor-pointer"
                           >
                             <Eye className="w-3.5 h-3.5 text-blue-600" />
-                            <span>View Log</span>
+                            <span>View Details</span>
                           </button>
                         </td>
                       </tr>
@@ -911,105 +1097,270 @@ export default function OrganizationApprovalsCenter({
             </table>
           </div>
         </div>
-      ) : (
-        /* VIEW C: PENDING ACTION REQUESTS CARD GRID */
-        filteredList.length === 0 ? (
-          <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 text-slate-400 text-xs">
-            No requests matching the selected category or filter.
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {filteredList.map((item, idx) => {
-              const status = item.status || item.approvalStatus || 'pending_org_approval'
+      ) : statusTab === 'ALL_HISTORY' ? (
+        /* VIEW C: ALL HISTORY TABLE */
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-800 p-4 sm:p-5 rounded-2xl text-white shadow-xs">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-white/20 text-white">
+                  All History
+                </span>
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-400/30">
+                  {filteredList.length} Record{filteredList.length === 1 ? '' : 's'}
+                </span>
+              </div>
+              <h2 className="text-base sm:text-lg font-bold text-white">Requisition History Log</h2>
+              <p className="text-xs text-slate-300">
+                Complete audit history of site requisitions and their approval lifecycle transitions.
+              </p>
+            </div>
 
-              return (
-                <div
-                  key={item.uniqueKey || `${item.collectionName || item.stream}_${item.id || idx}_${idx}`}
-                  className="p-5 rounded-2xl bg-white border border-slate-200/80 shadow-xs hover:shadow-md transition-all flex flex-col justify-between space-y-4"
-                >
-                  <div className="space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-800 font-mono text-[10px] font-bold">
+            <ExportButton
+              filename="org_approvals_history.csv"
+              headers={[
+                'Request ID',
+                'Category',
+                'Request Title',
+                'Construction Site',
+                'Requested By',
+                'Manager Verified By',
+                'Status',
+                'Date',
+              ]}
+              data={filteredList.map((item) => [
+                item.id,
+                item.category,
+                item.title,
+                item.siteName,
+                item.requester,
+                item.verifier,
+                item.status || item.approvalStatus,
+                formatDate(item.createdAt || item.updatedAt),
+              ])}
+              title="Export History"
+            />
+          </div>
+
+          <div className="overflow-x-auto bg-white rounded-2xl border border-slate-200/90 shadow-xs">
+            <table className="w-full text-left text-xs text-slate-700">
+              <thead className="bg-slate-50/90 text-slate-500 font-semibold border-b border-slate-100 text-[11px]">
+                <tr>
+                  <th className="p-3.5">Request Ref & Category</th>
+                  <th className="p-3.5">Item / Request Details</th>
+                  <th className="p-3.5">Construction Site</th>
+                  <th className="p-3.5">Requested By</th>
+                  <th className="p-3.5">Manager Verified</th>
+                  <th className="p-3.5 text-center">Lifecycle Status</th>
+                  <th className="p-3.5 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredList.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="p-12 text-center text-slate-400">
+                      No historical requests found matching the current search criteria.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredList.map((item, idx) => (
+                    <tr key={item.uniqueKey || `hist-${item.id}-${idx}`} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="p-3.5">
+                        <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-200 inline-block mb-1">
                           #{item.id}
                         </span>
-                        <h3 className="text-sm font-bold text-slate-900 mt-1">{item.title}</h3>
-                        <p className="text-xs text-slate-500 font-medium">{item.subTitle}</p>
-                      </div>
-                      <StatusBadge status={status} />
-                    </div>
-
-                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 text-xs space-y-1.5">
-                      <div className="flex justify-between">
-                        <span className="text-slate-400 text-[11px]">Construction Site:</span>
-                        <strong className="text-slate-800 text-[11px]">{item.siteName}</strong>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400 text-[11px]">Requested By (Supervisor):</span>
-                        <span className="text-slate-700 font-medium text-[11px]">{item.requester}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400 text-[11px]">Verified By (Manager):</span>
-                        <span className="text-emerald-700 font-medium text-[11px]">{item.verifier}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex items-center justify-between pt-3 border-t border-slate-100 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedItem(item)
-                        setIsDetailModalOpen(true)
-                      }}
-                      className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold transition-colors flex items-center gap-1 cursor-pointer"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      <span>Inspect Workflow</span>
-                    </button>
-
-                    {activeTab !== 'AUDIT_TRAIL' && (
-                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-slate-500 font-medium block">{item.category}</span>
+                      </td>
+                      <td className="p-3.5">
+                        <strong className="text-slate-900 block font-bold text-xs">{item.title}</strong>
+                        <span className="text-[11px] text-slate-500 font-medium block">{item.subTitle}</span>
+                      </td>
+                      <td className="p-3.5 font-bold text-slate-900">
+                        <div className="flex items-center gap-1.5">
+                          <MapPin className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                          <span>{item.siteName}</span>
+                        </div>
+                      </td>
+                      <td className="p-3.5 text-slate-700 font-medium">{item.requester}</td>
+                      <td className="p-3.5 text-emerald-700 font-semibold">{item.verifier}</td>
+                      <td className="p-3.5 text-center">
+                        <StatusBadge status={item.status || item.approvalStatus} />
+                      </td>
+                      <td className="p-3.5 text-center">
                         <button
                           type="button"
                           onClick={() => {
                             setSelectedItem(item)
-                            setIsRejectModalOpen(true)
+                            setIsDetailModalOpen(true)
                           }}
-                          className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold border border-rose-200 transition-colors flex items-center gap-1 cursor-pointer"
+                          className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-[11px] transition-colors inline-flex items-center gap-1 cursor-pointer shadow-2xs"
                         >
-                          <X className="w-3.5 h-3.5" />
-                          <span>Decline</span>
+                          <Eye className="w-3.5 h-3.5 text-blue-600" />
+                          <span>View Details</span>
                         </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedItem(item)
-                            setIsApproveModalOpen(true)
-                          }}
-                          className="px-3.5 py-1.5 rounded-xl bg-[#0B3470] hover:bg-blue-800 text-white font-bold transition-colors flex items-center gap-1 shadow-xs cursor-pointer"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          <span>HQ Authorize</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
-        )
+        </div>
+      ) : (
+        /* VIEW D: PENDING APPROVALS TABLE */
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gradient-to-r from-amber-700 to-amber-600 p-4 sm:p-5 rounded-2xl text-white shadow-xs">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-white/20 text-white">
+                  Pending Approvals
+                </span>
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-900/40 text-amber-100 border border-amber-300/30">
+                  {filteredList.length} Action Required
+                </span>
+              </div>
+              <h2 className="text-base sm:text-lg font-bold text-white">Pending Requests Awaiting Approval</h2>
+              <p className="text-xs text-amber-100/90">
+                Review and take approval or rejection decisions on requisitions submitted by supervisors and verified by managers.
+              </p>
+            </div>
+
+            <ExportButton
+              filename="org_pending_approvals.csv"
+              headers={[
+                'Request ID',
+                'Category',
+                'Request Title',
+                'Construction Site',
+                'Requested By',
+                'Manager Verified By',
+                'Status',
+                'Date',
+              ]}
+              data={filteredList.map((item) => [
+                item.id,
+                item.category,
+                item.title,
+                item.siteName,
+                item.requester,
+                item.verifier,
+                item.status || item.approvalStatus || 'pending_org_approval',
+                formatDate(item.createdAt || item.updatedAt),
+              ])}
+              title="Export Pending Requests"
+            />
+          </div>
+
+          <div className="overflow-x-auto bg-white rounded-2xl border border-slate-200/90 shadow-xs">
+            <table className="w-full text-left text-xs text-slate-700">
+              <thead className="bg-slate-50/90 text-slate-500 font-semibold border-b border-slate-100 text-[11px]">
+                <tr>
+                  <th className="p-3.5">Request Ref & Category</th>
+                  <th className="p-3.5">Item / Request Details</th>
+                  <th className="p-3.5">Construction Site</th>
+                  <th className="p-3.5">Requested By</th>
+                  <th className="p-3.5">Manager Verified</th>
+                  <th className="p-3.5 text-center">Status</th>
+                  <th className="p-3.5 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredList.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="p-12 text-center text-slate-400">
+                      No pending requests awaiting approval matching the selected filters.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredList.map((item, idx) => {
+                    const status = item.status || item.approvalStatus || 'pending_org_approval'
+
+                    return (
+                      <tr key={item.uniqueKey || `pending-${item.id}-${idx}`} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-3.5">
+                          <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200/60 inline-block mb-1">
+                            #{item.id}
+                          </span>
+                          <span className="text-[11px] text-slate-500 font-medium block">{item.category}</span>
+                        </td>
+                        <td className="p-3.5">
+                          <strong className="text-slate-900 block font-bold text-xs">{item.title}</strong>
+                          <span className="text-[11px] text-slate-500 font-medium block">{item.subTitle}</span>
+                        </td>
+                        <td className="p-3.5 font-bold text-slate-900">
+                          <div className="flex items-center gap-1.5">
+                            <MapPin className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                            <span>{item.siteName}</span>
+                          </div>
+                        </td>
+                        <td className="p-3.5 text-slate-700 font-medium">
+                          <div className="flex items-center gap-1.5">
+                            <UserCheck className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <span>{item.requester}</span>
+                          </div>
+                        </td>
+                        <td className="p-3.5 font-semibold text-emerald-700">
+                          <span>{item.verifier}</span>
+                        </td>
+                        <td className="p-3.5 text-center">
+                          <StatusBadge status={status} />
+                        </td>
+                        <td className="p-3.5 text-center">
+                          <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedItem(item)
+                                setIsDetailModalOpen(true)
+                              }}
+                              title="View Details"
+                              className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-[11px] transition-colors inline-flex items-center gap-1 cursor-pointer shadow-2xs"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-blue-600" />
+                              <span>Details</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedItem(item)
+                                setIsRejectModalOpen(true)
+                              }}
+                              title="Reject Request"
+                              className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-[11px] border border-rose-200 transition-colors inline-flex items-center gap-1 cursor-pointer"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              <span>Reject</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedItem(item)
+                                setIsApproveModalOpen(true)
+                              }}
+                              title="Approve Request"
+                              className="px-3 py-1.5 rounded-xl bg-[#0B3470] hover:bg-blue-800 text-white font-bold text-[11px] transition-colors inline-flex items-center gap-1 shadow-xs cursor-pointer"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Approve</span>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
 
-      {/* Inspect Detail Modal */}
+      {/* View Details Modal */}
       {selectedItem && (
         <Modal
           isOpen={isDetailModalOpen}
           onClose={() => setIsDetailModalOpen(false)}
-          title={`Request #${selectedItem.id}`}
+          title={`Request Details #${selectedItem.id}`}
           subtitle={`${selectedItem.category} · ${selectedItem.siteName}`}
         >
           <div className="p-6 space-y-5 text-xs">
@@ -1019,20 +1370,20 @@ export default function OrganizationApprovalsCenter({
                 <strong className="text-slate-800">{selectedItem.category}</strong>
               </div>
               <div>
-                <span className="text-slate-400 block text-[10px] uppercase font-bold">Site Location</span>
+                <span className="text-slate-400 block text-[10px] uppercase font-bold">Construction Site</span>
                 <strong className="text-slate-800">{selectedItem.siteName}</strong>
               </div>
               <div>
                 <span className="text-slate-400 block text-[10px] uppercase font-bold">Requested By</span>
-                <strong>{selectedItem.requester}</strong>
+                <strong className="text-slate-800">{selectedItem.requester}</strong>
               </div>
               <div>
-                <span className="text-slate-400 block text-[10px] uppercase font-bold">Manager Verifier</span>
+                <span className="text-slate-400 block text-[10px] uppercase font-bold">Manager Verified</span>
                 <strong className="text-emerald-700">{selectedItem.verifier}</strong>
               </div>
             </div>
 
-            {/* HQ Authorization / Rejection Details (if processed) */}
+            {/* Approval / Rejection Audit Details */}
             {(selectedItem.orgApproved || selectedItem.orgApprovedBy || selectedItem.orgApprovedAt || selectedItem.rejectedBy || selectedItem.rejectionReason) && (
               <div
                 className={`p-4 rounded-xl border ${
@@ -1045,12 +1396,12 @@ export default function OrganizationApprovalsCenter({
                   {selectedItem.orgApproved ? (
                     <>
                       <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                      <span>Organization HQ Authorization Details</span>
+                      <span>Approval Audit Details</span>
                     </>
                   ) : (
                     <>
                       <XCircle className="w-4 h-4 text-rose-600" />
-                      <span>Organization HQ Rejection Details</span>
+                      <span>Rejection Audit Details</span>
                     </>
                   )}
                 </div>
@@ -1072,7 +1423,7 @@ export default function OrganizationApprovalsCenter({
                   <div>
                     <span className="text-slate-500 block text-[10px]">Remarks / Instructions:</span>
                     <strong className="text-slate-800 italic">
-                      "{selectedItem.orgApprovalRemarks || selectedItem.rejectionReason || selectedItem.remarks || 'Authorized as per sanctioned budget.'}"
+                      "{selectedItem.orgApprovalRemarks || selectedItem.rejectionReason || selectedItem.remarks || 'Approved as per sanctioned budget.'}"
                     </strong>
                   </div>
                 </div>
@@ -1090,7 +1441,7 @@ export default function OrganizationApprovalsCenter({
               <button
                 type="button"
                 onClick={() => setIsDetailModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700"
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
               >
                 Close Details
               </button>
@@ -1099,13 +1450,13 @@ export default function OrganizationApprovalsCenter({
         </Modal>
       )}
 
-      {/* HQ Authorize Modal */}
+      {/* Approve Modal */}
       {selectedItem && (
         <Modal
           isOpen={isApproveModalOpen}
           onClose={() => setIsApproveModalOpen(false)}
-          title="Organization HQ Authorization"
-          subtitle={`Authorize Request #${selectedItem.id} (${selectedItem.category})`}
+          title="Approve Request"
+          subtitle={`Approve Request #${selectedItem.id} (${selectedItem.category})`}
         >
           <div className="p-6 space-y-4 text-xs">
             <div className="p-4 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 space-y-1">
@@ -1115,14 +1466,14 @@ export default function OrganizationApprovalsCenter({
 
             <div className="space-y-1.5">
               <label className="block text-xs font-bold text-slate-700">
-                HQ Authorization Remarks / Disbursement Instructions (Optional)
+                Approval Remarks & Instructions (Optional)
               </label>
               <textarea
                 rows={3}
                 value={approveRemarks}
                 onChange={(e) => setApproveRemarks(e.target.value)}
-                placeholder="e.g. Authorized as per sanctioned budget. Forwarded to Manager for final dispatch clearance."
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 outline-none focus:border-blue-600"
+                placeholder="e.g. Approved as per sanctioned budget. Forwarded to Manager for final dispatch clearance."
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 outline-none focus:border-blue-600 focus:bg-white transition-all"
               />
             </div>
 
@@ -1130,7 +1481,7 @@ export default function OrganizationApprovalsCenter({
               <button
                 type="button"
                 onClick={() => setIsApproveModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700"
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
               >
                 Cancel
               </button>
@@ -1138,22 +1489,22 @@ export default function OrganizationApprovalsCenter({
                 type="button"
                 onClick={handleAuthorize}
                 disabled={actionLoading}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white disabled:opacity-50 flex items-center gap-1.5 shadow-xs"
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-blue-800 text-white disabled:opacity-50 flex items-center gap-1.5 shadow-xs cursor-pointer"
               >
                 <Check className="w-4 h-4" />
-                <span>{actionLoading ? 'Authorizing...' : 'Confirm HQ Authorization'}</span>
+                <span>{actionLoading ? 'Approving...' : 'Confirm Approval'}</span>
               </button>
             </div>
           </div>
         </Modal>
       )}
 
-      {/* HQ Decline Modal */}
+      {/* Reject Modal */}
       {selectedItem && (
         <Modal
           isOpen={isRejectModalOpen}
           onClose={() => setIsRejectModalOpen(false)}
-          title="Decline Request"
+          title="Reject Request"
           subtitle={`Reject Request #${selectedItem.id}`}
         >
           <div className="p-6 space-y-4 text-xs">
@@ -1164,15 +1515,15 @@ export default function OrganizationApprovalsCenter({
 
             <div className="space-y-1.5">
               <label className="block text-xs font-bold text-slate-700">
-                Rejection Reason <span className="text-rose-500">*</span>
+                Reason for Rejection <span className="text-rose-500">*</span>
               </label>
               <textarea
                 rows={3}
                 required
                 value={rejectReason}
                 onChange={(e) => setRejectReason(e.target.value)}
-                placeholder="Enter specific financial or administrative reason for declining..."
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 outline-none focus:border-rose-600"
+                placeholder="Enter specific financial or administrative reason for rejecting..."
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 outline-none focus:border-rose-600 focus:bg-white transition-all"
               />
             </div>
 
@@ -1180,7 +1531,7 @@ export default function OrganizationApprovalsCenter({
               <button
                 type="button"
                 onClick={() => setIsRejectModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700"
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
               >
                 Cancel
               </button>
@@ -1188,10 +1539,10 @@ export default function OrganizationApprovalsCenter({
                 type="button"
                 onClick={handleDecline}
                 disabled={actionLoading || !rejectReason.trim()}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white disabled:opacity-50 flex items-center gap-1.5 shadow-xs"
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white disabled:opacity-50 flex items-center gap-1.5 shadow-xs cursor-pointer"
               >
                 <X className="w-4 h-4" />
-                <span>{actionLoading ? 'Declining...' : 'Confirm Decline'}</span>
+                <span>{actionLoading ? 'Rejecting...' : 'Confirm Rejection'}</span>
               </button>
             </div>
           </div>
@@ -1206,7 +1557,7 @@ export default function OrganizationApprovalsCenter({
         currentUser={user}
         sites={normalizedSites}
         onSuccess={() => {
-          showMsg('success', 'Request created and entered into the 5-Stage Approval System.')
+          showMsg('success', 'Request created and submitted for approval.')
         }}
       />
     </div>

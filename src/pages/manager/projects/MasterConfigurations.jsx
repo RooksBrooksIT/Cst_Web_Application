@@ -16,6 +16,8 @@ import {
   X,
   ShieldAlert,
   Info,
+  ChevronRight,
+  Hash,
 } from 'lucide-react'
 import {
   CONFIG_SECTIONS,
@@ -246,180 +248,26 @@ export default function MasterConfigurations({ orgId, onNotify }) {
     }
   }
 
-  // Render a Single Configuration Pillar Card
-  const renderSectionCard = (section) => {
-    const { key, meta, icon: Icon, data } = section
-    const currentName = inputNames[key] || ''
-    const isLoading = loadingMap[key]
+  // Active Section Data
+  const activeSection = useMemo(() => {
+    return sectionList.find((s) => s.key === activeTab) || sectionList[0]
+  }, [sectionList, activeTab])
 
-    // Search filter
-    const filteredList = useMemo(() => {
-      if (!searchQuery.trim()) return data
-      const q = searchQuery.toLowerCase()
-      return data.filter((item) => {
-        const title = (item.name || '').toLowerCase()
-        const id = (item.id || '').toLowerCase()
-        const parent = (item.projectCategory || '').toLowerCase()
-        return title.includes(q) || id.includes(q) || parent.includes(q)
-      })
-    }, [data, searchQuery])
+  // Active Section Filtered Items
+  const filteredList = useMemo(() => {
+    const data = activeSection.data || []
+    if (!searchQuery.trim()) return data
+    const q = searchQuery.toLowerCase()
+    return data.filter((item) => {
+      const title = (item.name || '').toLowerCase()
+      const id = (item.id || '').toLowerCase()
+      const parent = (item.projectCategory || '').toLowerCase()
+      return title.includes(q) || id.includes(q) || parent.includes(q)
+    })
+  }, [activeSection.data, searchQuery])
 
-    return (
-      <div
-        key={key}
-        className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden flex flex-col transition-all"
-      >
-        {/* Section Header */}
-        <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-100 text-[#0B3470] flex items-center justify-center shrink-0 shadow-xs">
-              <Icon className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-slate-900 tracking-tight">{meta.title}</h3>
-                <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200/70">
-                  {meta.idPrefix}###
-                </span>
-              </div>
-              <p className="text-xs text-slate-500">{meta.placeholder}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-              {data.length} {data.length === 1 ? 'item' : 'items'}
-            </span>
-          </div>
-        </div>
-
-        {/* Add Input Bar */}
-        <div className="p-4 bg-slate-50/70 border-b border-slate-100">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              handleAdd(key)
-            }}
-            className="space-y-3"
-          >
-            <div className="flex flex-col sm:flex-row gap-2">
-              <input
-                type="text"
-                value={currentName}
-                onChange={(e) => setInputNames((prev) => ({ ...prev, [key]: e.target.value }))}
-                placeholder={meta.placeholder}
-                className="flex-1 bg-white border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-900 outline-none focus:border-[#0B3470] focus:ring-2 focus:ring-blue-500/20 font-medium transition-all"
-              />
-
-              {/* Specific inputs for SubCategory or Stage */}
-              {key === 'subCategory' && (
-                <select
-                  value={parentCategorySelect}
-                  onChange={(e) => setParentCategorySelect(e.target.value)}
-                  className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 outline-none focus:border-[#0B3470] sm:w-48"
-                >
-                  <option value="">-- Independent --</option>
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.name}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-
-              {key === 'stage' && (
-                <input
-                  type="number"
-                  min="1"
-                  value={stageOrderInput}
-                  onChange={(e) => setStageOrderInput(e.target.value)}
-                  placeholder="Order #"
-                  title="Stage Sequence Number"
-                  className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 outline-none focus:border-[#0B3470] w-24 text-center font-bold"
-                />
-              )}
-
-              <button
-                type="submit"
-                disabled={actionLoading || !currentName.trim()}
-                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-[#0B3470] hover:bg-[#082855] rounded-xl shadow-xs transition-all disabled:opacity-50 cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Add</span>
-              </button>
-            </div>
-          </form>
-        </div>
-
-        {/* Items List */}
-        <div className="p-4 flex-1 min-h-[160px] max-h-[420px] overflow-y-auto space-y-2">
-          {isLoading && data.length === 0 ? (
-            <div className="py-12 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
-              <RefreshCw className="w-5 h-5 animate-spin text-[#0B3470]" />
-              <span className="text-xs">Connecting to Firestore...</span>
-            </div>
-          ) : filteredList.length === 0 ? (
-            <div className="py-12 text-center border-2 border-dashed border-slate-200/80 rounded-xl p-4">
-              <p className="text-xs font-semibold text-slate-600">
-                {searchQuery ? 'No matching entries found' : `No ${meta.title} values configured yet`}
-              </p>
-              <p className="text-[11px] text-slate-400 mt-1">
-                {searchQuery
-                  ? 'Try clearing your search query'
-                  : 'Enter a name above and click "+ Add" to create your first standard entry.'}
-              </p>
-            </div>
-          ) : (
-            filteredList.map((item, idx) => (
-              <div
-                key={item.id || idx}
-                className="p-3 bg-slate-50/60 hover:bg-slate-100/80 border border-slate-200/60 rounded-xl flex items-center justify-between gap-3 group transition-all"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <span className="w-7 h-7 rounded-lg bg-slate-100 border border-slate-200 text-slate-700 font-bold text-[11px] flex items-center justify-center shrink-0">
-                    {key === 'stage' ? item.order || idx + 1 : idx + 1}
-                  </span>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-slate-900 truncate">{item.name}</span>
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-white border border-slate-200 text-slate-500 shrink-0">
-                        {item.id}
-                      </span>
-                    </div>
-                    {item.projectCategory && key === 'subCategory' && (
-                      <span className="text-[10px] text-[#0B3470] bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md mt-0.5 inline-block font-medium">
-                        Category: {item.projectCategory}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => openEditModal(meta, item)}
-                    className="p-1.5 text-slate-400 hover:text-[#0B3470] hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
-                    title="Edit configuration (Updates existing document)"
-                  >
-                    <Edit3 className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openDeleteModal(meta, item)}
-                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                    title="Delete configuration"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-    )
-  }
-
-  const activeSection = sectionList.find((s) => s.key === activeTab) || sectionList[0]
+  const isLoading = loadingMap[activeSection.key]
+  const currentName = inputNames[activeSection.key] || ''
 
   return (
     <div className="space-y-6">
@@ -439,7 +287,6 @@ export default function MasterConfigurations({ orgId, onNotify }) {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          {/* How Configuration Works Help Button */}
           <button
             type="button"
             onClick={() => setShowHelpModal(true)}
@@ -451,60 +298,332 @@ export default function MasterConfigurations({ orgId, onNotify }) {
         </div>
       </div>
 
-      {/* Global Search & Navigation Tabs */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-        <div className="flex items-center gap-2 overflow-x-auto w-full sm:w-auto pb-1">
-          {sectionList.map((s) => {
-            const Icon = s.icon
-            const isActive = activeTab === s.key
-            return (
-              <button
-                key={s.key}
-                type="button"
-                onClick={() => setActiveTab(s.key)}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl font-medium text-sm transition-all whitespace-nowrap cursor-pointer ${
-                  isActive
-                    ? 'bg-[#0B3470] text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                <span>{s.meta.title}</span>
-                <span
-                  className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                    isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
-                  }`}
-                >
-                  {s.data.length}
-                </span>
-              </button>
-            )
-          })}
+      {/* Two-Column Responsive Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* ========================================================================= */}
+        {/* LEFT COLUMN: Vertical Configuration Tabs                                 */}
+        {/* ========================================================================= */}
+        <div className="lg:col-span-4 xl:col-span-3 space-y-4">
+          <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs p-3">
+            <div className="px-3 py-2 text-[11px] font-medium text-slate-500 uppercase tracking-normal flex items-center justify-between border-b border-slate-100 mb-2">
+              <span>Configuration Pillars</span>
+              <span className="text-[10px] bg-slate-100 text-slate-500 font-normal px-2 py-0.5 rounded-full">
+                {sectionList.length} Tabs
+              </span>
+            </div>
+
+            <div className="space-y-1.5">
+              {sectionList.map((s) => {
+                const Icon = s.icon
+                const isActive = activeTab === s.key
+                const count = s.data.length
+
+                return (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() => {
+                      setActiveTab(s.key)
+                      setSearchQuery('')
+                    }}
+                    className={`group w-full flex items-center justify-between p-3 rounded-xl text-left transition-all cursor-pointer ${
+                      isActive
+                        ? 'bg-[#0B3470] text-white shadow-xs'
+                        : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900 border border-transparent hover:border-slate-200/60'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div
+                        className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-all ${
+                          isActive
+                            ? 'bg-white/15 text-white'
+                            : 'bg-slate-100 text-slate-500 group-hover:bg-blue-50 group-hover:text-[#0B3470]'
+                        }`}
+                      >
+                        <Icon className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0 truncate">
+                        <div
+                          className={`text-xs truncate ${
+                            isActive ? 'font-medium text-white' : 'font-normal text-slate-800'
+                          }`}
+                        >
+                          {s.meta.title}
+                        </div>
+                        <div
+                          className={`text-[11px] font-normal ${
+                            isActive ? 'text-blue-100' : 'text-slate-400'
+                          }`}
+                        >
+                          Prefix: {s.meta.idPrefix}###
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span
+                        className={`text-[11px] px-2 py-0.5 rounded-full font-normal transition-all ${
+                          isActive
+                            ? 'bg-white/20 text-white'
+                            : 'bg-slate-100 text-slate-600 group-hover:bg-slate-200/80'
+                        }`}
+                      >
+                        {count}
+                      </span>
+                      <ChevronRight
+                        className={`w-4 h-4 transition-all ${
+                          isActive ? 'text-white' : 'text-slate-300 group-hover:text-slate-500'
+                        }`}
+                      />
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Configuration Hint Card */}
+          <div className="bg-blue-50/50 border border-blue-100/80 rounded-2xl p-4 text-xs text-slate-600 space-y-2">
+            <div className="flex items-center gap-2 font-medium text-[#0B3470]">
+              <Info className="w-4 h-4 text-blue-600 shrink-0" />
+              <span>Standardized Master Scope</span>
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed font-normal">
+              Modifications made here reflect instantly across all enterprise project workflows, stage tracking, and contract assignments.
+            </p>
+          </div>
         </div>
 
-        {/* Search Input */}
-        <div className="relative w-full sm:w-72 shrink-0">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Filter entries..."
-            className="w-full pl-9 pr-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-[#0B3470] focus:ring-2 focus:ring-blue-500/20 shadow-2xs font-medium"
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery('')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
+        {/* ========================================================================= */}
+        {/* RIGHT COLUMN: Configuration Details, Table & Add Form                    */}
+        {/* ========================================================================= */}
+        <div className="lg:col-span-8 xl:col-span-9 space-y-6">
+          <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden flex flex-col">
+            {/* Right Card Header: Active Pillar Details + Search */}
+            <div className="p-5 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-xl bg-blue-50 border border-blue-100 text-[#0B3470] flex items-center justify-center shrink-0 shadow-xs">
+                  {React.createElement(activeSection.icon, { className: 'w-5 h-5' })}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-base font-bold text-slate-900 tracking-tight">
+                      {activeSection.meta.title}
+                    </h2>
+                    <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200/70">
+                      {activeSection.meta.idPrefix}###
+                    </span>
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-[#0B3470] border border-blue-200/60">
+                      {activeSection.data.length} {activeSection.data.length === 1 ? 'record' : 'records'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">{activeSection.meta.placeholder}</p>
+                </div>
+              </div>
+
+              {/* Search input bar */}
+              <div className="relative w-full md:w-64 shrink-0">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={`Search ${activeSection.meta.title}...`}
+                  className="w-full pl-9 pr-8 py-2 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-[#0B3470] focus:ring-2 focus:ring-blue-500/20 font-medium transition-all"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Top Input Bar: Add New Entry */}
+            <div className="p-4 sm:p-5 bg-slate-50/70 border-b border-slate-100">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  handleAdd(activeSection.key)
+                }}
+                className="space-y-2"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold text-slate-700">
+                    Add New {activeSection.meta.title}
+                  </span>
+                  <span className="text-[11px] text-slate-400">
+                    Auto-assigns next ID ({activeSection.meta.idPrefix}###)
+                  </span>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2.5">
+                  <input
+                    type="text"
+                    value={currentName}
+                    onChange={(e) =>
+                      setInputNames((prev) => ({ ...prev, [activeSection.key]: e.target.value }))
+                    }
+                    placeholder={activeSection.meta.placeholder}
+                    className="flex-1 bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 outline-none focus:border-[#0B3470] focus:ring-2 focus:ring-blue-500/20 font-medium transition-all"
+                  />
+
+               
+
+                  {/* Stage Order Sequence */}
+                  {activeSection.key === 'stage' && (
+                    <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-3 py-1.5 shrink-0">
+                      <span className="text-[11px] font-semibold text-slate-500">Order:</span>
+                      <input
+                        type="number"
+                        min="1"
+                        value={stageOrderInput}
+                        onChange={(e) => setStageOrderInput(e.target.value)}
+                        placeholder="#"
+                        title="Stage Sequence Number"
+                        className="w-12 text-center text-xs font-bold text-slate-900 outline-none"
+                      />
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={actionLoading || !currentName.trim()}
+                    className="inline-flex items-center justify-center gap-1.5 px-5 py-2.5 text-xs font-semibold text-white bg-[#0B3470] hover:bg-[#082855] rounded-xl shadow-xs transition-all disabled:opacity-50 cursor-pointer shrink-0"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Add {activeSection.meta.title.replace('Project ', '')}</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Structured Table / List of Configuration Values */}
+            <div className="overflow-x-auto min-h-[220px]">
+              {isLoading && activeSection.data.length === 0 ? (
+                <div className="py-16 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
+                  <RefreshCw className="w-6 h-6 animate-spin text-[#0B3470]" />
+                  <span className="text-xs font-medium">Connecting to Firestore...</span>
+                </div>
+              ) : filteredList.length === 0 ? (
+                <div className="p-8 m-6 text-center border-2 border-dashed border-slate-200 rounded-2xl">
+                  <p className="text-sm font-bold text-slate-700">
+                    {searchQuery
+                      ? 'No matching entries found'
+                      : `No ${activeSection.meta.title} values configured yet`}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+                    {searchQuery
+                      ? `No results match "${searchQuery}". Try clearing the search filter.`
+                      : 'Enter a name in the form above and click the Add button to create your first standard entry.'}
+                  </p>
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="mt-3 px-3.5 py-1.5 text-xs font-semibold text-[#0B3470] bg-blue-50 hover:bg-blue-100 rounded-lg transition-all cursor-pointer"
+                    >
+                      Clear Search
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                      <th className="py-3 px-4 w-16 text-center">#</th>
+                      <th className="py-3 px-4">Configuration Name</th>
+                      <th className="py-3 px-4 w-36">Identifier (ID)</th>
+                      {activeSection.key === 'subCategory' && (
+                        <th className="py-3 px-4 w-48">Parent Category</th>
+                      )}
+                      {activeSection.key === 'stage' && (
+                        <th className="py-3 px-4 w-32 text-center">Lifecycle Order</th>
+                      )}
+                      <th className="py-3 px-4 w-28 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-xs">
+                    {filteredList.map((item, idx) => (
+                      <tr
+                        key={item.id || idx}
+                        className="hover:bg-slate-50/80 transition-colors group"
+                      >
+                        {/* Sequence Number */}
+                        <td className="py-3 px-4 text-center">
+                          <span className="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-slate-100 text-slate-700 font-bold text-[11px]">
+                            {activeSection.key === 'stage' ? item.order || idx + 1 : idx + 1}
+                          </span>
+                        </td>
+
+                        {/* Name / Title */}
+                        <td className="py-3 px-4">
+                          <div className="font-bold text-slate-900">{item.name}</div>
+                        </td>
+
+                        {/* Identifier */}
+                        <td className="py-3 px-4">
+                          <span className="font-mono text-[11px] font-semibold px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200/70 inline-block">
+                            {item.id}
+                          </span>
+                        </td>
+
+                        {/* Hierarchy Details for SubCategory */}
+                        {activeSection.key === 'subCategory' && (
+                          <td className="py-3 px-4">
+                            {item.projectCategory ? (
+                              <span className="inline-flex items-center gap-1 text-[11px] text-[#0B3470] bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md font-medium">
+                                {item.projectCategory}
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-slate-400 italic">Independent</span>
+                            )}
+                          </td>
+                        )}
+
+                        {/* Lifecycle Order for Stage */}
+                        {activeSection.key === 'stage' && (
+                          <td className="py-3 px-4 text-center">
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-700 bg-slate-100 px-2.5 py-0.5 rounded-md">
+                              Stage #{item.order || idx + 1}
+                            </span>
+                          </td>
+                        )}
+
+                        {/* Actions: Edit & Delete */}
+                        <td className="py-3 px-4 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => openEditModal(activeSection.meta, item)}
+                              className="p-1.5 text-slate-400 hover:text-[#0B3470] hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                              title="Edit configuration (In-place update)"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openDeleteModal(activeSection.meta, item)}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                              title="Delete configuration"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
         </div>
       </div>
-
-      {/* Main Content Area */}
-      <div className="grid grid-cols-1 gap-6">{renderSectionCard(activeSection)}</div>
 
       {/* ========================================================================= */}
       {/* EDIT MODAL: In-place Firestore Update (Preserves Document ID)             */}

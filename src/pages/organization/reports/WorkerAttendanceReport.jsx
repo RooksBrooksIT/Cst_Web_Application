@@ -181,14 +181,14 @@ export default function WorkerAttendanceReport({
                 onClick={handleExportCSV}
                 className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
               >
-                📥 Export CSV
+               Export CSV
               </button>
               <button
                 type="button"
                 onClick={handlePrintPDF}
                 className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-[#0B3470] hover:bg-[#082654] text-white transition-colors shadow-2xs cursor-pointer"
               >
-                🖨️ Print Report PDF
+                Print Report PDF
               </button>
             </div>
           </div>

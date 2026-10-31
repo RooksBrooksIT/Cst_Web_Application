@@ -11,6 +11,7 @@ import {
 import { db } from './firebase.js'
 import { fetchWithFallback, subscribeWithFallback } from './firestoreService.js'
 import { matchesSite, parseDateToTime, amountValue } from '../pages/organization/finance/financeUtils.js'
+import { isNewOrganization, isNewOrganizationSync } from './schemaResolverService.js'
 
 /**
  * Finance Service for Organization Finance Page & Site Financial Details Drill-down
@@ -309,7 +310,10 @@ export function processRawGranularExpenseDocs({
 export async function fetchSiteGranularExpenses(orgId, siteId, siteObj = null) {
   if (!orgId || (!siteId && !siteObj)) return []
 
-  // Ordered so primary canonical collections evaluate before cross-platform mirrors
+  const isNewOrg = await isNewOrganization(orgId)
+
+  // Ordered so primary canonical collections evaluate before cross-platform mirrors.
+  // For new organizations, legacy mirrored collections (organizationEntries, managerEntries) are excluded.
   const sources = [
     { col: 'siteSupervisorEntries', category: 'Supervisor Entry' },
     { col: 'pettyCashTransactions', category: 'Petty Cash' },
@@ -317,8 +321,12 @@ export async function fetchSiteGranularExpenses(orgId, siteId, siteObj = null) {
     { col: 'managerExpenses', category: 'Manager Direct Expense' },
     { col: 'contractorEntries', category: 'Contractor Payment' },
     { col: 'siteSupervisorIncentives', category: 'Supervisor Incentive' },
-    { col: 'organizationEntries', category: 'Organization Bill' },
-    { col: 'managerEntries', category: 'Manager Approved' },
+    ...(!isNewOrg
+      ? [
+          { col: 'organizationEntries', category: 'Organization Bill' },
+          { col: 'managerEntries', category: 'Manager Approved' },
+        ]
+      : []),
     { col: 'petty_cash_expenses', category: 'Petty Cash Voucher' },
   ]
 
@@ -355,6 +363,9 @@ export function subscribeSiteGranularExpenses(orgId, siteId, siteObj = null, onD
     return () => {}
   }
 
+  const isNewOrg = isNewOrganizationSync(orgId)
+
+  // For new organizations, only attach listeners to canonical streams.
   const sources = [
     { col: 'siteSupervisorEntries', category: 'Supervisor Entry' },
     { col: 'pettyCashTransactions', category: 'Petty Cash' },
@@ -362,8 +373,12 @@ export function subscribeSiteGranularExpenses(orgId, siteId, siteObj = null, onD
     { col: 'managerExpenses', category: 'Manager Direct Expense' },
     { col: 'contractorEntries', category: 'Contractor Payment' },
     { col: 'siteSupervisorIncentives', category: 'Supervisor Incentive' },
-    { col: 'organizationEntries', category: 'Organization Bill' },
-    { col: 'managerEntries', category: 'Manager Approved' },
+    ...(!isNewOrg
+      ? [
+          { col: 'organizationEntries', category: 'Organization Bill' },
+          { col: 'managerEntries', category: 'Manager Approved' },
+        ]
+      : []),
     { col: 'petty_cash_expenses', category: 'Petty Cash Voucher' },
   ]
 

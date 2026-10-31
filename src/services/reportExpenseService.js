@@ -22,6 +22,7 @@
 
 import { collection, onSnapshot } from 'firebase/firestore'
 import { db } from './firebase.js'
+import { isNewOrganizationSync } from './schemaResolverService.js'
 
 /**
  * Normalizes user role string into canonical role: 'Organization', 'Manager', or 'Supervisor'.
@@ -66,6 +67,8 @@ export function subscribeRoleExpenseData(orgId, role, onData, onError) {
     contractorEntries: [],
   }
 
+  const isNewOrg = isNewOrganizationSync(orgId)
+
   // Define collections to listen to based on role
   let collectionsToListen = []
 
@@ -76,8 +79,12 @@ export function subscribeRoleExpenseData(orgId, role, onData, onError) {
   } else if (canonicalRole === 'Manager') {
     collectionsToListen = [
       { key: 'managerExpenses', col: 'managerExpenses' },
-      { key: 'managerEntries', col: 'managerEntries' },
-      { key: 'managerExpenseSummary', col: 'managerExpenseSummary' },
+      ...(!isNewOrg
+        ? [
+            { key: 'managerEntries', col: 'managerEntries' },
+            { key: 'managerExpenseSummary', col: 'managerExpenseSummary' },
+          ]
+        : []),
       { key: 'siteSupervisorEntries', col: 'siteSupervisorEntries' },
       { key: 'contractorEntries', col: 'contractorEntries' },
     ]
@@ -85,11 +92,19 @@ export function subscribeRoleExpenseData(orgId, role, onData, onError) {
     // Organization (default)
     collectionsToListen = [
       { key: 'organizationExpenses', col: 'organizationExpenses' },
-      { key: 'organizationEntries', col: 'organizationEntries' },
-      { key: 'organizationExpenseSummary', col: 'organizationExpenseSummary' },
+      ...(!isNewOrg
+        ? [
+            { key: 'organizationEntries', col: 'organizationEntries' },
+            { key: 'organizationExpenseSummary', col: 'organizationExpenseSummary' },
+          ]
+        : []),
       { key: 'managerExpenses', col: 'managerExpenses' },
-      { key: 'managerEntries', col: 'managerEntries' },
-      { key: 'managerExpenseSummary', col: 'managerExpenseSummary' },
+      ...(!isNewOrg
+        ? [
+            { key: 'managerEntries', col: 'managerEntries' },
+            { key: 'managerExpenseSummary', col: 'managerExpenseSummary' },
+          ]
+        : []),
       { key: 'siteSupervisorEntries', col: 'siteSupervisorEntries' },
       { key: 'contractorEntries', col: 'contractorEntries' },
     ]

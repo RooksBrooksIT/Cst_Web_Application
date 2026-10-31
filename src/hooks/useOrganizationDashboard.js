@@ -3,6 +3,7 @@ import { collection, doc, onSnapshot } from 'firebase/firestore'
 import { db } from '../services/firebase'
 import { COLLECTION_ALIASES } from '../services/firestoreService'
 import { normalizeExpenseRecord } from '../services/expenseNormalizationService'
+import { isNewOrganizationSync } from '../services/schemaResolverService'
 
 const initialData = {
   projects: [],
@@ -113,6 +114,24 @@ export function useOrganizationDashboard(orgId) {
       return undefined
     }
 
+    const isNewOrg = isNewOrganizationSync(orgId)
+    const activeSources = isNewOrg
+      ? sources
+          .filter(
+            (s) =>
+              s.key !== 'managerEntries' &&
+              s.key !== 'organizationEntries' &&
+              s.key !== 'managerExpenseSummary' &&
+              s.key !== 'organizationExpenseSummary'
+          )
+          .map((s) => {
+            if (s.key === 'managerExpenses' || s.key === 'organizationExpenses') {
+              return { ...s, legacy: null }
+            }
+            return s
+          })
+      : sources
+
     const cleanups = []
     let cancelled = false
     const nextData = { ...initialData }
@@ -120,7 +139,7 @@ export function useOrganizationDashboard(orgId) {
 
     // Store primary and legacy results per source key to avoid listener leaks and race conditions
     const store = {}
-    sources.forEach(({ key }) => {
+    activeSources.forEach(({ key }) => {
       store[key] = { primary: [], legacy: [] }
     })
 
@@ -158,7 +177,7 @@ export function useOrganizationDashboard(orgId) {
       setData({ ...nextData })
     }
 
-    sources.forEach(({ key, col, legacy }) => {
+    activeSources.forEach(({ key, col, legacy }) => {
       const isExpenseKey = key === 'organizationEntries' || key === 'managerExpenses'
 
       // Primary listener

@@ -11,6 +11,7 @@ import {
   calculateSiteFinancialMetrics,
   processRawGranularExpenseDocs,
 } from '../../../services/financeService.js'
+import { isNewOrganizationSync } from '../../../services/schemaResolverService.js'
 import {
   amountValue,
   matchesSite,
@@ -127,6 +128,7 @@ export default function SiteFinancialDetailsPage({
 
     if (!hasAnyProps) return []
 
+    const isNewOrg = isNewOrganizationSync(orgId)
     const sourcesWithDocs = [
       { col: 'siteSupervisorEntries', category: 'Supervisor Entry', docs: siteSupervisorEntries },
       { col: 'pettyCashTransactions', category: 'Petty Cash', docs: pettyCashTransactions },
@@ -134,8 +136,12 @@ export default function SiteFinancialDetailsPage({
       { col: 'managerExpenses', category: 'Manager Direct Expense', docs: managerExpenses },
       { col: 'contractorEntries', category: 'Contractor Payment', docs: contractorEntries },
       { col: 'siteSupervisorIncentives', category: 'Supervisor Incentive', docs: siteSupervisorIncentives },
-      { col: 'organizationEntries', category: 'Organization Bill', docs: organizationEntries },
-      { col: 'managerEntries', category: 'Manager Approved', docs: managerEntries },
+      ...(!isNewOrg
+        ? [
+            { col: 'organizationEntries', category: 'Organization Bill', docs: organizationEntries },
+            { col: 'managerEntries', category: 'Manager Approved', docs: managerEntries },
+          ]
+        : []),
       { col: 'petty_cash_expenses', category: 'Petty Cash Voucher', docs: pettyCashExpenses },
     ]
 
